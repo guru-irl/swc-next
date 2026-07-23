@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use swc_experimental_ecma_transformer::es2015::arrow::ArrowFunctionsOptions;
+use swc_next_ecma_transformer::es2015::arrow::ArrowFunctionsOptions;
 
 use super::PluginPresetEntries;
 

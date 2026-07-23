@@ -1,6 +1,6 @@
 use oxc_index::IndexVec;
 use rustc_hash::FxHashMap;
-use swc_experimental_ecma_ast::{NodeId, ScopeId, Span, String as AstString, SymbolId};
+use swc_next_ecma_ast::{NodeId, ScopeId, Span, String as AstString, SymbolId};
 
 use crate::scope::{ScopeKind, ScopeTree};
 

@@ -15,12 +15,12 @@ use oxc_index::Idx;
 
 pub use module_record::{ExportRecord, ImportRecord, ModuleRecord, ModuleRecordNameKind};
 pub use scope::{Scope, ScopeFlags, ScopeKind, ScopeTree};
-pub use swc_experimental_ecma_ast::{Diagnostic, Label, ScopeId, Severity, SymbolId};
+pub use swc_next_ecma_ast::{Diagnostic, Label, ScopeId, Severity, SymbolId};
 pub use symbol::{
     Reference, ReferenceFlags, ReferenceId, ReferenceKind, Symbol, SymbolFlags, SymbolTable,
 };
 
-use swc_experimental_ecma_ast::{
+use swc_next_ecma_ast::{
     Ast, NodeId, NodeKind, Program, Traverse, TraverseAction, TraverseCtx, TraverseWith,
 };
 

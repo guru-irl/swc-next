@@ -6,7 +6,7 @@ use std::{
 
 use jwalk::WalkDir;
 use saphyr::{LoadableYamlNode, Yaml};
-use swc_experimental_ecma_ast::{Lang, SourceType};
+use swc_next_ecma_ast::{Lang, SourceType};
 
 use crate::cases::{Case, fixtures};
 

@@ -4,7 +4,7 @@ use std::{
 };
 
 use serde::{Deserialize, de::DeserializeOwned};
-use swc_experimental_ecma_transformer::{
+use swc_next_ecma_transformer::{
     TransformerOptions, assumptions::Assumptions, es2015::ES2015Options,
 };
 

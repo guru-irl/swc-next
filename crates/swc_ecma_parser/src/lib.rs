@@ -1,4 +1,4 @@
-//! An ECMAScript parser that writes directly into the flat experimental AST.
+//! An ECMAScript parser that writes directly into the flat SWC Next AST.
 
 #![deny(clippy::all)]
 #![deny(unused)]
@@ -16,10 +16,10 @@ pub use parser::{
     ParenthesizedCover, Parser, ParserState, Peek, ReportOptions, ScratchBuffer, TsContext,
     build_line_starts,
 };
-pub use swc_experimental_ecma_ast::{Diagnostic, Label, Lang, Severity};
+pub use swc_next_ecma_ast::{Diagnostic, Label, Lang, Severity};
 pub use token::{Precedence, Token, TokenFlag, TokenTag};
 
-use swc_experimental_ecma_ast::{Ast, Program};
+use swc_next_ecma_ast::{Ast, Program};
 
 /// Parse one source file into `ast`.
 pub fn parse<'a>(ast: &mut Ast<'a>, source: &[u8], options: Options) -> Option<Program> {

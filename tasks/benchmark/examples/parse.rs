@@ -1,8 +1,8 @@
 use std::{env, fs::read_to_string};
 
-use swc_experimental_allocator::Allocator;
-use swc_experimental_ecma_ast::Ast;
-use swc_experimental_ecma_parser::{Options, parse};
+use swc_next_allocator::Allocator;
+use swc_next_ecma_ast::Ast;
+use swc_next_ecma_parser::{Options, parse};
 
 fn main() {
     let source = env::args()

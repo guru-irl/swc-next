@@ -3,7 +3,7 @@
 use std::{borrow::Cow, string::String};
 
 use rustc_hash::FxHashMap;
-use swc_experimental_ecma_ast::*;
+use swc_next_ecma_ast::*;
 
 use crate::{
     scope::ScopeTree,

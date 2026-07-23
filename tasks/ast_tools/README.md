@@ -3,7 +3,7 @@
 `ast_tools` is the code generator for the flattening ECMAScript AST. It reads
 the hand-written AST declarations, builds a schema from the types marked with
 `#[ast]`, and regenerates the repetitive storage and traversal APIs used by
-`swc_experimental_ecma_ast`.
+`swc_next_ecma_ast`.
 
 Run the tool from the workspace root because its input and output paths are
 workspace-relative:
@@ -63,7 +63,7 @@ when its bytes have not changed.
 
    ```sh
    cargo check -p ast_tools
-   cargo check -p swc_experimental_ecma_ast
+   cargo check -p swc_next_ecma_ast
    ```
 
 Generated files should not be edited by hand: those edits will be replaced the

@@ -1,7 +1,7 @@
-use swc_experimental_allocator::Allocator;
-use swc_experimental_ecma_ast::{Ast, Lang, SourceType};
-use swc_experimental_ecma_codegen::{Options as PrintOptions, print};
-use swc_experimental_ecma_parser::{CommentMode, Options as ParseOptions, Parser};
+use swc_next_allocator::Allocator;
+use swc_next_ecma_ast::{Ast, Lang, SourceType};
+use swc_next_ecma_codegen::{Options as PrintOptions, print};
+use swc_next_ecma_parser::{CommentMode, Options as ParseOptions, Parser};
 
 mod js_parser_test;
 mod js_printer_test;
@@ -83,7 +83,7 @@ fn expect_printed_common(
     let has_errors = parser
         .diagnostics
         .iter()
-        .any(|diagnostic| diagnostic.severity == swc_experimental_ecma_ast::Severity::Error);
+        .any(|diagnostic| diagnostic.severity == swc_next_ecma_ast::Severity::Error);
     drop(parser);
     if has_errors {
         return;

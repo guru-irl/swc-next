@@ -1,4 +1,4 @@
-use swc_experimental_ast_macros::ast;
+use swc_next_ast_macros::ast;
 
 use super::js::*;
 

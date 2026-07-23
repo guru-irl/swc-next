@@ -9,12 +9,12 @@ use std::{
 use colored::Colorize;
 use pico_args::Arguments;
 use rayon::prelude::*;
-use swc_experimental_allocator::Allocator;
-use swc_experimental_ecma_ast::{Ast, Lang, Program, Severity, SourceType};
-use swc_experimental_ecma_codegen::{Options as CodegenOptions, print};
-use swc_experimental_ecma_parser::{Options as ParserOptions, Parser};
-use swc_experimental_ecma_semantic::analyze;
-use swc_experimental_ecma_transformer::{Transformer, TransformerOptions};
+use swc_next_allocator::Allocator;
+use swc_next_ecma_ast::{Ast, Lang, Program, Severity, SourceType};
+use swc_next_ecma_codegen::{Options as CodegenOptions, print};
+use swc_next_ecma_parser::{Options as ParserOptions, Parser};
+use swc_next_ecma_semantic::analyze;
+use swc_next_ecma_transformer::{Transformer, TransformerOptions};
 use testsuite::{cases::babel::BabelCase, suite::TestResult, util::crate_root};
 
 const SNAPSHOT_FILE: &str = "babel_transform.snap";
@@ -426,10 +426,7 @@ fn parse_program(
     program.ok_or_else(|| format!("{stage}: parsing stopped without producing an error diagnostic"))
 }
 
-fn format_diagnostic(
-    stage: &str,
-    diagnostic: &swc_experimental_ecma_ast::Diagnostic<'_>,
-) -> String {
+fn format_diagnostic(stage: &str, diagnostic: &swc_next_ecma_ast::Diagnostic<'_>) -> String {
     format!(
         "{stage}: {} at {}..{}",
         diagnostic.message, diagnostic.span.start, diagnostic.span.end

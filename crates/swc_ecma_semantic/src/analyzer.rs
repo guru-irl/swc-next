@@ -1,7 +1,7 @@
 use std::{borrow::Cow, marker::PhantomData, string::String};
 
-use swc_experimental_ecma_ast::String as AstString;
-use swc_experimental_ecma_ast::*;
+use swc_next_ecma_ast::String as AstString;
+use swc_next_ecma_ast::*;
 
 use crate::{
     scope::{ScopeFlags, ScopeKind, ScopeTree},

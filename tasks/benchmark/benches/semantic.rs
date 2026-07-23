@@ -4,10 +4,10 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use std::hint::black_box;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use swc_experimental_allocator::Allocator;
-use swc_experimental_ecma_ast::Ast;
-use swc_experimental_ecma_parser::{Options, parse};
-use swc_experimental_ecma_semantic::analyze;
+use swc_next_allocator::Allocator;
+use swc_next_ecma_ast::Ast;
+use swc_next_ecma_parser::{Options, parse};
+use swc_next_ecma_semantic::analyze;
 
 fn bench_semantic(c: &mut Criterion) {
     let bench_cases = &[

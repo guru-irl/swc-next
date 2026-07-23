@@ -4,14 +4,14 @@ edition               = "2024"
 homepage.workspace    = true
 keywords.workspace    = true
 license.workspace     = true
-name                  = "swc_experimental_ecma_codegen"
+name                  = "swc_next_ecma_codegen"
 repository.workspace  = true
 version               = "0.11.0"
 
 [dependencies]
-swc_experimental_allocator = { workspace = true }
-swc_experimental_ecma_ast  = { workspace = true }
+swc_next_allocator = { workspace = true }
+swc_next_ecma_ast  = { workspace = true }
 unicode-id-start           = { workspace = true }
 
 [dev-dependencies]
-swc_experimental_ecma_parser = { workspace = true }
+swc_next_ecma_parser = { workspace = true }

@@ -4,7 +4,7 @@ edition               = "2024"
 homepage.workspace    = true
 keywords.workspace    = true
 license.workspace     = true
-name                  = "swc_experimental_ecma_ast"
+name                  = "swc_next_ecma_ast"
 repository.workspace  = true
 version               = "0.11.0"
 
@@ -14,5 +14,5 @@ shared_string_allocator = []
 [dependencies]
 oxc_index        = { workspace = true }
 
-swc_experimental_allocator  = { workspace = true }
-swc_experimental_ast_macros = { workspace = true }
+swc_next_allocator  = { workspace = true }
+swc_next_ast_macros = { workspace = true }

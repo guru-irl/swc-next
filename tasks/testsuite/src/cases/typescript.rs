@@ -11,7 +11,7 @@ use std::{
 use jwalk::WalkDir;
 use regex::Regex;
 use serde_json::Value;
-use swc_experimental_ecma_ast::{Lang, SourceType};
+use swc_next_ecma_ast::{Lang, SourceType};
 
 use crate::cases::{Case, fixtures, typescript::constants::NOT_SUPPORTED_ERROR_CODES};
 

@@ -1,11 +1,11 @@
-## SWC (Experimental)
+## SWC Next
 
 This project is still in a very early stage; please continue to use [SWC](https://github.com/swc-project/swc).
 
-This project is an experimental version of [SWC](https://github.com/swc-project/swc). The primary modification, based on SWC, is the redesign of the AST data structure:
+This project is the next generation of [SWC](https://github.com/swc-project/swc). The primary modification, based on SWC, is the redesign of the AST data structure:
 
 1. It adopts a Flattening AST design, which allows for a higher performance.
-2. The AST structure (fields) of the SWC (experimental) remains largely consistent with that of SWC, making migration relatively straightforward.
+2. The AST structure (fields) of SWC Next remains largely consistent with that of SWC, making migration relatively straightforward.
 
 ## Roadmap
 
@@ -31,6 +31,6 @@ Thanks to:
 
 ## License
 
-SWC (Experimental) is licensed under the Apache License, Version 2.0, which should be always same as [SWC](https://github.com/swc-project/swc).
+SWC Next is licensed under the Apache License, Version 2.0, which should be always same as [SWC](https://github.com/swc-project/swc).
 
 See the [LICENSE](LICENSE) file for more details.

@@ -143,7 +143,7 @@ dummy_visit_mut_impl!(TsMappedTypeModifier);
 
 #[cfg(test)]
 mod tests {
-    use swc_experimental_allocator::Allocator;
+    use swc_next_allocator::Allocator;
 
     use crate::{
         Ast, NodeId, NodeKind, SourceType, Span, Traverse, TraverseAction, TraverseCtx,

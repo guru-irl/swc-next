@@ -7,7 +7,7 @@ description = "An extensible Rust-based platform for the next generation of fast
 homepage    = "https://swc.rs/"
 keywords    = ["JavaScript"]
 license     = "Apache-2.0"
-repository  = "https://github.com/CPunisher/swc-experimental"
+repository  = "https://github.com/swc-project/swc-next"
 
 [workspace.dependencies]
 allocator-api2   = "=0.2.21"
@@ -42,13 +42,13 @@ quote        = "1.0.46"
 syn          = { version = "2.0.118", default-features = false }
 
 # Workspace
-swc_experimental_allocator        = { version = "0.11.0", path = "crates/swc_allocator" }
-swc_experimental_ast_macros       = { version = "0.11.0", path = "crates/swc_ast_macros" }
-swc_experimental_ecma_ast         = { version = "0.11.0", path = "crates/swc_ecma_ast" }
-swc_experimental_ecma_codegen     = { version = "0.11.0", path = "crates/swc_ecma_codegen" }
-swc_experimental_ecma_parser      = { version = "0.11.0", path = "crates/swc_ecma_parser" }
-swc_experimental_ecma_semantic    = { version = "0.11.0", path = "crates/swc_ecma_semantic" }
-swc_experimental_ecma_transformer = { version = "0.11.0", path = "crates/swc_ecma_transformer" }
+swc_next_allocator        = { version = "0.11.0", path = "crates/swc_allocator" }
+swc_next_ast_macros       = { version = "0.11.0", path = "crates/swc_ast_macros" }
+swc_next_ecma_ast         = { version = "0.11.0", path = "crates/swc_ecma_ast" }
+swc_next_ecma_codegen     = { version = "0.11.0", path = "crates/swc_ecma_codegen" }
+swc_next_ecma_parser      = { version = "0.11.0", path = "crates/swc_ecma_parser" }
+swc_next_ecma_semantic    = { version = "0.11.0", path = "crates/swc_ecma_semantic" }
+swc_next_ecma_transformer = { version = "0.11.0", path = "crates/swc_ecma_transformer" }
 
 # Dev
 colored       = "3.1.1"

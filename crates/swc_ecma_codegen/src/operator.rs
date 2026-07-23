@@ -1,4 +1,4 @@
-use swc_experimental_ecma_ast::{
+use swc_next_ecma_ast::{
     Ast, BinaryExpression, BinaryOperator, Expr, LogicalExpression, LogicalOperator,
 };
 

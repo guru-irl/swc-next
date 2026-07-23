@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
-use swc_experimental_ecma_ast::{
+use swc_next_ecma_ast::{
     AssignmentOperator, Ast, Class, DUMMY_SP, Decl, Expr, Function, FunctionBody, GetSpan,
     IdentifierReference, Program, StatementListItem, StaticBlock, Stmt, String as AstString,
     TypedSubRange, VariableKind, VisitMut, VisitMutWith,
 };
-use swc_experimental_ecma_semantic::{ReferenceKind, Semantic};
+use swc_next_ecma_semantic::{ReferenceKind, Semantic};
 
 #[derive(Default)]
 pub struct CaptureFrame {
@@ -120,7 +120,7 @@ impl<'semantic> FnEnvHoister<'semantic> {
         reference.kind == ReferenceKind::Value && reference.symbol_id.is_none()
     }
 
-    fn is_new_target(&self, node: swc_experimental_ecma_ast::MetaProperty, ast: &Ast<'_>) -> bool {
+    fn is_new_target(&self, node: swc_next_ecma_ast::MetaProperty, ast: &Ast<'_>) -> bool {
         let meta = node.meta(ast);
         let property = node.property(ast);
         ast.string(meta.name(ast)) == b"new" && ast.string(property.name(ast)) == b"target"
@@ -128,7 +128,7 @@ impl<'semantic> FnEnvHoister<'semantic> {
 
     pub fn visit_this_expression(
         &mut self,
-        node: swc_experimental_ecma_ast::ThisExpression,
+        node: swc_next_ecma_ast::ThisExpression,
         ast: &mut Ast<'_>,
     ) {
         if !self.in_arrow {
@@ -149,7 +149,7 @@ impl<'semantic> FnEnvHoister<'semantic> {
 
     pub fn visit_meta_property(
         &mut self,
-        node: swc_experimental_ecma_ast::MetaProperty,
+        node: swc_next_ecma_ast::MetaProperty,
         ast: &mut Ast<'_>,
     ) {
         if self.in_arrow && self.is_new_target(node, ast) {
@@ -164,7 +164,7 @@ impl<'semantic> FnEnvHoister<'semantic> {
         frame: CaptureFrame,
         derived_constructor: bool,
         ast: &mut Ast<'_>,
-    ) -> Option<swc_experimental_ecma_ast::VariableDeclaration> {
+    ) -> Option<swc_next_ecma_ast::VariableDeclaration> {
         if frame.is_empty() {
             return None;
         }

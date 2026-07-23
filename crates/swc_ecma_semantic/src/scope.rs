@@ -1,5 +1,5 @@
 use oxc_index::{Idx, IndexVec};
-use swc_experimental_ecma_ast::{NodeId, ScopeId};
+use swc_next_ecma_ast::{NodeId, ScopeId};
 
 /// Kind of JavaScript or TypeScript construct that created a scope.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -1,9 +1,9 @@
 use std::{env, fs::read_to_string};
 
-use swc_experimental_allocator::Allocator;
-use swc_experimental_ecma_ast::{Ast, IdentifierReference, Visit, VisitWith};
-use swc_experimental_ecma_parser::{Options, parse};
-use swc_experimental_ecma_semantic::{Semantic, analyze};
+use swc_next_allocator::Allocator;
+use swc_next_ecma_ast::{Ast, IdentifierReference, Visit, VisitWith};
+use swc_next_ecma_parser::{Options, parse};
+use swc_next_ecma_semantic::{Semantic, analyze};
 
 fn main() {
     let source = env::args()

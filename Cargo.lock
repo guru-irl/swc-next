@@ -109,10 +109,10 @@ dependencies = [
  "oxc_allocator",
  "rustc-hash",
  "swc_core",
- "swc_experimental_allocator",
- "swc_experimental_ecma_ast",
- "swc_experimental_ecma_parser",
- "swc_experimental_ecma_semantic",
+ "swc_next_allocator",
+ "swc_next_ecma_ast",
+ "swc_next_ecma_parser",
+ "swc_next_ecma_semantic",
  "tracy-client",
 ]
 
@@ -2060,7 +2060,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "swc_experimental_allocator"
+name = "swc_macros_common"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aae1efbaa74943dc5ad2a2fb16cbd78b77d7e4d63188f3c5b4df2b4dcd2faaae"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
+name = "swc_next_allocator"
 version = "0.11.0"
 dependencies = [
  "allocator-api2",
@@ -2071,7 +2082,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "swc_experimental_ast_macros"
+name = "swc_next_ast_macros"
 version = "0.11.0"
 dependencies = [
  "proc-macro2",
@@ -2080,58 +2091,47 @@ dependencies = [
 ]
 
 [[package]]
-name = "swc_experimental_ecma_ast"
+name = "swc_next_ecma_ast"
 version = "0.11.0"
 dependencies = [
  "oxc_index",
- "swc_experimental_allocator",
- "swc_experimental_ast_macros",
+ "swc_next_allocator",
+ "swc_next_ast_macros",
 ]
 
 [[package]]
-name = "swc_experimental_ecma_codegen"
+name = "swc_next_ecma_codegen"
 version = "0.11.0"
 dependencies = [
- "swc_experimental_allocator",
- "swc_experimental_ecma_ast",
- "swc_experimental_ecma_parser",
+ "swc_next_allocator",
+ "swc_next_ecma_ast",
+ "swc_next_ecma_parser",
  "unicode-id-start",
 ]
 
 [[package]]
-name = "swc_experimental_ecma_parser"
+name = "swc_next_ecma_parser"
 version = "0.11.0"
 dependencies = [
- "swc_experimental_ecma_ast",
+ "swc_next_ecma_ast",
 ]
 
 [[package]]
-name = "swc_experimental_ecma_semantic"
+name = "swc_next_ecma_semantic"
 version = "0.11.0"
 dependencies = [
  "oxc_index",
  "rustc-hash",
- "swc_experimental_ecma_ast",
+ "swc_next_ecma_ast",
 ]
 
 [[package]]
-name = "swc_experimental_ecma_transformer"
+name = "swc_next_ecma_transformer"
 version = "0.11.0"
 dependencies = [
  "serde",
- "swc_experimental_ecma_ast",
- "swc_experimental_ecma_semantic",
-]
-
-[[package]]
-name = "swc_macros_common"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aae1efbaa74943dc5ad2a2fb16cbd78b77d7e4d63188f3c5b4df2b4dcd2faaae"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
+ "swc_next_ecma_ast",
+ "swc_next_ecma_semantic",
 ]
 
 [[package]]
@@ -2189,12 +2189,12 @@ dependencies = [
  "saphyr",
  "serde",
  "serde_json",
- "swc_experimental_allocator",
- "swc_experimental_ecma_ast",
- "swc_experimental_ecma_codegen",
- "swc_experimental_ecma_parser",
- "swc_experimental_ecma_semantic",
- "swc_experimental_ecma_transformer",
+ "swc_next_allocator",
+ "swc_next_ecma_ast",
+ "swc_next_ecma_codegen",
+ "swc_next_ecma_parser",
+ "swc_next_ecma_semantic",
+ "swc_next_ecma_transformer",
 ]
 
 [[package]]

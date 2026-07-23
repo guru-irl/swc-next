@@ -1,8 +1,8 @@
-use swc_experimental_ecma_ast::{
+use swc_next_ecma_ast::{
     Ast, ObjectProperty, Program, RegExpLiteral, Traverse, TraverseAction, TraverseCtx,
     TraverseWith,
 };
-use swc_experimental_ecma_semantic::Semantic;
+use swc_next_ecma_semantic::Semantic;
 
 use crate::{
     assumptions::Assumptions,

@@ -1,4 +1,4 @@
-use swc_experimental_ecma_ast::Span;
+use swc_next_ecma_ast::Span;
 
 pub mod mask {
     pub const IS_NUMERIC_LITERAL: u32 = 1 << 13;

@@ -1,7 +1,7 @@
 use std::env;
 
-pub mod experimental;
 pub mod legacy;
+pub mod next;
 pub mod oxc;
 
 #[global_allocator]
@@ -27,8 +27,8 @@ pub fn main() {
         legacy::run(source);
     }
 
-    if target == "exp" {
-        experimental::run(source);
+    if target == "next" {
+        next::run(source);
     }
 
     if target == "oxc" {

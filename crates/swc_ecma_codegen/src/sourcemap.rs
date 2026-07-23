@@ -1,4 +1,4 @@
-use swc_experimental_allocator::{Allocator, hash_map::HashMap, vec::Vec as ArenaVec};
+use swc_next_allocator::{Allocator, hash_map::HashMap, vec::Vec as ArenaVec};
 
 use crate::util::next_code_point;
 

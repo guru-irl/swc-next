@@ -1,4 +1,4 @@
-use swc_experimental_ecma_ast::{CommentType, SourceType, Span};
+use swc_next_ecma_ast::{CommentType, SourceType, Span};
 
 use super::token::{Token, TokenFlag, TokenTag, flag_mask};
 use super::unicode_id::{can_continue_id, can_start_id};

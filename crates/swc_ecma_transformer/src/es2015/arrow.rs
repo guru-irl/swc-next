@@ -1,10 +1,10 @@
 use serde::Deserialize;
-use swc_experimental_ecma_ast::{
+use swc_next_ecma_ast::{
     Ast, Class, DUMMY_SP, Expr, FormalParameterKind, Function, FunctionType, GetSpan,
     IdentifierReference, MethodDefinition, MethodDefinitionKind, Program, StatementListItem,
     StaticBlock, Stmt, VisitMut, VisitMutWith,
 };
-use swc_experimental_ecma_semantic::Semantic;
+use swc_next_ecma_semantic::Semantic;
 
 use crate::es2015::util::fn_env_hoister::FnEnvHoister;
 
@@ -52,7 +52,7 @@ impl<'visit, 'ast> ArrowVisitor<'visit, 'ast> {
         }
     }
 
-    fn convert_arrow(&mut self, arrow: swc_experimental_ecma_ast::ArrowFunctionExpression) {
+    fn convert_arrow(&mut self, arrow: swc_next_ecma_ast::ArrowFunctionExpression) {
         let (span, params, body, is_async) = (
             arrow.span(self.ast),
             arrow.params(self.ast),
@@ -110,7 +110,7 @@ impl<'ast> VisitMut<'ast> for ArrowVisitor<'_, 'ast> {
         }
     }
 
-    fn visit_mut_this_expression(&mut self, node: swc_experimental_ecma_ast::ThisExpression) {
+    fn visit_mut_this_expression(&mut self, node: swc_next_ecma_ast::ThisExpression) {
         self.hoister.visit_this_expression(node, self.ast);
     }
 
@@ -118,7 +118,7 @@ impl<'ast> VisitMut<'ast> for ArrowVisitor<'_, 'ast> {
         self.hoister.visit_identifier_reference(node, self.ast);
     }
 
-    fn visit_mut_meta_property(&mut self, node: swc_experimental_ecma_ast::MetaProperty) {
+    fn visit_mut_meta_property(&mut self, node: swc_next_ecma_ast::MetaProperty) {
         self.hoister.visit_meta_property(node, self.ast);
     }
 

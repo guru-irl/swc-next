@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use swc_experimental_ecma_ast::{Lang, SourceType};
+use swc_next_ecma_ast::{Lang, SourceType};
 
 use crate::util::crate_root;
 

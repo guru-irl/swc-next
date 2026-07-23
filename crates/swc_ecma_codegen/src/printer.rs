@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use swc_experimental_allocator::{Allocator, vec::Vec as ArenaVec};
-use swc_experimental_ecma_ast::*;
+use swc_next_allocator::{Allocator, vec::Vec as ArenaVec};
+use swc_next_ecma_ast::*;
 
 use crate::operator::{BinaryExprVisitor, Binaryish, BinaryishOperator};
 use crate::util::{

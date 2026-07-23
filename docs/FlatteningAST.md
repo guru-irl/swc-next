@@ -188,7 +188,7 @@ match program {
 
 paren_expr.expr = Expr::Invalid(...)
 
-// swc experimental: use getters and setters with the reference to AST context
+// SWC Next: use getters and setters with the reference to AST context
 let expr = paren_expr.expr(&ast);
 match program {
   Program::Module(module) => {

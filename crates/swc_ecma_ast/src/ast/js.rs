@@ -1,6 +1,6 @@
 use std::mem;
 
-use swc_experimental_ast_macros::ast;
+use swc_next_ast_macros::ast;
 
 use super::{jsx::*, ts::*};
 use crate::{Ast, ExtraData, node_id::ExtraDataCompact};

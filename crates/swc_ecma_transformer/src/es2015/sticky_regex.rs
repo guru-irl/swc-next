@@ -1,4 +1,4 @@
-use swc_experimental_ecma_ast::{GetSpan, RegExpLiteral};
+use swc_next_ecma_ast::{GetSpan, RegExpLiteral};
 
 use crate::state::TransformerCtx;
 

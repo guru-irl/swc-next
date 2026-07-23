@@ -1,6 +1,6 @@
-use swc_experimental_allocator::{Allocator, vec::Vec as ArenaVec};
+use swc_next_allocator::{Allocator, vec::Vec as ArenaVec};
 
-use swc_experimental_ecma_ast::*;
+use swc_next_ecma_ast::*;
 use unicode_id_start::{is_id_continue, is_id_start};
 
 const HEX: &[u8; 16] = b"0123456789ABCDEF";

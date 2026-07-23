@@ -1,5 +1,5 @@
-use swc_experimental_ecma_ast::{ObjectProperty, Program, RegExpLiteral};
-use swc_experimental_ecma_semantic::Semantic;
+use swc_next_ecma_ast::{ObjectProperty, Program, RegExpLiteral};
+use swc_next_ecma_semantic::Semantic;
 
 use crate::state::TransformerCtx;
 

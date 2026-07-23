@@ -1,6 +1,6 @@
 # Test suite
 
-This package runs the experimental parser, semantic analyzer, code generator,
+This package runs the SWC Next parser, semantic analyzer, code generator,
 and transformer against upstream JavaScript and TypeScript test suites. It is a
 conformance and regression harness: each run writes a deterministic summary to
 `snapshots/`, which can be reviewed and committed like any other source change.

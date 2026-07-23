@@ -2,10 +2,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use colored::Colorize;
 use rayon::prelude::*;
-use swc_experimental_allocator::Allocator;
-use swc_experimental_ecma_ast::{Ast, SourceType};
-use swc_experimental_ecma_parser::{Options, Parser};
-use swc_experimental_ecma_semantic::analyze;
+use swc_next_allocator::Allocator;
+use swc_next_ecma_ast::{Ast, SourceType};
+use swc_next_ecma_parser::{Options, Parser};
+use swc_next_ecma_semantic::analyze;
 
 use crate::{cases::Case, runner::Runner, suite::TestResult};
 
@@ -49,7 +49,7 @@ fn run_case<C: Case>(case: &C) -> Result<(), String> {
 fn run_source(
     source: &[u8],
     source_type: SourceType,
-    lang: swc_experimental_ecma_ast::Lang,
+    lang: swc_next_ecma_ast::Lang,
 ) -> Option<String> {
     let allocator = Allocator::new();
     let mut ast = Ast::new(source, &allocator);

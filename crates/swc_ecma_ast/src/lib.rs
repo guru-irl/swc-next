@@ -19,7 +19,7 @@ mod generated {
 
 use oxc_index::Idx;
 use std::marker::PhantomData;
-use swc_experimental_allocator::{Allocator, vec::Vec as ArenaVec};
+use swc_next_allocator::{Allocator, vec::Vec as ArenaVec};
 
 pub use ast::*;
 pub use comment::*;
@@ -32,7 +32,7 @@ pub use semantic::{ScopeId, SymbolId};
 pub use strings::{AstString as String, StringPool};
 pub use visit::{TraverseAction, TraverseCtx};
 
-use swc_experimental_allocator::multi_index_vec;
+use swc_next_allocator::multi_index_vec;
 
 /// AST context that stores everything about the flattening AST.
 pub struct Ast<'a> {

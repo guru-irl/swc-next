@@ -2,10 +2,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use colored::Colorize;
 use rayon::prelude::*;
-use swc_experimental_allocator::Allocator;
-use swc_experimental_ecma_ast::{Ast, Lang, Severity, SourceType};
-use swc_experimental_ecma_codegen::{Options as CodegenOptions, print};
-use swc_experimental_ecma_parser::{Options as ParserOptions, Parser};
+use swc_next_allocator::Allocator;
+use swc_next_ecma_ast::{Ast, Lang, Severity, SourceType};
+use swc_next_ecma_codegen::{Options as CodegenOptions, print};
+use swc_next_ecma_parser::{Options as ParserOptions, Parser};
 
 use crate::{cases::Case, runner::Runner, suite::TestResult};
 

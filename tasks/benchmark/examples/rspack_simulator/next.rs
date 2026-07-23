@@ -1,4 +1,4 @@
-use swc_experimental_allocator::Allocator;
+use swc_next_allocator::Allocator;
 
 pub fn run(src: &'static str) {
     let allocator = Allocator::new();
@@ -9,11 +9,11 @@ pub fn run(src: &'static str) {
     // run_scan_dependencies(program, &ast);
     // drop((program, ast, tokens));
 
-    let mut ast = swc_experimental_ecma_ast::Ast::new(src.as_bytes(), &allocator);
-    let program = swc_experimental_ecma_parser::parse(
+    let mut ast = swc_next_ecma_ast::Ast::new(src.as_bytes(), &allocator);
+    let program = swc_next_ecma_parser::parse(
         &mut ast,
         src.as_bytes(),
-        swc_experimental_ecma_parser::Options::default(),
+        swc_next_ecma_parser::Options::default(),
     );
     drop((ast, program.unwrap()));
 }
@@ -227,7 +227,7 @@ pub fn run(src: &'static str) {
 
 // struct JavascriptParser<'visit, 'ast> {
 //     ast: &'visit Ast<'ast>,
-//     idents: Vec<swc_experimental_ecma_ast::String>,
+//     idents: Vec<swc_next_ecma_ast::String>,
 // }
 
 // impl<'ast> Visit<'ast> for JavascriptParser<'_, 'ast> {
@@ -235,7 +235,7 @@ pub fn run(src: &'static str) {
 //         self.ast
 //     }
 
-//     fn visit_ident(&mut self, node: swc_experimental_ecma_ast::Ident) {
+//     fn visit_ident(&mut self, node: swc_next_ecma_ast::Ident) {
 //         self.idents.push(node.sym(self.ast));
 //     }
 // }
