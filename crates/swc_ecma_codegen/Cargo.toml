@@ -9,7 +9,9 @@ repository.workspace  = true
 version               = "0.11.0"
 
 [dependencies]
-swc_core                         = { workspace = true }
-swc_experimental_ecma_ast        = { workspace = true }
-swc_experimental_ecma_ast_compat = { workspace = true }
-swc_experimental_ecma_semantic   = { workspace = true }
+swc_experimental_allocator = { workspace = true }
+swc_experimental_ecma_ast  = { workspace = true }
+unicode-id-start           = { workspace = true }
+
+[dev-dependencies]
+swc_experimental_ecma_parser = { workspace = true }

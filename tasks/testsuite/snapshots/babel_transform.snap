@@ -1,0 +1,860 @@
+babel transform
+===============
+
+Total
+-----
+Cases: 4069
+Passed: 435/4069 (10.69%)
+Failed: 68/4069 (1.67%)
+Panicked: 0/4069 (0.00%)
+Skipped: 3566/4069 (87.64%)
+
+Packages
+========
+
+babel-core
+----------
+Cases: 21
+Passed: 9/21 (42.86%)
+Failed: 0/21 (0.00%)
+Panicked: 0/21 (0.00%)
+Skipped: 12/21 (57.14%)
+
+babel-generator
+---------------
+Cases: 560
+Passed: 408/560 (72.86%)
+Failed: 60/560 (10.71%)
+Panicked: 0/560 (0.00%)
+Skipped: 92/560 (16.43%)
+Messages:
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/await-using-declarations/for-using-init/input.js - babel-generator/test/fixtures/await-using-declarations/for-using-init: transformed output differs from output.js at byte 60 (actual: 99 bytes, expected: 111 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/comments/async-class-method-computed-key-comment/input.js - babel-generator/test/fixtures/comments/async-class-method-computed-key-comment: transformed output differs from output.js at byte 31 (actual: 87 bytes, expected: 79 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/comments/async-generator-class-method-comment/input.js - babel-generator/test/fixtures/comments/async-generator-class-method-comment: transformed output differs from output.js at byte 46 (actual: 93 bytes, expected: 93 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/comments/async-generator-class-method-computed-key-comment/input.js - babel-generator/test/fixtures/comments/async-generator-class-method-computed-key-comment: transformed output differs from output.js at byte 40 (actual: 96 bytes, expected: 88 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/comments/concise-block-comment-indent-2/input.js - babel-generator/test/fixtures/comments/concise-block-comment-indent-2: transformed output differs from output.js at byte 110 (actual: 121 bytes, expected: 119 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/comments/return-no-argument/input.js - babel-generator/test/fixtures/comments/return-no-argument: transformed output differs from output.js at byte 1 (actual: 45 bytes, expected: 43 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/compact/binary-expressions/input.js - babel-generator/test/fixtures/compact/binary-expressions: transformed output differs from output.js at byte 32 (actual: 120 bytes, expected: 114 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/compact/comment-after-division/input.js - babel-generator/test/fixtures/compact/comment-after-division: transformed output differs from output.js at byte 54 (actual: 62 bytes, expected: 63 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/edgecase/bitwise-precedence/input.js - babel-generator/test/fixtures/edgecase/bitwise-precedence: transformed output differs from output.js at byte 15 (actual: 37 bytes, expected: 35 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/edgecase/floating-point/input.js - babel-generator/test/fixtures/edgecase/floating-point: transformed output differs from output.js at byte 15 (actual: 34 bytes, expected: 32 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/edgecase/for-in-no-in/input.js - babel-generator/test/fixtures/edgecase/for-in-no-in: transformed output differs from output.js at byte 345 (actual: 402 bytes, expected: 400 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/edgecase/large-file-concise/input.js - babel-generator/test/fixtures/edgecase/large-file-concise: transformed output differs from output.js at byte 307039 (actual: 3380923 bytes, expected: 3380831 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/edgecase/let-identifier/input.js - input.js parse: Keywords cannot contain escape characters at 31..39
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/edgecase/new-precedence/input.js - babel-generator/test/fixtures/edgecase/new-precedence: transformed output differs from output.js at byte 36 (actual: 193 bytes, expected: 185 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/edgecase/return-with-retainlines-and-compact-option/input.js - babel-generator/test/fixtures/edgecase/return-with-retainlines-and-compact-option: transformed output differs from output.js at byte 28 (actual: 43 bytes, expected: 34 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/edgecase/unary-op/input.js - input.js semantic: Deleting an unqualified identifier is forbidden in strict mode at 7..15
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/edgecase/yield-star-with-retainlines-option/input.js - babel-generator/test/fixtures/edgecase/yield-star-with-retainlines-option: transformed output differs from output.js at byte 28 (actual: 88 bytes, expected: 84 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/arrow-function-ternary/input.js - babel-generator/test/fixtures/parentheses/arrow-function-ternary: transformed output differs from output.js at byte 28 (actual: 69 bytes, expected: 61 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/await-expression/input.js - babel-generator/test/fixtures/parentheses/await-expression: transformed output differs from output.js at byte 109 (actual: 290 bytes, expected: 284 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/class-extends/input.js - babel-generator/test/fixtures/parentheses/class-extends: transformed output differs from output.js at byte 227 (actual: 533 bytes, expected: 529 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/expression/input.js - babel-generator/test/fixtures/parentheses/expression: transformed output differs from output.js at byte 5 (actual: 80 bytes, expected: 78 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/in-inside-for/input.js - input.js parse: Expected ';' after for-loop init, but found ')' at 62..63
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/new-callee/input.js - input.js semantic: 'super()' is only valid in a derived class constructor at 275..282
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/nullish-coalescing/input.js - babel-generator/test/fixtures/parentheses/nullish-coalescing: transformed output differs from output.js at byte 57 (actual: 202 bytes, expected: 198 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/sequence-expressions/input.js - babel-generator/test/fixtures/parentheses/sequence-expressions: transformed output differs from output.js at byte 173 (actual: 264 bytes, expected: 254 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/tagged-template-expression/input.js - babel-generator/test/fixtures/parentheses/tagged-template-expression: transformed output differs from output.js at byte 32 (actual: 105 bytes, expected: 105 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/ts-conditional-type/input.ts - babel-generator/test/fixtures/parentheses/ts-conditional-type: transformed output differs from output.js at byte 771 (actual: 971 bytes, expected: 965 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/ts-infer-type/input.ts - babel-generator/test/fixtures/parentheses/ts-infer-type: transformed output differs from output.js at byte 632 (actual: 1683 bytes, expected: 1657 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/ts-intersection-type/input.ts - babel-generator/test/fixtures/parentheses/ts-intersection-type: transformed output differs from output.js at byte 225 (actual: 317 bytes, expected: 313 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/ts-new-callee/input.js - input.js semantic: 'super()' is only valid in a derived class constructor at 287..294
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/ts-type-operator/input.ts - babel-generator/test/fixtures/parentheses/ts-type-operator: transformed output differs from output.js at byte 181 (actual: 259 bytes, expected: 253 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/ts-union-type/input.ts - babel-generator/test/fixtures/parentheses/ts-union-type: transformed output differs from output.js at byte 152 (actual: 364 bytes, expected: 358 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/unary-postfix/input.js - babel-generator/test/fixtures/parentheses/unary-postfix: transformed output differs from output.js at byte 1 (actual: 46 bytes, expected: 44 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/parentheses/yield-expression/input.js - babel-generator/test/fixtures/parentheses/yield-expression: transformed output differs from output.js at byte 109 (actual: 312 bytes, expected: 304 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/regression/15161/input.js - babel-generator/test/fixtures/regression/15161: transformed output differs from output.js at byte 19 (actual: 57 bytes, expected: 22 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/regression/comment-before-parentheses-return-arg/input.js - babel-generator/test/fixtures/regression/comment-before-parentheses-return-arg: transformed output differs from output.js at byte 99 (actual: 311 bytes, expected: 305 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/retainFunctionParens/nested/input.js - babel-generator/test/fixtures/retainFunctionParens/nested: transformed output differs from output.js at byte 9 (actual: 30 bytes, expected: 26 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/sourcemaps/arrow-function-compact/input.js - babel-generator/test/fixtures/sourcemaps/arrow-function-compact: transformed output differs from output.js at byte 1 (actual: 28 bytes, expected: 24 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/sourcemaps/arrow-function/input.js - babel-generator/test/fixtures/sourcemaps/arrow-function: transformed output differs from output.js at byte 1 (actual: 28 bytes, expected: 24 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/sourcemaps/comment-before-parentheses-return-arg/input.js - babel-generator/test/fixtures/sourcemaps/comment-before-parentheses-return-arg: transformed output differs from output.js at byte 74 (actual: 311 bytes, expected: 308 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/sourcemaps/real-world-babel-file1/input.ts - babel-generator/test/fixtures/sourcemaps/real-world-babel-file1: transformed output differs from output.js at byte 2535 (actual: 3706 bytes, expected: 3704 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/sourcemaps/real-world-babel-file2/input.ts - babel-generator/test/fixtures/sourcemaps/real-world-babel-file2: transformed output differs from output.js at byte 4071 (actual: 22339 bytes, expected: 22319 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/types/ClassBody-ClassProperty/input.js - input.js parse: Getter cannot be a generator at 526..527
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/types/ExportDefaultDeclaration11/input.js - input.js parse: Expected a semicolon or an implicit semicolon after a statement, but found '(' at 21..22
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/types/LogicalExpression/input.js - babel-generator/test/fixtures/types/LogicalExpression: transformed output differs from output.js at byte 76 (actual: 230 bytes, expected: 216 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/types/UnaryExpression/input.js - input.js semantic: Deleting an unqualified identifier is forbidden in strict mode at 7..15
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/types/WithStatement/input.js - input.js semantic: 'with' statements are not allowed in strict mode at 0..13
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/arrow-function-return-object-as/input.js - babel-generator/test/fixtures/typescript/arrow-function-return-object-as: transformed output differs from output.js at byte 9 (actual: 41 bytes, expected: 41 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/cast-need-parentheses/input.js - babel-generator/test/fixtures/typescript/cast-need-parentheses: transformed output differs from output.js at byte 28 (actual: 354 bytes, expected: 346 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/class-abstract/input.js - input.js semantic: Duplicate export 'default' at 187..189
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/export-default-function-as/input.js - babel-generator/test/fixtures/typescript/export-default-function-as: transformed output differs from output.js at byte 32 (actual: 40 bytes, expected: 40 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/import-export-import-require/input.js - input.js parse: expected an import-equals declaration after 'export' at 7..31
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/import-export-import/input.js - input.js parse: expected an import-equals declaration after 'export' at 7..22
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/module-namespace-body-declare/input.js - input.js parse: 'const' declarations must be initialized at 32..33
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/module-namespace-body-nested-declare/input.js - input.js parse: 'const' declarations must be initialized at 54..55
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/non-null-parentheses/input.js - babel-generator/test/fixtures/typescript/non-null-parentheses: transformed output differs from output.js at byte 30 (actual: 166 bytes, expected: 162 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/satisfies-parentheses/input.ts - babel-generator/test/fixtures/typescript/satisfies-parentheses: transformed output differs from output.js at byte 71 (actual: 694 bytes, expected: 662 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/satisfies/input.js - babel-generator/test/fixtures/typescript/satisfies: transformed output differs from output.js at byte 186 (actual: 241 bytes, expected: 240 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/types-parenthesized/input.js - babel-generator/test/fixtures/typescript/types-parenthesized: transformed output differs from output.js at byte 9 (actual: 15 bytes, expected: 13 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/typescript/variance-annotations-with-jsx/input.tsx - input.js parse: Expected a semicolon or an implicit semicolon after a statement, but found '<' at 27..28
+
+babel-helper-create-class-features-plugin
+-----------------------------------------
+Cases: 13
+Passed: 0/13 (0.00%)
+Failed: 0/13 (0.00%)
+Panicked: 0/13 (0.00%)
+Skipped: 13/13 (100.00%)
+
+babel-helper-create-regexp-features-plugin
+------------------------------------------
+Cases: 1
+Passed: 0/1 (0.00%)
+Failed: 0/1 (0.00%)
+Panicked: 0/1 (0.00%)
+Skipped: 1/1 (100.00%)
+
+babel-helpers
+-------------
+Cases: 2
+Passed: 0/2 (0.00%)
+Failed: 0/2 (0.00%)
+Panicked: 0/2 (0.00%)
+Skipped: 2/2 (100.00%)
+
+babel-plugin-bugfix-firefox-class-in-computed-class-key
+-------------------------------------------------------
+Cases: 8
+Passed: 0/8 (0.00%)
+Failed: 0/8 (0.00%)
+Panicked: 0/8 (0.00%)
+Skipped: 8/8 (100.00%)
+
+babel-plugin-bugfix-safari-class-field-initializer-scope
+--------------------------------------------------------
+Cases: 1
+Passed: 0/1 (0.00%)
+Failed: 0/1 (0.00%)
+Panicked: 0/1 (0.00%)
+Skipped: 1/1 (100.00%)
+
+babel-plugin-bugfix-safari-id-destructuring-collision-in-function-expression
+----------------------------------------------------------------------------
+Cases: 5
+Passed: 0/5 (0.00%)
+Failed: 0/5 (0.00%)
+Panicked: 0/5 (0.00%)
+Skipped: 5/5 (100.00%)
+
+babel-plugin-bugfix-safari-rest-destructuring-rhs-array
+-------------------------------------------------------
+Cases: 5
+Passed: 0/5 (0.00%)
+Failed: 0/5 (0.00%)
+Panicked: 0/5 (0.00%)
+Skipped: 5/5 (100.00%)
+
+babel-plugin-bugfix-v8-spread-parameters-in-optional-chaining
+-------------------------------------------------------------
+Cases: 7
+Passed: 0/7 (0.00%)
+Failed: 0/7 (0.00%)
+Panicked: 0/7 (0.00%)
+Skipped: 7/7 (100.00%)
+
+babel-plugin-bugfix-v8-static-class-fields-redefine-readonly
+------------------------------------------------------------
+Cases: 9
+Passed: 0/9 (0.00%)
+Failed: 0/9 (0.00%)
+Panicked: 0/9 (0.00%)
+Skipped: 9/9 (100.00%)
+
+babel-plugin-external-helpers
+-----------------------------
+Cases: 1
+Passed: 0/1 (0.00%)
+Failed: 0/1 (0.00%)
+Panicked: 0/1 (0.00%)
+Skipped: 1/1 (100.00%)
+
+babel-plugin-proposal-async-do-expressions
+------------------------------------------
+Cases: 7
+Passed: 0/7 (0.00%)
+Failed: 0/7 (0.00%)
+Panicked: 0/7 (0.00%)
+Skipped: 7/7 (100.00%)
+
+babel-plugin-proposal-decorators
+--------------------------------
+Cases: 154
+Passed: 0/154 (0.00%)
+Failed: 0/154 (0.00%)
+Panicked: 0/154 (0.00%)
+Skipped: 154/154 (100.00%)
+
+babel-plugin-proposal-destructuring-private
+-------------------------------------------
+Cases: 72
+Passed: 0/72 (0.00%)
+Failed: 0/72 (0.00%)
+Panicked: 0/72 (0.00%)
+Skipped: 72/72 (100.00%)
+
+babel-plugin-proposal-discard-binding
+-------------------------------------
+Cases: 54
+Passed: 0/54 (0.00%)
+Failed: 0/54 (0.00%)
+Panicked: 0/54 (0.00%)
+Skipped: 54/54 (100.00%)
+
+babel-plugin-proposal-do-expressions
+------------------------------------
+Cases: 45
+Passed: 0/45 (0.00%)
+Failed: 0/45 (0.00%)
+Panicked: 0/45 (0.00%)
+Skipped: 45/45 (100.00%)
+
+babel-plugin-proposal-export-default-from
+-----------------------------------------
+Cases: 6
+Passed: 0/6 (0.00%)
+Failed: 0/6 (0.00%)
+Panicked: 0/6 (0.00%)
+Skipped: 6/6 (100.00%)
+
+babel-plugin-proposal-function-bind
+-----------------------------------
+Cases: 7
+Passed: 0/7 (0.00%)
+Failed: 0/7 (0.00%)
+Panicked: 0/7 (0.00%)
+Skipped: 7/7 (100.00%)
+
+babel-plugin-proposal-function-sent
+-----------------------------------
+Cases: 13
+Passed: 0/13 (0.00%)
+Failed: 0/13 (0.00%)
+Panicked: 0/13 (0.00%)
+Skipped: 13/13 (100.00%)
+
+babel-plugin-proposal-import-defer
+----------------------------------
+Cases: 8
+Passed: 0/8 (0.00%)
+Failed: 0/8 (0.00%)
+Panicked: 0/8 (0.00%)
+Skipped: 8/8 (100.00%)
+
+babel-plugin-proposal-import-wasm-source
+----------------------------------------
+Cases: 28
+Passed: 0/28 (0.00%)
+Failed: 0/28 (0.00%)
+Panicked: 0/28 (0.00%)
+Skipped: 28/28 (100.00%)
+
+babel-plugin-proposal-optional-chaining-assign
+----------------------------------------------
+Cases: 14
+Passed: 0/14 (0.00%)
+Failed: 0/14 (0.00%)
+Panicked: 0/14 (0.00%)
+Skipped: 14/14 (100.00%)
+
+babel-plugin-proposal-partial-application
+-----------------------------------------
+Cases: 15
+Passed: 0/15 (0.00%)
+Failed: 0/15 (0.00%)
+Panicked: 0/15 (0.00%)
+Skipped: 15/15 (100.00%)
+
+babel-plugin-proposal-pipeline-operator
+---------------------------------------
+Cases: 128
+Passed: 0/128 (0.00%)
+Failed: 0/128 (0.00%)
+Panicked: 0/128 (0.00%)
+Skipped: 128/128 (100.00%)
+
+babel-plugin-proposal-throw-expressions
+---------------------------------------
+Cases: 12
+Passed: 0/12 (0.00%)
+Failed: 0/12 (0.00%)
+Panicked: 0/12 (0.00%)
+Skipped: 12/12 (100.00%)
+
+babel-plugin-syntax-typescript
+------------------------------
+Cases: 2
+Passed: 1/2 (50.00%)
+Failed: 1/2 (50.00%)
+Panicked: 0/2 (0.00%)
+Skipped: 0/2 (0.00%)
+Messages:
+Failed: fixtures/babel/packages/babel-plugin-syntax-typescript/test/fixtures/dts/enabled/input.ts - input.js parse: 'const' declarations must be initialized at 6..9
+
+babel-plugin-transform-arrow-functions
+--------------------------------------
+Cases: 24
+Passed: 1/24 (4.17%)
+Failed: 7/24 (29.17%)
+Panicked: 0/24 (0.00%)
+Skipped: 16/24 (66.67%)
+Messages:
+Failed: fixtures/babel/packages/babel-plugin-transform-arrow-functions/test/fixtures/arrow-functions/implicit-var-arguments/input.js - babel-plugin-transform-arrow-functions/test/fixtures/arrow-functions/implicit-var-arguments: transformed output differs from output.js at byte 4 (actual: 238 bytes, expected: 273 bytes)
+Failed: fixtures/babel/packages/babel-plugin-transform-arrow-functions/test/fixtures/arrow-functions/spec/input.js - babel-plugin-transform-arrow-functions/test/fixtures/arrow-functions/spec: transformed output differs from output.js at byte 28 (actual: 288 bytes, expected: 524 bytes)
+Failed: fixtures/babel/packages/babel-plugin-transform-arrow-functions/test/fixtures/assumption-newableArrowFunctions-false/basic/input.js - babel-plugin-transform-arrow-functions/test/fixtures/assumption-newableArrowFunctions-false/basic: transformed output differs from output.js at byte 28 (actual: 288 bytes, expected: 524 bytes)
+Failed: fixtures/babel/packages/babel-plugin-transform-arrow-functions/test/fixtures/assumption-newableArrowFunctions-false/naming/input.js - babel-plugin-transform-arrow-functions/test/fixtures/assumption-newableArrowFunctions-false/naming: transformed output differs from output.js at byte 0 (actual: 122 bytes, expected: 312 bytes)
+Failed: fixtures/babel/packages/babel-plugin-transform-arrow-functions/test/fixtures/assumption-newableArrowFunctions-false/self-referential/input.js - babel-plugin-transform-arrow-functions/test/fixtures/assumption-newableArrowFunctions-false/self-referential: transformed output differs from output.js at byte 4 (actual: 239 bytes, expected: 328 bytes)
+Failed: fixtures/babel/packages/babel-plugin-transform-arrow-functions/test/fixtures/spec/newableArrowFunction-default/input.js - babel-plugin-transform-arrow-functions/test/fixtures/spec/newableArrowFunction-default: transformed output differs from output.js at byte 0 (actual: 36 bytes, expected: 112 bytes)
+Failed: fixtures/babel/packages/babel-plugin-transform-arrow-functions/test/fixtures/spec/newableArrowFunction-vs-spec-false/input.js - babel-plugin-transform-arrow-functions/test/fixtures/spec/newableArrowFunction-vs-spec-false: transformed output differs from output.js at byte 0 (actual: 36 bytes, expected: 112 bytes)
+
+babel-plugin-transform-async-generator-functions
+------------------------------------------------
+Cases: 22
+Passed: 0/22 (0.00%)
+Failed: 0/22 (0.00%)
+Panicked: 0/22 (0.00%)
+Skipped: 22/22 (100.00%)
+
+babel-plugin-transform-async-to-generator
+-----------------------------------------
+Cases: 47
+Passed: 0/47 (0.00%)
+Failed: 0/47 (0.00%)
+Panicked: 0/47 (0.00%)
+Skipped: 47/47 (100.00%)
+
+babel-plugin-transform-block-scoped-functions
+---------------------------------------------
+Cases: 5
+Passed: 0/5 (0.00%)
+Failed: 0/5 (0.00%)
+Panicked: 0/5 (0.00%)
+Skipped: 5/5 (100.00%)
+
+babel-plugin-transform-block-scoping
+------------------------------------
+Cases: 117
+Passed: 0/117 (0.00%)
+Failed: 0/117 (0.00%)
+Panicked: 0/117 (0.00%)
+Skipped: 117/117 (100.00%)
+
+babel-plugin-transform-class-properties
+---------------------------------------
+Cases: 267
+Passed: 2/267 (0.75%)
+Failed: 0/267 (0.00%)
+Panicked: 0/267 (0.00%)
+Skipped: 265/267 (99.25%)
+
+babel-plugin-transform-class-static-block
+-----------------------------------------
+Cases: 24
+Passed: 0/24 (0.00%)
+Failed: 0/24 (0.00%)
+Panicked: 0/24 (0.00%)
+Skipped: 24/24 (100.00%)
+
+babel-plugin-transform-classes
+------------------------------
+Cases: 176
+Passed: 0/176 (0.00%)
+Failed: 0/176 (0.00%)
+Panicked: 0/176 (0.00%)
+Skipped: 176/176 (100.00%)
+
+babel-plugin-transform-computed-properties
+------------------------------------------
+Cases: 30
+Passed: 0/30 (0.00%)
+Failed: 0/30 (0.00%)
+Panicked: 0/30 (0.00%)
+Skipped: 30/30 (100.00%)
+
+babel-plugin-transform-destructuring
+------------------------------------
+Cases: 54
+Passed: 0/54 (0.00%)
+Failed: 0/54 (0.00%)
+Panicked: 0/54 (0.00%)
+Skipped: 54/54 (100.00%)
+
+babel-plugin-transform-dotall-regex
+-----------------------------------
+Cases: 3
+Passed: 0/3 (0.00%)
+Failed: 0/3 (0.00%)
+Panicked: 0/3 (0.00%)
+Skipped: 3/3 (100.00%)
+
+babel-plugin-transform-duplicate-keys
+-------------------------------------
+Cases: 8
+Passed: 0/8 (0.00%)
+Failed: 0/8 (0.00%)
+Panicked: 0/8 (0.00%)
+Skipped: 8/8 (100.00%)
+
+babel-plugin-transform-duplicate-named-capturing-groups-regex
+-------------------------------------------------------------
+Cases: 10
+Passed: 0/10 (0.00%)
+Failed: 0/10 (0.00%)
+Panicked: 0/10 (0.00%)
+Skipped: 10/10 (100.00%)
+
+babel-plugin-transform-dynamic-import
+-------------------------------------
+Cases: 32
+Passed: 0/32 (0.00%)
+Failed: 0/32 (0.00%)
+Panicked: 0/32 (0.00%)
+Skipped: 32/32 (100.00%)
+
+babel-plugin-transform-explicit-resource-management
+---------------------------------------------------
+Cases: 28
+Passed: 0/28 (0.00%)
+Failed: 0/28 (0.00%)
+Panicked: 0/28 (0.00%)
+Skipped: 28/28 (100.00%)
+
+babel-plugin-transform-exponentiation-operator
+----------------------------------------------
+Cases: 7
+Passed: 0/7 (0.00%)
+Failed: 0/7 (0.00%)
+Panicked: 0/7 (0.00%)
+Skipped: 7/7 (100.00%)
+
+babel-plugin-transform-export-namespace-from
+--------------------------------------------
+Cases: 4
+Passed: 0/4 (0.00%)
+Failed: 0/4 (0.00%)
+Panicked: 0/4 (0.00%)
+Skipped: 4/4 (100.00%)
+
+babel-plugin-transform-flow-comments
+------------------------------------
+Cases: 32
+Passed: 0/32 (0.00%)
+Failed: 0/32 (0.00%)
+Panicked: 0/32 (0.00%)
+Skipped: 32/32 (100.00%)
+
+babel-plugin-transform-flow-strip-types
+---------------------------------------
+Cases: 32
+Passed: 0/32 (0.00%)
+Failed: 0/32 (0.00%)
+Panicked: 0/32 (0.00%)
+Skipped: 32/32 (100.00%)
+
+babel-plugin-transform-for-of
+-----------------------------
+Cases: 76
+Passed: 0/76 (0.00%)
+Failed: 0/76 (0.00%)
+Panicked: 0/76 (0.00%)
+Skipped: 76/76 (100.00%)
+
+babel-plugin-transform-function-name
+------------------------------------
+Cases: 33
+Passed: 0/33 (0.00%)
+Failed: 0/33 (0.00%)
+Panicked: 0/33 (0.00%)
+Skipped: 33/33 (100.00%)
+
+babel-plugin-transform-instanceof
+---------------------------------
+Cases: 1
+Passed: 0/1 (0.00%)
+Failed: 0/1 (0.00%)
+Panicked: 0/1 (0.00%)
+Skipped: 1/1 (100.00%)
+
+babel-plugin-transform-jscript
+------------------------------
+Cases: 2
+Passed: 0/2 (0.00%)
+Failed: 0/2 (0.00%)
+Panicked: 0/2 (0.00%)
+Skipped: 2/2 (100.00%)
+
+babel-plugin-transform-json-modules
+-----------------------------------
+Cases: 32
+Passed: 0/32 (0.00%)
+Failed: 0/32 (0.00%)
+Panicked: 0/32 (0.00%)
+Skipped: 32/32 (100.00%)
+
+babel-plugin-transform-json-strings
+-----------------------------------
+Cases: 4
+Passed: 0/4 (0.00%)
+Failed: 0/4 (0.00%)
+Panicked: 0/4 (0.00%)
+Skipped: 4/4 (100.00%)
+
+babel-plugin-transform-logical-assignment-operators
+---------------------------------------------------
+Cases: 6
+Passed: 0/6 (0.00%)
+Failed: 0/6 (0.00%)
+Panicked: 0/6 (0.00%)
+Skipped: 6/6 (100.00%)
+
+babel-plugin-transform-member-expression-literals
+-------------------------------------------------
+Cases: 1
+Passed: 0/1 (0.00%)
+Failed: 0/1 (0.00%)
+Panicked: 0/1 (0.00%)
+Skipped: 1/1 (100.00%)
+
+babel-plugin-transform-modules-amd
+----------------------------------
+Cases: 108
+Passed: 0/108 (0.00%)
+Failed: 0/108 (0.00%)
+Panicked: 0/108 (0.00%)
+Skipped: 108/108 (100.00%)
+
+babel-plugin-transform-modules-commonjs
+---------------------------------------
+Cases: 208
+Passed: 0/208 (0.00%)
+Failed: 0/208 (0.00%)
+Panicked: 0/208 (0.00%)
+Skipped: 208/208 (100.00%)
+
+babel-plugin-transform-modules-systemjs
+---------------------------------------
+Cases: 76
+Passed: 0/76 (0.00%)
+Failed: 0/76 (0.00%)
+Panicked: 0/76 (0.00%)
+Skipped: 76/76 (100.00%)
+
+babel-plugin-transform-modules-umd
+----------------------------------
+Cases: 125
+Passed: 0/125 (0.00%)
+Failed: 0/125 (0.00%)
+Panicked: 0/125 (0.00%)
+Skipped: 125/125 (100.00%)
+
+babel-plugin-transform-named-capturing-groups-regex
+---------------------------------------------------
+Cases: 11
+Passed: 0/11 (0.00%)
+Failed: 0/11 (0.00%)
+Panicked: 0/11 (0.00%)
+Skipped: 11/11 (100.00%)
+
+babel-plugin-transform-new-target
+---------------------------------
+Cases: 8
+Passed: 0/8 (0.00%)
+Failed: 0/8 (0.00%)
+Panicked: 0/8 (0.00%)
+Skipped: 8/8 (100.00%)
+
+babel-plugin-transform-nullish-coalescing-operator
+--------------------------------------------------
+Cases: 24
+Passed: 0/24 (0.00%)
+Failed: 0/24 (0.00%)
+Panicked: 0/24 (0.00%)
+Skipped: 24/24 (100.00%)
+
+babel-plugin-transform-numeric-separator
+----------------------------------------
+Cases: 2
+Passed: 0/2 (0.00%)
+Failed: 0/2 (0.00%)
+Panicked: 0/2 (0.00%)
+Skipped: 2/2 (100.00%)
+
+babel-plugin-transform-object-rest-spread
+-----------------------------------------
+Cases: 64
+Passed: 0/64 (0.00%)
+Failed: 0/64 (0.00%)
+Panicked: 0/64 (0.00%)
+Skipped: 64/64 (100.00%)
+
+babel-plugin-transform-object-super
+-----------------------------------
+Cases: 22
+Passed: 0/22 (0.00%)
+Failed: 0/22 (0.00%)
+Panicked: 0/22 (0.00%)
+Skipped: 22/22 (100.00%)
+
+babel-plugin-transform-optional-catch-binding
+---------------------------------------------
+Cases: 4
+Passed: 0/4 (0.00%)
+Failed: 0/4 (0.00%)
+Panicked: 0/4 (0.00%)
+Skipped: 4/4 (100.00%)
+
+babel-plugin-transform-optional-chaining
+----------------------------------------
+Cases: 45
+Passed: 0/45 (0.00%)
+Failed: 0/45 (0.00%)
+Panicked: 0/45 (0.00%)
+Skipped: 45/45 (100.00%)
+
+babel-plugin-transform-parameters
+---------------------------------
+Cases: 70
+Passed: 0/70 (0.00%)
+Failed: 0/70 (0.00%)
+Panicked: 0/70 (0.00%)
+Skipped: 70/70 (100.00%)
+
+babel-plugin-transform-private-methods
+--------------------------------------
+Cases: 141
+Passed: 0/141 (0.00%)
+Failed: 0/141 (0.00%)
+Panicked: 0/141 (0.00%)
+Skipped: 141/141 (100.00%)
+
+babel-plugin-transform-private-property-in-object
+-------------------------------------------------
+Cases: 59
+Passed: 0/59 (0.00%)
+Failed: 0/59 (0.00%)
+Panicked: 0/59 (0.00%)
+Skipped: 59/59 (100.00%)
+
+babel-plugin-transform-property-literals
+----------------------------------------
+Cases: 1
+Passed: 0/1 (0.00%)
+Failed: 0/1 (0.00%)
+Panicked: 0/1 (0.00%)
+Skipped: 1/1 (100.00%)
+
+babel-plugin-transform-proto-to-assign
+--------------------------------------
+Cases: 3
+Passed: 0/3 (0.00%)
+Failed: 0/3 (0.00%)
+Panicked: 0/3 (0.00%)
+Skipped: 3/3 (100.00%)
+
+babel-plugin-transform-react-constant-elements
+----------------------------------------------
+Cases: 76
+Passed: 0/76 (0.00%)
+Failed: 0/76 (0.00%)
+Panicked: 0/76 (0.00%)
+Skipped: 76/76 (100.00%)
+
+babel-plugin-transform-react-display-name
+-----------------------------------------
+Cases: 16
+Passed: 0/16 (0.00%)
+Failed: 0/16 (0.00%)
+Panicked: 0/16 (0.00%)
+Skipped: 16/16 (100.00%)
+
+babel-plugin-transform-react-inline-elements
+--------------------------------------------
+Cases: 23
+Passed: 0/23 (0.00%)
+Failed: 0/23 (0.00%)
+Panicked: 0/23 (0.00%)
+Skipped: 23/23 (100.00%)
+
+babel-plugin-transform-react-jsx
+--------------------------------
+Cases: 135
+Passed: 0/135 (0.00%)
+Failed: 0/135 (0.00%)
+Panicked: 0/135 (0.00%)
+Skipped: 135/135 (100.00%)
+
+babel-plugin-transform-react-jsx-development
+--------------------------------------------
+Cases: 11
+Passed: 0/11 (0.00%)
+Failed: 0/11 (0.00%)
+Panicked: 0/11 (0.00%)
+Skipped: 11/11 (100.00%)
+
+babel-plugin-transform-react-pure-annotations
+---------------------------------------------
+Cases: 11
+Passed: 0/11 (0.00%)
+Failed: 0/11 (0.00%)
+Panicked: 0/11 (0.00%)
+Skipped: 11/11 (100.00%)
+
+babel-plugin-transform-regenerator
+----------------------------------
+Cases: 32
+Passed: 0/32 (0.00%)
+Failed: 0/32 (0.00%)
+Panicked: 0/32 (0.00%)
+Skipped: 32/32 (100.00%)
+
+babel-plugin-transform-regexp-modifiers
+---------------------------------------
+Cases: 2
+Passed: 0/2 (0.00%)
+Failed: 0/2 (0.00%)
+Panicked: 0/2 (0.00%)
+Skipped: 2/2 (100.00%)
+
+babel-plugin-transform-reserved-words
+-------------------------------------
+Cases: 1
+Passed: 0/1 (0.00%)
+Failed: 0/1 (0.00%)
+Panicked: 0/1 (0.00%)
+Skipped: 1/1 (100.00%)
+
+babel-plugin-transform-runtime
+------------------------------
+Cases: 24
+Passed: 0/24 (0.00%)
+Failed: 0/24 (0.00%)
+Panicked: 0/24 (0.00%)
+Skipped: 24/24 (100.00%)
+
+babel-plugin-transform-shorthand-properties
+-------------------------------------------
+Cases: 7
+Passed: 6/7 (85.71%)
+Failed: 0/7 (0.00%)
+Panicked: 0/7 (0.00%)
+Skipped: 1/7 (14.29%)
+
+babel-plugin-transform-spread
+-----------------------------
+Cases: 43
+Passed: 0/43 (0.00%)
+Failed: 0/43 (0.00%)
+Panicked: 0/43 (0.00%)
+Skipped: 43/43 (100.00%)
+
+babel-plugin-transform-sticky-regex
+-----------------------------------
+Cases: 2
+Passed: 2/2 (100.00%)
+Failed: 0/2 (0.00%)
+Panicked: 0/2 (0.00%)
+Skipped: 0/2 (0.00%)
+
+babel-plugin-transform-strict-mode
+----------------------------------
+Cases: 6
+Passed: 0/6 (0.00%)
+Failed: 0/6 (0.00%)
+Panicked: 0/6 (0.00%)
+Skipped: 6/6 (100.00%)
+
+babel-plugin-transform-template-literals
+----------------------------------------
+Cases: 32
+Passed: 0/32 (0.00%)
+Failed: 0/32 (0.00%)
+Panicked: 0/32 (0.00%)
+Skipped: 32/32 (100.00%)
+
+babel-plugin-transform-typeof-symbol
+------------------------------------
+Cases: 6
+Passed: 0/6 (0.00%)
+Failed: 0/6 (0.00%)
+Panicked: 0/6 (0.00%)
+Skipped: 6/6 (100.00%)
+
+babel-plugin-transform-typescript
+---------------------------------
+Cases: 168
+Passed: 0/168 (0.00%)
+Failed: 0/168 (0.00%)
+Panicked: 0/168 (0.00%)
+Skipped: 168/168 (100.00%)
+
+babel-plugin-transform-unicode-escapes
+--------------------------------------
+Cases: 25
+Passed: 0/25 (0.00%)
+Failed: 0/25 (0.00%)
+Panicked: 0/25 (0.00%)
+Skipped: 25/25 (100.00%)
+
+babel-plugin-transform-unicode-property-regex
+---------------------------------------------
+Cases: 20
+Passed: 0/20 (0.00%)
+Failed: 0/20 (0.00%)
+Panicked: 0/20 (0.00%)
+Skipped: 20/20 (100.00%)
+
+babel-plugin-transform-unicode-regex
+------------------------------------
+Cases: 4
+Passed: 0/4 (0.00%)
+Failed: 0/4 (0.00%)
+Panicked: 0/4 (0.00%)
+Skipped: 4/4 (100.00%)
+
+babel-plugin-transform-unicode-sets-regex
+-----------------------------------------
+Cases: 4
+Passed: 0/4 (0.00%)
+Failed: 0/4 (0.00%)
+Panicked: 0/4 (0.00%)
+Skipped: 4/4 (100.00%)
+
+babel-preset-env
+----------------
+Cases: 111
+Passed: 0/111 (0.00%)
+Failed: 0/111 (0.00%)
+Panicked: 0/111 (0.00%)
+Skipped: 111/111 (100.00%)
+
+babel-preset-flow
+-----------------
+Cases: 2
+Passed: 0/2 (0.00%)
+Failed: 0/2 (0.00%)
+Panicked: 0/2 (0.00%)
+Skipped: 2/2 (100.00%)
+
+babel-preset-react
+------------------
+Cases: 12
+Passed: 0/12 (0.00%)
+Failed: 0/12 (0.00%)
+Panicked: 0/12 (0.00%)
+Skipped: 12/12 (100.00%)
+
+babel-preset-typescript
+-----------------------
+Cases: 13
+Passed: 0/13 (0.00%)
+Failed: 0/13 (0.00%)
+Panicked: 0/13 (0.00%)
+Skipped: 13/13 (100.00%)
+
+babel-traverse
+--------------
+Cases: 37
+Passed: 6/37 (16.22%)
+Failed: 0/37 (0.00%)
+Panicked: 0/37 (0.00%)
+Skipped: 31/37 (83.78%)

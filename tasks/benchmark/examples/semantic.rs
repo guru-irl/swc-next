@@ -1,42 +1,47 @@
 use std::{env, fs::read_to_string};
 
 use swc_experimental_allocator::Allocator;
-use swc_experimental_ecma_ast::{Ident, Visit};
-use swc_experimental_ecma_parser::{EsSyntax, Parser, StringSource, Syntax};
-use swc_experimental_ecma_semantic::resolver::{Semantic, resolver};
+use swc_experimental_ecma_ast::{Ast, IdentifierReference, Visit, VisitWith};
+use swc_experimental_ecma_parser::{Options, parse};
+use swc_experimental_ecma_semantic::{Semantic, analyze};
 
 fn main() {
     let source = env::args()
         .nth(1)
         .map(|p| read_to_string(p).unwrap())
         .unwrap_or(include_str!("../files/typescript.js").to_owned());
-    let syntax = Syntax::Es(EsSyntax::default());
     let allocator = Allocator::new();
-    let input = StringSource::new(&source);
-
-    let mut parser = Parser::new(&allocator, syntax, input, None);
-    let root = parser.parse_program().unwrap();
-    let semantic = resolver(&root);
+    let mut ast = Ast::new(source.as_bytes(), &allocator);
+    let root = parse(&mut ast, source.as_bytes(), Options::default()).unwrap();
+    let semantic = analyze(root, &mut ast);
 
     println!("Top level: {:?}", semantic.top_level_scope_id());
-    println!("Unresolved: {:?}", semantic.unresolved_scope_id());
-    ScopeDisplayVisitor {
+    println!(
+        "Unresolved references: {}",
+        semantic.symbol_table().unresolved_references().count()
+    );
+    root.visit_with(&mut ScopeDisplayVisitor {
+        ast: &ast,
         semantic: &semantic,
+    });
+}
+
+struct ScopeDisplayVisitor<'visit, 'ast> {
+    ast: &'visit Ast<'ast>,
+    semantic: &'visit Semantic,
+}
+
+impl<'ast> Visit<'ast> for ScopeDisplayVisitor<'_, 'ast> {
+    fn ast(&self) -> &Ast<'ast> {
+        self.ast
     }
-    .visit_program(&root);
-}
 
-struct ScopeDisplayVisitor<'a> {
-    semantic: &'a Semantic,
-}
-
-impl<'a> Visit<'a> for ScopeDisplayVisitor<'_> {
-    fn visit_ident(&mut self, node: &Ident) {
+    fn visit_identifier_reference(&mut self, node: IdentifierReference) {
         println!(
             "{} ({:?}) -> {:?}",
-            node.sym,
-            node.sym,
-            self.semantic.node_scope(node),
+            String::from_utf8_lossy(self.ast.string(node.name(self.ast))),
+            node.name(self.ast),
+            self.semantic.node_scope(node.node_id()),
         );
     }
 }

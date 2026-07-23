@@ -5,18 +5,27 @@ publish = false
 version = "0.1.0"
 
 [dependencies]
-colored   = { workspace = true }
-jwalk     = { workspace = true }
-pico-args = { workspace = true }
-rayon     = { workspace = true }
-saphyr    = { workspace = true }
-similar   = { workspace = true }
-swc_core  = { workspace = true, features = ["__ecma_transforms", "ecma_parser_unstable"] }
+colored    = { workspace = true }
+jwalk      = { workspace = true }
+pico-args  = { workspace = true }
+rayon      = { workspace = true }
+regex      = { workspace = true }
+saphyr     = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
 
-swc_experimental_allocator            = { workspace = true }
-swc_experimental_ecma_ast             = { workspace = true }
-swc_experimental_ecma_ast_compat      = { workspace = true }
-swc_experimental_ecma_codegen         = { workspace = true }
-swc_experimental_ecma_parser          = { workspace = true }
-swc_experimental_ecma_semantic        = { workspace = true }
-swc_experimental_ecma_transforms_base = { workspace = true }
+# TODO(flat-ast): Re-enable when the legacy conformance runner is ported.
+# swc_core = { workspace = true, features = ["__ecma_transforms", "ecma_parser_unstable"] }
+
+swc_experimental_allocator        = { workspace = true }
+swc_experimental_ecma_ast         = { workspace = true }
+swc_experimental_ecma_codegen     = { workspace = true }
+swc_experimental_ecma_parser      = { workspace = true }
+swc_experimental_ecma_semantic    = { workspace = true }
+swc_experimental_ecma_transformer = { workspace = true }
+
+[[bin]]
+name = "conformance"
+
+[[bin]]
+name = "babel_transform"

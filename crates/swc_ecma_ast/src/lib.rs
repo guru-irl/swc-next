@@ -1,95 +1,352 @@
+mod assert_layout;
 mod ast;
 mod comment;
-mod common;
 mod derive;
+mod diagnostic;
+mod node_id;
 mod semantic;
-mod span;
+mod strings;
 mod visit;
 
 mod generated {
     mod ast_builder;
     mod ast_clone_in;
+    pub(crate) mod ast_extra_compact;
+    pub mod ast_node;
     mod ast_property;
     pub(crate) mod ast_visitor;
 }
 
+use oxc_index::Idx;
+use std::marker::PhantomData;
+use swc_experimental_allocator::{Allocator, vec::Vec as ArenaVec};
+
 pub use ast::*;
 pub use comment::*;
-pub use common::*;
+pub use derive::*;
+pub use diagnostic::*;
+pub use generated::ast_node::{NodeKind, NodeKindData};
 pub use generated::ast_visitor::*;
+pub use node_id::{AstNode, ExtraDataCompact, ExtraDataId, NodeId, SubRange, TypedSubRange};
 pub use semantic::{ScopeId, SymbolId};
-pub use span::{DUMMY_SP, GetSpan, SetSpan, Span};
-use swc_experimental_allocator::Allocator;
+pub use strings::{AstString as String, StringPool};
+pub use visit::{TraverseAction, TraverseCtx};
 
-#[cfg(target_pointer_width = "64")]
-const _: () = {
-    use std::mem::size_of;
+use swc_experimental_allocator::multi_index_vec;
 
-    use ast::*;
+/// AST context that stores everything about the flattening AST.
+pub struct Ast<'a> {
+    allocator: &'a Allocator,
 
-    macro_rules! assert_size {
-        ($ty:ty, $size:expr) => {
-            assert!(size_of::<$ty>() == $size);
-        };
+    source_type: SourceType,
+
+    lang: Lang,
+
+    line_starts: Vec<u32>,
+
+    attached_comments: ArenaVec<'a, AttachedComment>,
+
+    attached_comment_offsets: ArenaVec<'a, u32>,
+
+    /// Flattening AST nodes.
+    pub(crate) nodes: NodeData<'a>,
+
+    /// Flattening AST fields.
+    extra_data: ArenaVec<'a, ExtraData>,
+
+    /// Source-backed and decoded AST strings.
+    pub strings: StringPool<'a>,
+}
+
+multi_index_vec! {
+    /// Arena-backed structure-of-arrays storage for flattening AST nodes.
+    pub struct NodeData<'a, NodeId> {
+        pub(crate) span => span_mut => span_unchecked => span_mut_unchecked: Span,
+        pub(crate) kind => kind_mut => kind_unchecked => kind_mut_unchecked: NodeKind,
+        pub(crate) data => data_mut => data_unchecked => data_mut_unchecked: NodePayload,
+    }
+}
+
+/// Compact 128-bit payload for a node.
+///
+/// Fully inlined nodes use all 128 bits. Nodes with out-of-line fields use the
+/// low 96 bits for inline data and the high 32 bits for the start index in
+/// [Ast::extra_data].
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct NodePayload(pub(crate) u128);
+
+/// Compact values stored in the flattening AST's extra-data table.
+#[derive(Clone, Copy)]
+pub union ExtraData {
+    node_id: NodeId,
+
+    sub_range: SubRange,
+    optional_scope_id: Option<ScopeId>,
+    optional_symbol_id: Option<SymbolId>,
+
+    /// Any scalar enum or other value representable within eight bytes.
+    other: u64,
+}
+
+impl<'a> Ast<'a> {
+    /// Create a flattening AST backed by `source` and `allocator`.
+    pub fn new(source: &'a [u8], allocator: &'a Allocator) -> Self {
+        Self {
+            allocator,
+            source_type: SourceType::Module,
+            lang: Lang::Js,
+            line_starts: vec![0],
+            attached_comments: ArenaVec::new_in(allocator),
+            attached_comment_offsets: ArenaVec::new_in(allocator),
+            nodes: NodeData::new_in(allocator),
+            extra_data: ArenaVec::with_capacity_in(0, allocator),
+            strings: StringPool::new(source),
+        }
     }
 
-    assert_size!(Program<'_>, 16);
-    assert_size!(ModuleItem<'_>, 16);
+    #[inline]
+    pub(crate) fn add_node(&mut self, span: Span, kind: NodeKind, data: NodePayload) -> NodeId {
+        self.nodes.push(span, kind, data)
+    }
 
-    assert_size!(ClassMember<'_>, 16);
-    assert_size!(MethodKind, 1);
-    assert_size!(Key<'_>, 16);
+    /// Replace `old`'s node data with `new`'s while preserving `old`'s node ID.
+    #[inline]
+    pub fn set_data(&mut self, old: NodeId, new: NodeId) {
+        let span = *self.nodes.span(new);
+        let kind = *self.nodes.kind(new);
+        let data = *self.nodes.data(new);
+        *self.nodes.span_mut(old) = span;
+        *self.nodes.kind_mut(old) = kind;
+        *self.nodes.data_mut(old) = data;
+    }
 
-    assert_size!(Decl<'_>, 16);
-    assert_size!(VarDeclKind, 1);
+    /// Replace `old` with a newly built `new` node, discard the temporary node,
+    /// and return a typed handle that preserves `old`'s node ID.
+    #[inline]
+    pub fn replace_data<Old: AstNode, New: AstNode>(&mut self, old: Old, new: New) -> New {
+        let old = old.node_id();
+        let new = new.node_id();
+        assert_ne!(old, new);
+        assert_eq!(new.index() + 1, self.nodes.len());
 
-    assert_size!(ParamOrTsParamProp<'_>, 8);
+        let span = *self.nodes.span(new);
+        let kind = *self.nodes.kind(new);
+        let data = *self.nodes.data(new);
+        *self.nodes.span_mut(old) = span;
+        *self.nodes.kind_mut(old) = kind;
+        *self.nodes.data_mut(old) = data;
+        self.nodes.truncate(new.index());
 
-    assert_size!(BinaryOp, 1);
-    assert_size!(AssignOp, 1);
-    assert_size!(UpdateOp, 1);
-    assert_size!(UnaryOp, 1);
+        unsafe { New::from_node_id_unchecked(old) }
+    }
 
-    assert_size!(Prop<'_>, 16);
-    assert_size!(PropName<'_>, 16);
+    #[inline]
+    fn add_extra(&mut self, extra: ExtraData) -> ExtraDataId {
+        let id = self.next_extra_data_id();
+        self.extra_data.push(extra);
+        id
+    }
 
-    assert_size!(Lit<'_>, 16);
+    #[inline]
+    fn next_extra_data_id(&self) -> ExtraDataId {
+        let index = self.extra_data.len();
+        assert!(
+            index <= ExtraDataId::MAX,
+            "extra data index exceeds ExtraDataId range"
+        );
+        ExtraDataId::from_usize_unchecked(index)
+    }
 
-    assert_size!(JSXObject<'_>, 16);
-    assert_size!(JSXExpr<'_>, 16);
-    assert_size!(JSXElementName<'_>, 16);
-    assert_size!(JSXAttrOrSpread<'_>, 16);
-    assert_size!(JSXAttrName<'_>, 16);
-    assert_size!(JSXAttrValue<'_>, 16);
-    assert_size!(JSXElementChild<'_>, 16);
+    #[inline]
+    pub fn add_typed_sub_range<N: ExtraDataCompact<'a>, I: IntoIterator<Item = N>>(
+        &mut self,
+        iter: I,
+    ) -> TypedSubRange<N> {
+        let start = self.next_extra_data_id();
+        for node in iter {
+            let data = node.to_extra_data(self);
+            self.extra_data.push(data);
+        }
+        TypedSubRange {
+            inner: SubRange {
+                start,
+                end: self.next_extra_data_id(),
+            },
+            _phantom: PhantomData,
+        }
+    }
 
-    assert_size!(ModuleDecl<'_>, 16);
-    assert_size!(ImportPhase, 1);
-    assert_size!(ImportSpecifier<'_>, 16);
-    assert_size!(ExportSpecifier<'_>, 16);
-    assert_size!(ModuleExportName<'_>, 16);
-    assert_size!(DefaultDecl<'_>, 16);
+    /// Append pre-encoded extra data as a single contiguous range.
+    pub fn add_extra_data_sub_range(&mut self, data: &[ExtraData]) -> SubRange {
+        let start = self.next_extra_data_id();
+        let end = start.index() + data.len();
+        self.extra_data.extend_from_slice_copy(data);
+        SubRange {
+            start,
+            end: ExtraDataId::from_usize_unchecked(end),
+        }
+    }
 
-    assert_size!(Expr<'_>, 16);
-    assert_size!(PropOrSpread<'_>, 16);
-    assert_size!(MemberProp<'_>, 16);
-    assert_size!(SuperProp<'_>, 16);
-    assert_size!(MetaPropKind, 1);
-    assert_size!(Callee<'_>, 16);
-    assert_size!(BlockStmtOrExpr<'_>, 16);
-    assert_size!(AssignTarget<'_>, 16);
-    assert_size!(AssignTargetPat<'_>, 16);
-    assert_size!(SimpleAssignTarget<'_>, 16);
-    assert_size!(OptChainBase<'_>, 16);
+    #[inline]
+    pub fn allocator(&self) -> &'a Allocator {
+        self.allocator
+    }
 
-    assert_size!(Pat<'_>, 16);
-    assert_size!(ObjectPatProp<'_>, 16);
+    #[inline]
+    pub fn set_source_metadata(&mut self, source_type: SourceType, lang: Lang) {
+        self.source_type = source_type;
+        self.lang = lang;
+    }
 
-    assert_size!(Stmt<'_>, 16);
-    assert_size!(ForHead<'_>, 16);
-    assert_size!(VarDeclOrExpr<'_>, 16);
-};
+    pub fn set_line_starts(&mut self, line_starts: Vec<u32>) {
+        debug_assert!(!line_starts.is_empty());
+        debug_assert_eq!(line_starts[0], 0);
+        self.line_starts = line_starts;
+    }
 
-pub struct AstBuilder<'a> {
-    pub allocator: &'a Allocator,
+    pub fn line_starts(&self) -> &[u32] {
+        &self.line_starts
+    }
+
+    /// Replaces the attached-comment table used by source consumers.
+    pub fn set_attached_comments(&mut self, comments: &[AttachedComment], offsets: &[u32]) {
+        assert!(offsets.is_empty() || offsets.len() == self.node_count() + 1);
+        assert!(offsets.is_empty() || offsets[0] == 0);
+        assert!(offsets.is_empty() || offsets[offsets.len() - 1] as usize == comments.len());
+        self.attached_comments.clear();
+        self.attached_comments.extend_from_slice_copy(comments);
+        self.attached_comment_offsets.clear();
+        self.attached_comment_offsets
+            .extend_from_slice_copy(offsets);
+    }
+
+    /// Returns comments attached to `node_id` in source order.
+    pub fn comments_of(&self, node_id: NodeId) -> &[AttachedComment] {
+        if self.attached_comment_offsets.len() != self.node_count() + 1 {
+            return &[];
+        }
+        let index = node_id.index();
+        let start = self.attached_comment_offsets[index] as usize;
+        let end = self.attached_comment_offsets[index + 1] as usize;
+        &self.attached_comments[start..end]
+    }
+
+    #[inline]
+    pub fn source_type(&self) -> SourceType {
+        self.source_type
+    }
+
+    #[inline]
+    pub fn lang(&self) -> Lang {
+        self.lang
+    }
+
+    #[inline]
+    pub fn is_ts(&self) -> bool {
+        self.lang.is_typescript()
+    }
+
+    #[inline]
+    pub fn is_jsx(&self) -> bool {
+        self.lang.is_jsx()
+    }
+
+    #[inline]
+    pub fn is_module(&self) -> bool {
+        self.source_type == SourceType::Module
+    }
+
+    #[inline]
+    pub fn source(&self) -> &'a [u8] {
+        self.strings.source
+    }
+
+    #[inline]
+    pub fn source_slice(&self, start: u32, end: u32) -> String {
+        self.strings.source_slice(start, end)
+    }
+
+    #[inline]
+    pub fn add_string(&mut self, value: &[u8]) -> String {
+        self.strings.add_string(value)
+    }
+
+    #[inline]
+    pub fn ensure_unused_string_capacity(&mut self, bytes: u32, entries: u32) {
+        self.strings.ensure_unused_capacity(bytes, entries);
+    }
+
+    #[inline]
+    pub fn string(&self, id: String) -> &[u8] {
+        self.strings.get(id)
+    }
+
+    #[inline]
+    pub fn empty_string(&self) -> String {
+        String::EMPTY
+    }
+
+    #[inline]
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Returns the number of entries in the out-of-line field table.
+    #[inline]
+    pub fn extra_data_count(&self) -> usize {
+        self.extra_data.len()
+    }
+
+    /// Reserves storage for parser output without changing logical lengths.
+    #[inline]
+    pub fn reserve(&mut self, additional_nodes: usize, additional_extra_data: usize) {
+        self.nodes.reserve(additional_nodes);
+        self.extra_data.reserve(additional_extra_data);
+    }
+
+    /// Rewinds node and out-of-line field storage to an earlier checkpoint.
+    #[inline]
+    pub fn truncate(&mut self, nodes_len: usize, extra_data_len: usize) {
+        assert!(nodes_len <= self.nodes.len());
+        assert!(extra_data_len <= self.extra_data.len());
+        self.nodes.truncate(nodes_len);
+        self.extra_data.truncate(extra_data_len);
+    }
+
+    /// Returns the concrete type stored at `node_id`.
+    #[inline]
+    pub fn node_kind(&self, node_id: NodeId) -> NodeKind {
+        *self.nodes.kind(node_id)
+    }
+
+    /// Returns the source span stored for `node_id`.
+    #[inline]
+    pub fn span(&self, node_id: NodeId) -> Span {
+        *self.nodes.span(node_id)
+    }
+}
+
+pub const DUMMY_SP: Span = Span { start: 0, end: 0 };
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Span {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl Span {
+    pub fn new(start: u32, end: u32) -> Self {
+        Self { start, end }
+    }
+
+    pub fn is_dummy(self) -> bool {
+        self.start == 0 && self.end == 0
+    }
+}
+
+impl std::fmt::Debug for Span {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}..{}", self.start, self.end)
+    }
 }

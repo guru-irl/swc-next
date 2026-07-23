@@ -1,5203 +1,9231 @@
-#![allow(unused, clippy::useless_conversion, clippy::identity_op)]
-use crate::span::{DUMMY_SP, GetSpan, SetSpan};
+#![allow(
+    unused,
+    clippy::useless_conversion,
+    clippy::identity_op,
+    clippy::erasing_op,
+    clippy::let_and_return
+)]
 use crate::*;
-use swc_experimental_allocator::atom::{Atom, Wtf8Atom};
-use swc_experimental_allocator::boxed::Box;
-impl<'a> Program<'a> {
+use oxc_index::Idx;
+impl Program {
     #[inline]
-    pub const fn is_module(&self) -> bool {
-        matches!(self, Self::Module { .. })
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<StatementListItem> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub const fn is_script(&self) -> bool {
-        matches!(self, Self::Script { .. })
+    pub fn hashbang<'a>(self, ast: &crate::Ast<'a>) -> Option<Hashbang> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Hashbang(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_module(&self) -> Option<&Module<'a>> {
-        match self {
-            Self::Module(it) => Some(it),
-            _ => None,
+    pub fn source_type<'a>(self, ast: &crate::Ast<'a>) -> SourceType {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_script(&self) -> Option<&Script<'a>> {
-        match self {
-            Self::Script(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: TypedSubRange<StatementListItem>) {
+        let field_val: u64 = unsafe { body.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300949110269842519228415u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 32usize);
     }
     #[inline]
-    pub fn as_mut_module(&mut self) -> Option<&mut Module<'a>> {
-        match self {
-            Self::Module(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_hashbang<'a>(self, ast: &mut crate::Ast<'a>, hashbang: Option<Hashbang>) {
+        let field_val: u32 = hashbang.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_script(&mut self) -> Option<&mut Script<'a>> {
-        match self {
-            Self::Script(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_source_type<'a>(self, ast: &mut crate::Ast<'a>, source_type: SourceType) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = source_type.to_extra_data(ast);
+        };
     }
 }
-impl<'a> GetSpan for Program<'a> {
+impl Stmt {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Module(it) => it.span(),
-            Self::Script(it) => it.span(),
-        }
+    pub fn is_block_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::BlockStatement
     }
-}
-impl<'a> SetSpan for Program<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Module(it) => it.set_span(span),
-            Self::Script(it) => it.set_span(span),
-        }
+    pub fn is_break_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::BreakStatement
     }
-}
-impl<'a> GetSpan for Module<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_continue_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ContinueStatement
     }
-}
-impl<'a> SetSpan for Module<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_debugger_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::DebuggerStatement
     }
-}
-impl<'a> GetSpan for Script<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_do_while_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::DoWhileStatement
     }
-}
-impl<'a> SetSpan for Script<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_empty_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::EmptyStatement
     }
-}
-impl<'a> ModuleItem<'a> {
     #[inline]
-    pub const fn is_module_decl(&self) -> bool {
-        matches!(self, Self::ModuleDecl { .. })
+    pub fn is_expression_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ExpressionStatement
     }
     #[inline]
-    pub const fn is_stmt(&self) -> bool {
-        matches!(self, Self::Stmt { .. })
+    pub fn is_for_in_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ForInStatement
     }
     #[inline]
-    pub fn as_module_decl(&self) -> Option<&ModuleDecl<'a>> {
-        match self {
-            Self::ModuleDecl(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_for_of_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ForOfStatement
     }
     #[inline]
-    pub fn as_stmt(&self) -> Option<&Stmt<'a>> {
-        match self {
-            Self::Stmt(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_for_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ForStatement
     }
     #[inline]
-    pub fn as_mut_module_decl(&mut self) -> Option<&mut ModuleDecl<'a>> {
-        match self {
-            Self::ModuleDecl(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_if_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::IfStatement
     }
     #[inline]
-    pub fn as_mut_stmt(&mut self) -> Option<&mut Stmt<'a>> {
-        match self {
-            Self::Stmt(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_labeled_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::LabeledStatement
     }
-}
-impl<'a> GetSpan for ModuleItem<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::ModuleDecl(it) => it.span(),
-            Self::Stmt(it) => it.span(),
-        }
+    pub fn is_return_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ReturnStatement
     }
-}
-impl<'a> SetSpan for ModuleItem<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::ModuleDecl(it) => it.set_span(span),
-            Self::Stmt(it) => it.set_span(span),
-        }
+    pub fn is_switch_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::SwitchStatement
     }
-}
-impl<'a> ModuleDecl<'a> {
     #[inline]
-    pub const fn is_import(&self) -> bool {
-        matches!(self, Self::Import { .. })
+    pub fn is_throw_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ThrowStatement
     }
     #[inline]
-    pub const fn is_export_decl(&self) -> bool {
-        matches!(self, Self::ExportDecl { .. })
+    pub fn is_try_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TryStatement
     }
     #[inline]
-    pub const fn is_export_named(&self) -> bool {
-        matches!(self, Self::ExportNamed { .. })
+    pub fn is_while_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::WhileStatement
     }
     #[inline]
-    pub const fn is_export_default_decl(&self) -> bool {
-        matches!(self, Self::ExportDefaultDecl { .. })
+    pub fn is_with_statement(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::WithStatement
     }
     #[inline]
-    pub const fn is_export_default_expr(&self) -> bool {
-        matches!(self, Self::ExportDefaultExpr { .. })
+    pub fn is_declaration(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::VariableDeclaration
+                | NodeKind::Function
+                | NodeKind::Class
+                | NodeKind::TsTypeAliasDeclaration
+                | NodeKind::TsInterfaceDeclaration
+                | NodeKind::TsEnumDeclaration
+                | NodeKind::TsModuleDeclaration
+                | NodeKind::TsGlobalDeclaration
+                | NodeKind::TsImportEqualsDeclaration
+        )
     }
     #[inline]
-    pub const fn is_export_all(&self) -> bool {
-        matches!(self, Self::ExportAll { .. })
+    pub fn is_import_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ImportDeclaration
     }
     #[inline]
-    pub fn as_import(&self) -> Option<&ImportDecl<'a>> {
-        match self {
-            Self::Import(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_export_named_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ExportNamedDeclaration
     }
     #[inline]
-    pub fn as_export_decl(&self) -> Option<&ExportDecl<'a>> {
-        match self {
-            Self::ExportDecl(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_export_default_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ExportDefaultDeclaration
     }
     #[inline]
-    pub fn as_export_named(&self) -> Option<&NamedExport<'a>> {
-        match self {
-            Self::ExportNamed(it) => Some(it),
+    pub fn is_export_all_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ExportAllDeclaration
+    }
+    #[inline]
+    pub fn is_ts_export_assignment(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsExportAssignment
+    }
+    #[inline]
+    pub fn is_ts_namespace_export_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsNamespaceExportDeclaration
+    }
+    #[inline]
+    pub fn is_ts_import_equals_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsImportEqualsDeclaration
+    }
+    #[inline]
+    pub fn as_block_statement(self, ast: &Ast<'_>) -> Option<BlockStatement> {
+        match ast.stmt_data(self) {
+            StmtData::BlockStatement(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_export_default_decl(&self) -> Option<&ExportDefaultDecl<'a>> {
-        match self {
-            Self::ExportDefaultDecl(it) => Some(it),
+    pub fn as_break_statement(self, ast: &Ast<'_>) -> Option<BreakStatement> {
+        match ast.stmt_data(self) {
+            StmtData::BreakStatement(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_export_default_expr(&self) -> Option<&ExportDefaultExpr<'a>> {
-        match self {
-            Self::ExportDefaultExpr(it) => Some(it),
+    pub fn as_continue_statement(self, ast: &Ast<'_>) -> Option<ContinueStatement> {
+        match ast.stmt_data(self) {
+            StmtData::ContinueStatement(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_export_all(&self) -> Option<&ExportAll<'a>> {
-        match self {
-            Self::ExportAll(it) => Some(it),
+    pub fn as_debugger_statement(self, ast: &Ast<'_>) -> Option<DebuggerStatement> {
+        match ast.stmt_data(self) {
+            StmtData::DebuggerStatement(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_import(&mut self) -> Option<&mut ImportDecl<'a>> {
-        match self {
-            Self::Import(it) => Some(it),
+    pub fn as_do_while_statement(self, ast: &Ast<'_>) -> Option<DoWhileStatement> {
+        match ast.stmt_data(self) {
+            StmtData::DoWhileStatement(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_export_decl(&mut self) -> Option<&mut ExportDecl<'a>> {
-        match self {
-            Self::ExportDecl(it) => Some(it),
+    pub fn as_empty_statement(self, ast: &Ast<'_>) -> Option<EmptyStatement> {
+        match ast.stmt_data(self) {
+            StmtData::EmptyStatement(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_export_named(&mut self) -> Option<&mut NamedExport<'a>> {
-        match self {
-            Self::ExportNamed(it) => Some(it),
+    pub fn as_expression_statement(self, ast: &Ast<'_>) -> Option<ExpressionStatement> {
+        match ast.stmt_data(self) {
+            StmtData::ExpressionStatement(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_export_default_decl(&mut self) -> Option<&mut ExportDefaultDecl<'a>> {
-        match self {
-            Self::ExportDefaultDecl(it) => Some(it),
+    pub fn as_for_in_statement(self, ast: &Ast<'_>) -> Option<ForInStatement> {
+        match ast.stmt_data(self) {
+            StmtData::ForInStatement(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_export_default_expr(&mut self) -> Option<&mut ExportDefaultExpr<'a>> {
-        match self {
-            Self::ExportDefaultExpr(it) => Some(it),
+    pub fn as_for_of_statement(self, ast: &Ast<'_>) -> Option<ForOfStatement> {
+        match ast.stmt_data(self) {
+            StmtData::ForOfStatement(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_export_all(&mut self) -> Option<&mut ExportAll<'a>> {
-        match self {
-            Self::ExportAll(it) => Some(it),
+    pub fn as_for_statement(self, ast: &Ast<'_>) -> Option<ForStatement> {
+        match ast.stmt_data(self) {
+            StmtData::ForStatement(it) => Some(it),
             _ => None,
         }
     }
-}
-impl<'a> GetSpan for ModuleDecl<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Import(it) => it.span(),
-            Self::ExportDecl(it) => it.span(),
-            Self::ExportNamed(it) => it.span(),
-            Self::ExportDefaultDecl(it) => it.span(),
-            Self::ExportDefaultExpr(it) => it.span(),
-            Self::ExportAll(it) => it.span(),
+    pub fn as_if_statement(self, ast: &Ast<'_>) -> Option<IfStatement> {
+        match ast.stmt_data(self) {
+            StmtData::IfStatement(it) => Some(it),
+            _ => None,
         }
     }
-}
-impl<'a> SetSpan for ModuleDecl<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Import(it) => it.set_span(span),
-            Self::ExportDecl(it) => it.set_span(span),
-            Self::ExportNamed(it) => it.set_span(span),
-            Self::ExportDefaultDecl(it) => it.set_span(span),
-            Self::ExportDefaultExpr(it) => it.set_span(span),
-            Self::ExportAll(it) => it.set_span(span),
+    pub fn as_labeled_statement(self, ast: &Ast<'_>) -> Option<LabeledStatement> {
+        match ast.stmt_data(self) {
+            StmtData::LabeledStatement(it) => Some(it),
+            _ => None,
         }
     }
-}
-impl<'a> GetSpan for ImportDecl<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_return_statement(self, ast: &Ast<'_>) -> Option<ReturnStatement> {
+        match ast.stmt_data(self) {
+            StmtData::ReturnStatement(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> SetSpan for ImportDecl<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn as_switch_statement(self, ast: &Ast<'_>) -> Option<SwitchStatement> {
+        match ast.stmt_data(self) {
+            StmtData::SwitchStatement(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> ImportSpecifier<'a> {
     #[inline]
-    pub const fn is_named(&self) -> bool {
-        matches!(self, Self::Named { .. })
+    pub fn as_throw_statement(self, ast: &Ast<'_>) -> Option<ThrowStatement> {
+        match ast.stmt_data(self) {
+            StmtData::ThrowStatement(it) => Some(it),
+            _ => None,
+        }
     }
     #[inline]
-    pub const fn is_default(&self) -> bool {
-        matches!(self, Self::Default { .. })
+    pub fn as_try_statement(self, ast: &Ast<'_>) -> Option<TryStatement> {
+        match ast.stmt_data(self) {
+            StmtData::TryStatement(it) => Some(it),
+            _ => None,
+        }
     }
     #[inline]
-    pub const fn is_namespace(&self) -> bool {
-        matches!(self, Self::Namespace { .. })
+    pub fn as_while_statement(self, ast: &Ast<'_>) -> Option<WhileStatement> {
+        match ast.stmt_data(self) {
+            StmtData::WhileStatement(it) => Some(it),
+            _ => None,
+        }
     }
     #[inline]
-    pub fn as_named(&self) -> Option<&ImportNamedSpecifier<'a>> {
-        match self {
-            Self::Named(it) => Some(it),
+    pub fn as_with_statement(self, ast: &Ast<'_>) -> Option<WithStatement> {
+        match ast.stmt_data(self) {
+            StmtData::WithStatement(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_default(&self) -> Option<&ImportDefaultSpecifier<'a>> {
-        match self {
-            Self::Default(it) => Some(it),
+    pub fn as_declaration(self, ast: &Ast<'_>) -> Option<Decl> {
+        match ast.stmt_data(self) {
+            StmtData::Declaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_namespace(&self) -> Option<&ImportStarAsSpecifier<'a>> {
-        match self {
-            Self::Namespace(it) => Some(it),
+    pub fn as_import_declaration(self, ast: &Ast<'_>) -> Option<ImportDeclaration> {
+        match ast.stmt_data(self) {
+            StmtData::ImportDeclaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_named(&mut self) -> Option<&mut ImportNamedSpecifier<'a>> {
-        match self {
-            Self::Named(it) => Some(it),
+    pub fn as_export_named_declaration(self, ast: &Ast<'_>) -> Option<ExportNamedDeclaration> {
+        match ast.stmt_data(self) {
+            StmtData::ExportNamedDeclaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_default(&mut self) -> Option<&mut ImportDefaultSpecifier<'a>> {
-        match self {
-            Self::Default(it) => Some(it),
+    pub fn as_export_default_declaration(self, ast: &Ast<'_>) -> Option<ExportDefaultDeclaration> {
+        match ast.stmt_data(self) {
+            StmtData::ExportDefaultDeclaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_namespace(&mut self) -> Option<&mut ImportStarAsSpecifier<'a>> {
-        match self {
-            Self::Namespace(it) => Some(it),
+    pub fn as_export_all_declaration(self, ast: &Ast<'_>) -> Option<ExportAllDeclaration> {
+        match ast.stmt_data(self) {
+            StmtData::ExportAllDeclaration(it) => Some(it),
             _ => None,
         }
     }
-}
-impl<'a> GetSpan for ImportSpecifier<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Named(it) => it.span(),
-            Self::Default(it) => it.span(),
-            Self::Namespace(it) => it.span(),
+    pub fn as_ts_export_assignment(self, ast: &Ast<'_>) -> Option<TsExportAssignment> {
+        match ast.stmt_data(self) {
+            StmtData::TsExportAssignment(it) => Some(it),
+            _ => None,
         }
     }
-}
-impl<'a> SetSpan for ImportSpecifier<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Named(it) => it.set_span(span),
-            Self::Default(it) => it.set_span(span),
-            Self::Namespace(it) => it.set_span(span),
+    pub fn as_ts_namespace_export_declaration(
+        self,
+        ast: &Ast<'_>,
+    ) -> Option<TsNamespaceExportDeclaration> {
+        match ast.stmt_data(self) {
+            StmtData::TsNamespaceExportDeclaration(it) => Some(it),
+            _ => None,
         }
     }
-}
-impl<'a> GetSpan for ImportNamedSpecifier<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_ts_import_equals_declaration(
+        self,
+        ast: &Ast<'_>,
+    ) -> Option<TsImportEqualsDeclaration> {
+        match ast.stmt_data(self) {
+            StmtData::TsImportEqualsDeclaration(it) => Some(it),
+            _ => None,
+        }
     }
 }
-impl<'a> SetSpan for ImportNamedSpecifier<'a> {
+impl StatementListItem {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_stmt(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::BlockStatement
+                | NodeKind::BreakStatement
+                | NodeKind::ContinueStatement
+                | NodeKind::DebuggerStatement
+                | NodeKind::DoWhileStatement
+                | NodeKind::EmptyStatement
+                | NodeKind::ExpressionStatement
+                | NodeKind::ForInStatement
+                | NodeKind::ForOfStatement
+                | NodeKind::ForStatement
+                | NodeKind::IfStatement
+                | NodeKind::LabeledStatement
+                | NodeKind::ReturnStatement
+                | NodeKind::SwitchStatement
+                | NodeKind::ThrowStatement
+                | NodeKind::TryStatement
+                | NodeKind::WhileStatement
+                | NodeKind::WithStatement
+                | NodeKind::VariableDeclaration
+                | NodeKind::Function
+                | NodeKind::Class
+                | NodeKind::TsTypeAliasDeclaration
+                | NodeKind::TsInterfaceDeclaration
+                | NodeKind::TsEnumDeclaration
+                | NodeKind::TsModuleDeclaration
+                | NodeKind::TsGlobalDeclaration
+                | NodeKind::TsImportEqualsDeclaration
+                | NodeKind::ImportDeclaration
+                | NodeKind::ExportNamedDeclaration
+                | NodeKind::ExportDefaultDeclaration
+                | NodeKind::ExportAllDeclaration
+                | NodeKind::TsExportAssignment
+                | NodeKind::TsNamespaceExportDeclaration
+                | NodeKind::TsImportEqualsDeclaration
+        )
     }
-}
-impl<'a> GetSpan for ImportDefaultSpecifier<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_directive(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::Directive
     }
-}
-impl<'a> SetSpan for ImportDefaultSpecifier<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn as_stmt(self, ast: &Ast<'_>) -> Option<Stmt> {
+        match ast.statement_list_item_data(self) {
+            StatementListItemData::Stmt(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> GetSpan for ImportStarAsSpecifier<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_directive(self, ast: &Ast<'_>) -> Option<Directive> {
+        match ast.statement_list_item_data(self) {
+            StatementListItemData::Directive(it) => Some(it),
+            _ => None,
+        }
     }
 }
-impl<'a> SetSpan for ImportStarAsSpecifier<'a> {
+impl Decl {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_variable_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::VariableDeclaration
     }
-}
-impl<'a> GetSpan for ExportDecl<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_function(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::Function
     }
-}
-impl<'a> SetSpan for ExportDecl<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_class(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::Class
     }
-}
-impl<'a> GetSpan for NamedExport<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_ts_type_alias_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsTypeAliasDeclaration
     }
-}
-impl<'a> SetSpan for NamedExport<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_ts_interface_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsInterfaceDeclaration
     }
-}
-impl<'a> ExportSpecifier<'a> {
     #[inline]
-    pub const fn is_namespace(&self) -> bool {
-        matches!(self, Self::Namespace { .. })
+    pub fn is_ts_enum_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsEnumDeclaration
     }
     #[inline]
-    pub const fn is_default(&self) -> bool {
-        matches!(self, Self::Default { .. })
+    pub fn is_ts_module_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsModuleDeclaration
     }
     #[inline]
-    pub const fn is_named(&self) -> bool {
-        matches!(self, Self::Named { .. })
+    pub fn is_ts_global_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsGlobalDeclaration
     }
     #[inline]
-    pub fn as_namespace(&self) -> Option<&ExportNamespaceSpecifier<'a>> {
-        match self {
-            Self::Namespace(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_ts_import_equals_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsImportEqualsDeclaration
     }
     #[inline]
-    pub fn as_default(&self) -> Option<&ExportDefaultSpecifier<'a>> {
-        match self {
-            Self::Default(it) => Some(it),
+    pub fn as_variable_declaration(self, ast: &Ast<'_>) -> Option<VariableDeclaration> {
+        match ast.decl_data(self) {
+            DeclData::VariableDeclaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_named(&self) -> Option<&ExportNamedSpecifier<'a>> {
-        match self {
-            Self::Named(it) => Some(it),
+    pub fn as_function(self, ast: &Ast<'_>) -> Option<Function> {
+        match ast.decl_data(self) {
+            DeclData::Function(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_namespace(&mut self) -> Option<&mut ExportNamespaceSpecifier<'a>> {
-        match self {
-            Self::Namespace(it) => Some(it),
+    pub fn as_class(self, ast: &Ast<'_>) -> Option<Class> {
+        match ast.decl_data(self) {
+            DeclData::Class(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_default(&mut self) -> Option<&mut ExportDefaultSpecifier<'a>> {
-        match self {
-            Self::Default(it) => Some(it),
+    pub fn as_ts_type_alias_declaration(self, ast: &Ast<'_>) -> Option<TsTypeAliasDeclaration> {
+        match ast.decl_data(self) {
+            DeclData::TsTypeAliasDeclaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_named(&mut self) -> Option<&mut ExportNamedSpecifier<'a>> {
-        match self {
-            Self::Named(it) => Some(it),
+    pub fn as_ts_interface_declaration(self, ast: &Ast<'_>) -> Option<TsInterfaceDeclaration> {
+        match ast.decl_data(self) {
+            DeclData::TsInterfaceDeclaration(it) => Some(it),
             _ => None,
-        }
-    }
-}
-impl<'a> GetSpan for ExportSpecifier<'a> {
-    #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Namespace(it) => it.span(),
-            Self::Default(it) => it.span(),
-            Self::Named(it) => it.span(),
-        }
-    }
-}
-impl<'a> SetSpan for ExportSpecifier<'a> {
-    #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Namespace(it) => it.set_span(span),
-            Self::Default(it) => it.set_span(span),
-            Self::Named(it) => it.set_span(span),
         }
-    }
-}
-impl<'a> GetSpan for ExportNamespaceSpecifier<'a> {
-    #[inline]
-    fn span(&self) -> Span {
-        self.span
-    }
-}
-impl<'a> SetSpan for ExportNamespaceSpecifier<'a> {
-    #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
-    }
-}
-impl<'a> ModuleExportName<'a> {
-    #[inline]
-    pub const fn is_ident(&self) -> bool {
-        matches!(self, Self::Ident { .. })
-    }
-    #[inline]
-    pub const fn is_str(&self) -> bool {
-        matches!(self, Self::Str { .. })
     }
     #[inline]
-    pub fn as_ident(&self) -> Option<&Ident<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
+    pub fn as_ts_enum_declaration(self, ast: &Ast<'_>) -> Option<TsEnumDeclaration> {
+        match ast.decl_data(self) {
+            DeclData::TsEnumDeclaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_str(&self) -> Option<&Str<'a>> {
-        match self {
-            Self::Str(it) => Some(it),
+    pub fn as_ts_module_declaration(self, ast: &Ast<'_>) -> Option<TsModuleDeclaration> {
+        match ast.decl_data(self) {
+            DeclData::TsModuleDeclaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_ident(&mut self) -> Option<&mut Ident<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
+    pub fn as_ts_global_declaration(self, ast: &Ast<'_>) -> Option<TsGlobalDeclaration> {
+        match ast.decl_data(self) {
+            DeclData::TsGlobalDeclaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_str(&mut self) -> Option<&mut Str<'a>> {
-        match self {
-            Self::Str(it) => Some(it),
+    pub fn as_ts_import_equals_declaration(
+        self,
+        ast: &Ast<'_>,
+    ) -> Option<TsImportEqualsDeclaration> {
+        match ast.decl_data(self) {
+            DeclData::TsImportEqualsDeclaration(it) => Some(it),
             _ => None,
-        }
-    }
-}
-impl<'a> GetSpan for ModuleExportName<'a> {
-    #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Ident(it) => it.span(),
-            Self::Str(it) => it.span(),
         }
     }
 }
-impl<'a> SetSpan for ModuleExportName<'a> {
+impl Expr {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Ident(it) => it.set_span(span),
-            Self::Str(it) => it.set_span(span),
-        }
+    pub fn is_identifier_reference(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::IdentifierReference
     }
-}
-impl<'a> GetSpan for ExportDefaultSpecifier<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.exported.span()
+    pub fn is_this_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ThisExpression
     }
-}
-impl<'a> SetSpan for ExportDefaultSpecifier<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.exported.set_span(span);
+    pub fn is_super(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::Super
     }
-}
-impl<'a> GetSpan for ExportNamedSpecifier<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_meta_property(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::MetaProperty
     }
-}
-impl<'a> SetSpan for ExportNamedSpecifier<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_string_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::StringLiteral
     }
-}
-impl<'a> GetSpan for ExportDefaultDecl<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_numeric_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::NumericLiteral
     }
-}
-impl<'a> SetSpan for ExportDefaultDecl<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_big_int_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::BigIntLiteral
     }
-}
-impl<'a> DefaultDecl<'a> {
     #[inline]
-    pub const fn is_class(&self) -> bool {
-        matches!(self, Self::Class { .. })
+    pub fn is_boolean_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::BooleanLiteral
     }
     #[inline]
-    pub const fn is_fn(&self) -> bool {
-        matches!(self, Self::Fn { .. })
+    pub fn is_null_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::NullLiteral
     }
     #[inline]
-    pub fn as_class(&self) -> Option<&ClassExpr<'a>> {
-        match self {
-            Self::Class(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_reg_exp_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::RegExpLiteral
     }
     #[inline]
-    pub fn as_fn(&self) -> Option<&FnExpr<'a>> {
-        match self {
-            Self::Fn(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_template_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TemplateLiteral
     }
     #[inline]
-    pub fn as_mut_class(&mut self) -> Option<&mut ClassExpr<'a>> {
-        match self {
-            Self::Class(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_binary_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::BinaryExpression
     }
     #[inline]
-    pub fn as_mut_fn(&mut self) -> Option<&mut FnExpr<'a>> {
-        match self {
-            Self::Fn(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_logical_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::LogicalExpression
     }
-}
-impl<'a> GetSpan for DefaultDecl<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Class(it) => it.span(),
-            Self::Fn(it) => it.span(),
-        }
+    pub fn is_unary_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::UnaryExpression
     }
-}
-impl<'a> SetSpan for DefaultDecl<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Class(it) => it.set_span(span),
-            Self::Fn(it) => it.set_span(span),
-        }
+    pub fn is_update_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::UpdateExpression
     }
-}
-impl<'a> GetSpan for ExportDefaultExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_assignment_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::AssignmentExpression
     }
-}
-impl<'a> SetSpan for ExportDefaultExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_conditional_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ConditionalExpression
     }
-}
-impl<'a> GetSpan for ExportAll<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_sequence_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::SequenceExpression
     }
-}
-impl<'a> SetSpan for ExportAll<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_member_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::MemberExpression
     }
-}
-impl<'a> GetSpan for BlockStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_call_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::CallExpression
     }
-}
-impl<'a> SetSpan for BlockStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_chain_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ChainExpression
     }
-}
-impl<'a> Stmt<'a> {
     #[inline]
-    pub const fn is_block(&self) -> bool {
-        matches!(self, Self::Block { .. })
+    pub fn is_new_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::NewExpression
     }
     #[inline]
-    pub const fn is_empty(&self) -> bool {
-        matches!(self, Self::Empty { .. })
+    pub fn is_tagged_template_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TaggedTemplateExpression
     }
     #[inline]
-    pub const fn is_debugger(&self) -> bool {
-        matches!(self, Self::Debugger { .. })
+    pub fn is_arrow_function_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ArrowFunctionExpression
     }
     #[inline]
-    pub const fn is_with(&self) -> bool {
-        matches!(self, Self::With { .. })
+    pub fn is_array_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ArrayExpression
     }
     #[inline]
-    pub const fn is_return(&self) -> bool {
-        matches!(self, Self::Return { .. })
+    pub fn is_object_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ObjectExpression
     }
     #[inline]
-    pub const fn is_labeled(&self) -> bool {
-        matches!(self, Self::Labeled { .. })
+    pub fn is_parenthesized_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ParenthesizedExpression
     }
     #[inline]
-    pub const fn is_break(&self) -> bool {
-        matches!(self, Self::Break { .. })
+    pub fn is_function(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::Function
     }
     #[inline]
-    pub const fn is_continue(&self) -> bool {
-        matches!(self, Self::Continue { .. })
+    pub fn is_class(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::Class
     }
     #[inline]
-    pub const fn is_if(&self) -> bool {
-        matches!(self, Self::If { .. })
+    pub fn is_import_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ImportExpression
     }
     #[inline]
-    pub const fn is_switch(&self) -> bool {
-        matches!(self, Self::Switch { .. })
+    pub fn is_await_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::AwaitExpression
     }
     #[inline]
-    pub const fn is_throw(&self) -> bool {
-        matches!(self, Self::Throw { .. })
+    pub fn is_yield_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::YieldExpression
     }
     #[inline]
-    pub const fn is_try(&self) -> bool {
-        matches!(self, Self::Try { .. })
+    pub fn is_private_identifier(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::PrivateIdentifier
     }
     #[inline]
-    pub const fn is_while(&self) -> bool {
-        matches!(self, Self::While { .. })
+    pub fn is_ts_as_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsAsExpression
     }
     #[inline]
-    pub const fn is_do_while(&self) -> bool {
-        matches!(self, Self::DoWhile { .. })
+    pub fn is_ts_satisfies_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsSatisfiesExpression
     }
     #[inline]
-    pub const fn is_for(&self) -> bool {
-        matches!(self, Self::For { .. })
+    pub fn is_ts_type_assertion(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsTypeAssertion
     }
     #[inline]
-    pub const fn is_for_in(&self) -> bool {
-        matches!(self, Self::ForIn { .. })
+    pub fn is_ts_non_null_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsNonNullExpression
     }
     #[inline]
-    pub const fn is_for_of(&self) -> bool {
-        matches!(self, Self::ForOf { .. })
+    pub fn is_ts_instantiation_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsInstantiationExpression
     }
     #[inline]
-    pub const fn is_decl(&self) -> bool {
-        matches!(self, Self::Decl { .. })
+    pub fn is_jsx_element(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxElement
     }
     #[inline]
-    pub const fn is_expr(&self) -> bool {
-        matches!(self, Self::Expr { .. })
+    pub fn is_jsx_fragment(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxFragment
     }
     #[inline]
-    pub fn as_block(&self) -> Option<&BlockStmt<'a>> {
-        match self {
-            Self::Block(it) => Some(it),
+    pub fn as_identifier_reference(self, ast: &Ast<'_>) -> Option<IdentifierReference> {
+        match ast.expr_data(self) {
+            ExprData::IdentifierReference(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_empty(&self) -> Option<&EmptyStmt> {
-        match self {
-            Self::Empty(it) => Some(it),
+    pub fn as_this_expression(self, ast: &Ast<'_>) -> Option<ThisExpression> {
+        match ast.expr_data(self) {
+            ExprData::ThisExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_debugger(&self) -> Option<&DebuggerStmt> {
-        match self {
-            Self::Debugger(it) => Some(it),
+    pub fn as_super(self, ast: &Ast<'_>) -> Option<Super> {
+        match ast.expr_data(self) {
+            ExprData::Super(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_with(&self) -> Option<&WithStmt<'a>> {
-        match self {
-            Self::With(it) => Some(it),
+    pub fn as_meta_property(self, ast: &Ast<'_>) -> Option<MetaProperty> {
+        match ast.expr_data(self) {
+            ExprData::MetaProperty(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_return(&self) -> Option<&ReturnStmt<'a>> {
-        match self {
-            Self::Return(it) => Some(it),
+    pub fn as_string_literal(self, ast: &Ast<'_>) -> Option<StringLiteral> {
+        match ast.expr_data(self) {
+            ExprData::StringLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_labeled(&self) -> Option<&LabeledStmt<'a>> {
-        match self {
-            Self::Labeled(it) => Some(it),
+    pub fn as_numeric_literal(self, ast: &Ast<'_>) -> Option<NumericLiteral> {
+        match ast.expr_data(self) {
+            ExprData::NumericLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_break(&self) -> Option<&BreakStmt<'a>> {
-        match self {
-            Self::Break(it) => Some(it),
+    pub fn as_big_int_literal(self, ast: &Ast<'_>) -> Option<BigIntLiteral> {
+        match ast.expr_data(self) {
+            ExprData::BigIntLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_continue(&self) -> Option<&ContinueStmt<'a>> {
-        match self {
-            Self::Continue(it) => Some(it),
+    pub fn as_boolean_literal(self, ast: &Ast<'_>) -> Option<BooleanLiteral> {
+        match ast.expr_data(self) {
+            ExprData::BooleanLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_if(&self) -> Option<&IfStmt<'a>> {
-        match self {
-            Self::If(it) => Some(it),
+    pub fn as_null_literal(self, ast: &Ast<'_>) -> Option<NullLiteral> {
+        match ast.expr_data(self) {
+            ExprData::NullLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_switch(&self) -> Option<&SwitchStmt<'a>> {
-        match self {
-            Self::Switch(it) => Some(it),
+    pub fn as_reg_exp_literal(self, ast: &Ast<'_>) -> Option<RegExpLiteral> {
+        match ast.expr_data(self) {
+            ExprData::RegExpLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_throw(&self) -> Option<&ThrowStmt<'a>> {
-        match self {
-            Self::Throw(it) => Some(it),
+    pub fn as_template_literal(self, ast: &Ast<'_>) -> Option<TemplateLiteral> {
+        match ast.expr_data(self) {
+            ExprData::TemplateLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_try(&self) -> Option<&TryStmt<'a>> {
-        match self {
-            Self::Try(it) => Some(it),
+    pub fn as_binary_expression(self, ast: &Ast<'_>) -> Option<BinaryExpression> {
+        match ast.expr_data(self) {
+            ExprData::BinaryExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_while(&self) -> Option<&WhileStmt<'a>> {
-        match self {
-            Self::While(it) => Some(it),
+    pub fn as_logical_expression(self, ast: &Ast<'_>) -> Option<LogicalExpression> {
+        match ast.expr_data(self) {
+            ExprData::LogicalExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_do_while(&self) -> Option<&DoWhileStmt<'a>> {
-        match self {
-            Self::DoWhile(it) => Some(it),
+    pub fn as_unary_expression(self, ast: &Ast<'_>) -> Option<UnaryExpression> {
+        match ast.expr_data(self) {
+            ExprData::UnaryExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_for(&self) -> Option<&ForStmt<'a>> {
-        match self {
-            Self::For(it) => Some(it),
+    pub fn as_update_expression(self, ast: &Ast<'_>) -> Option<UpdateExpression> {
+        match ast.expr_data(self) {
+            ExprData::UpdateExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_for_in(&self) -> Option<&ForInStmt<'a>> {
-        match self {
-            Self::ForIn(it) => Some(it),
+    pub fn as_assignment_expression(self, ast: &Ast<'_>) -> Option<AssignmentExpression> {
+        match ast.expr_data(self) {
+            ExprData::AssignmentExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_for_of(&self) -> Option<&ForOfStmt<'a>> {
-        match self {
-            Self::ForOf(it) => Some(it),
+    pub fn as_conditional_expression(self, ast: &Ast<'_>) -> Option<ConditionalExpression> {
+        match ast.expr_data(self) {
+            ExprData::ConditionalExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_decl(&self) -> Option<&Decl<'a>> {
-        match self {
-            Self::Decl(it) => Some(it),
+    pub fn as_sequence_expression(self, ast: &Ast<'_>) -> Option<SequenceExpression> {
+        match ast.expr_data(self) {
+            ExprData::SequenceExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_expr(&self) -> Option<&ExprStmt<'a>> {
-        match self {
-            Self::Expr(it) => Some(it),
+    pub fn as_member_expression(self, ast: &Ast<'_>) -> Option<MemberExpression> {
+        match ast.expr_data(self) {
+            ExprData::MemberExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_block(&mut self) -> Option<&mut BlockStmt<'a>> {
-        match self {
-            Self::Block(it) => Some(it),
+    pub fn as_call_expression(self, ast: &Ast<'_>) -> Option<CallExpression> {
+        match ast.expr_data(self) {
+            ExprData::CallExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_empty(&mut self) -> Option<&mut EmptyStmt> {
-        match self {
-            Self::Empty(it) => Some(it),
+    pub fn as_chain_expression(self, ast: &Ast<'_>) -> Option<ChainExpression> {
+        match ast.expr_data(self) {
+            ExprData::ChainExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_debugger(&mut self) -> Option<&mut DebuggerStmt> {
-        match self {
-            Self::Debugger(it) => Some(it),
+    pub fn as_new_expression(self, ast: &Ast<'_>) -> Option<NewExpression> {
+        match ast.expr_data(self) {
+            ExprData::NewExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_with(&mut self) -> Option<&mut WithStmt<'a>> {
-        match self {
-            Self::With(it) => Some(it),
+    pub fn as_tagged_template_expression(self, ast: &Ast<'_>) -> Option<TaggedTemplateExpression> {
+        match ast.expr_data(self) {
+            ExprData::TaggedTemplateExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_return(&mut self) -> Option<&mut ReturnStmt<'a>> {
-        match self {
-            Self::Return(it) => Some(it),
+    pub fn as_arrow_function_expression(self, ast: &Ast<'_>) -> Option<ArrowFunctionExpression> {
+        match ast.expr_data(self) {
+            ExprData::ArrowFunctionExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_labeled(&mut self) -> Option<&mut LabeledStmt<'a>> {
-        match self {
-            Self::Labeled(it) => Some(it),
+    pub fn as_array_expression(self, ast: &Ast<'_>) -> Option<ArrayExpression> {
+        match ast.expr_data(self) {
+            ExprData::ArrayExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_break(&mut self) -> Option<&mut BreakStmt<'a>> {
-        match self {
-            Self::Break(it) => Some(it),
+    pub fn as_object_expression(self, ast: &Ast<'_>) -> Option<ObjectExpression> {
+        match ast.expr_data(self) {
+            ExprData::ObjectExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_continue(&mut self) -> Option<&mut ContinueStmt<'a>> {
-        match self {
-            Self::Continue(it) => Some(it),
+    pub fn as_parenthesized_expression(self, ast: &Ast<'_>) -> Option<ParenthesizedExpression> {
+        match ast.expr_data(self) {
+            ExprData::ParenthesizedExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_if(&mut self) -> Option<&mut IfStmt<'a>> {
-        match self {
-            Self::If(it) => Some(it),
+    pub fn as_function(self, ast: &Ast<'_>) -> Option<Function> {
+        match ast.expr_data(self) {
+            ExprData::Function(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_switch(&mut self) -> Option<&mut SwitchStmt<'a>> {
-        match self {
-            Self::Switch(it) => Some(it),
+    pub fn as_class(self, ast: &Ast<'_>) -> Option<Class> {
+        match ast.expr_data(self) {
+            ExprData::Class(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_throw(&mut self) -> Option<&mut ThrowStmt<'a>> {
-        match self {
-            Self::Throw(it) => Some(it),
+    pub fn as_import_expression(self, ast: &Ast<'_>) -> Option<ImportExpression> {
+        match ast.expr_data(self) {
+            ExprData::ImportExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_try(&mut self) -> Option<&mut TryStmt<'a>> {
-        match self {
-            Self::Try(it) => Some(it),
+    pub fn as_await_expression(self, ast: &Ast<'_>) -> Option<AwaitExpression> {
+        match ast.expr_data(self) {
+            ExprData::AwaitExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_while(&mut self) -> Option<&mut WhileStmt<'a>> {
-        match self {
-            Self::While(it) => Some(it),
+    pub fn as_yield_expression(self, ast: &Ast<'_>) -> Option<YieldExpression> {
+        match ast.expr_data(self) {
+            ExprData::YieldExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_do_while(&mut self) -> Option<&mut DoWhileStmt<'a>> {
-        match self {
-            Self::DoWhile(it) => Some(it),
+    pub fn as_private_identifier(self, ast: &Ast<'_>) -> Option<PrivateIdentifier> {
+        match ast.expr_data(self) {
+            ExprData::PrivateIdentifier(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_for(&mut self) -> Option<&mut ForStmt<'a>> {
-        match self {
-            Self::For(it) => Some(it),
+    pub fn as_ts_as_expression(self, ast: &Ast<'_>) -> Option<TsAsExpression> {
+        match ast.expr_data(self) {
+            ExprData::TsAsExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_for_in(&mut self) -> Option<&mut ForInStmt<'a>> {
-        match self {
-            Self::ForIn(it) => Some(it),
+    pub fn as_ts_satisfies_expression(self, ast: &Ast<'_>) -> Option<TsSatisfiesExpression> {
+        match ast.expr_data(self) {
+            ExprData::TsSatisfiesExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_for_of(&mut self) -> Option<&mut ForOfStmt<'a>> {
-        match self {
-            Self::ForOf(it) => Some(it),
+    pub fn as_ts_type_assertion(self, ast: &Ast<'_>) -> Option<TsTypeAssertion> {
+        match ast.expr_data(self) {
+            ExprData::TsTypeAssertion(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_decl(&mut self) -> Option<&mut Decl<'a>> {
-        match self {
-            Self::Decl(it) => Some(it),
+    pub fn as_ts_non_null_expression(self, ast: &Ast<'_>) -> Option<TsNonNullExpression> {
+        match ast.expr_data(self) {
+            ExprData::TsNonNullExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_expr(&mut self) -> Option<&mut ExprStmt<'a>> {
-        match self {
-            Self::Expr(it) => Some(it),
+    pub fn as_ts_instantiation_expression(
+        self,
+        ast: &Ast<'_>,
+    ) -> Option<TsInstantiationExpression> {
+        match ast.expr_data(self) {
+            ExprData::TsInstantiationExpression(it) => Some(it),
             _ => None,
         }
     }
-}
-impl<'a> GetSpan for Stmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Block(it) => it.span(),
-            Self::Empty(it) => it.span(),
-            Self::Debugger(it) => it.span(),
-            Self::With(it) => it.span(),
-            Self::Return(it) => it.span(),
-            Self::Labeled(it) => it.span(),
-            Self::Break(it) => it.span(),
-            Self::Continue(it) => it.span(),
-            Self::If(it) => it.span(),
-            Self::Switch(it) => it.span(),
-            Self::Throw(it) => it.span(),
-            Self::Try(it) => it.span(),
-            Self::While(it) => it.span(),
-            Self::DoWhile(it) => it.span(),
-            Self::For(it) => it.span(),
-            Self::ForIn(it) => it.span(),
-            Self::ForOf(it) => it.span(),
-            Self::Decl(it) => it.span(),
-            Self::Expr(it) => it.span(),
+    pub fn as_jsx_element(self, ast: &Ast<'_>) -> Option<JsxElement> {
+        match ast.expr_data(self) {
+            ExprData::JsxElement(it) => Some(it),
+            _ => None,
         }
     }
-}
-impl<'a> SetSpan for Stmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Block(it) => it.set_span(span),
-            Self::Empty(it) => it.set_span(span),
-            Self::Debugger(it) => it.set_span(span),
-            Self::With(it) => it.set_span(span),
-            Self::Return(it) => it.set_span(span),
-            Self::Labeled(it) => it.set_span(span),
-            Self::Break(it) => it.set_span(span),
-            Self::Continue(it) => it.set_span(span),
-            Self::If(it) => it.set_span(span),
-            Self::Switch(it) => it.set_span(span),
-            Self::Throw(it) => it.set_span(span),
-            Self::Try(it) => it.set_span(span),
-            Self::While(it) => it.set_span(span),
-            Self::DoWhile(it) => it.set_span(span),
-            Self::For(it) => it.set_span(span),
-            Self::ForIn(it) => it.set_span(span),
-            Self::ForOf(it) => it.set_span(span),
-            Self::Decl(it) => it.set_span(span),
-            Self::Expr(it) => it.set_span(span),
+    pub fn as_jsx_fragment(self, ast: &Ast<'_>) -> Option<JsxFragment> {
+        match ast.expr_data(self) {
+            ExprData::JsxFragment(it) => Some(it),
+            _ => None,
         }
-    }
-}
-impl<'a> GetSpan for ExprStmt<'a> {
-    #[inline]
-    fn span(&self) -> Span {
-        self.span
-    }
-}
-impl<'a> SetSpan for ExprStmt<'a> {
-    #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
-    }
-}
-impl GetSpan for EmptyStmt {
-    #[inline]
-    fn span(&self) -> Span {
-        self.span
-    }
-}
-impl SetSpan for EmptyStmt {
-    #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
     }
 }
-impl GetSpan for DebuggerStmt {
+impl BindingPattern {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_binding_identifier(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::BindingIdentifier
     }
-}
-impl SetSpan for DebuggerStmt {
-    #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
-    }
-}
-impl<'a> GetSpan for WithStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_simple_assignment_target(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::IdentifierReference
+                | NodeKind::MemberExpression
+                | NodeKind::TsAsExpression
+                | NodeKind::TsSatisfiesExpression
+                | NodeKind::TsTypeAssertion
+                | NodeKind::TsNonNullExpression
+        )
     }
-}
-impl<'a> SetSpan for WithStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_assignment_pattern(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::AssignmentPattern
     }
-}
-impl<'a> GetSpan for ReturnStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_binding_rest_element(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::BindingRestElement
     }
-}
-impl<'a> SetSpan for ReturnStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_array_pattern(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ArrayPattern
     }
-}
-impl<'a> GetSpan for LabeledStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_object_pattern(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ObjectPattern
     }
-}
-impl<'a> SetSpan for LabeledStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn as_binding_identifier(self, ast: &Ast<'_>) -> Option<BindingIdentifier> {
+        match ast.binding_pattern_data(self) {
+            BindingPatternData::BindingIdentifier(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> GetSpan for BreakStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_simple_assignment_target(self, ast: &Ast<'_>) -> Option<SimpleAssignmentTarget> {
+        match ast.binding_pattern_data(self) {
+            BindingPatternData::SimpleAssignmentTarget(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> SetSpan for BreakStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn as_assignment_pattern(self, ast: &Ast<'_>) -> Option<AssignmentPattern> {
+        match ast.binding_pattern_data(self) {
+            BindingPatternData::AssignmentPattern(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> GetSpan for ContinueStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_binding_rest_element(self, ast: &Ast<'_>) -> Option<BindingRestElement> {
+        match ast.binding_pattern_data(self) {
+            BindingPatternData::BindingRestElement(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> SetSpan for ContinueStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn as_array_pattern(self, ast: &Ast<'_>) -> Option<ArrayPattern> {
+        match ast.binding_pattern_data(self) {
+            BindingPatternData::ArrayPattern(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> GetSpan for IfStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_object_pattern(self, ast: &Ast<'_>) -> Option<ObjectPattern> {
+        match ast.binding_pattern_data(self) {
+            BindingPatternData::ObjectPattern(it) => Some(it),
+            _ => None,
+        }
     }
 }
-impl<'a> SetSpan for IfStmt<'a> {
+impl AssignmentTarget {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_simple_assignment_target(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::IdentifierReference
+                | NodeKind::MemberExpression
+                | NodeKind::TsAsExpression
+                | NodeKind::TsSatisfiesExpression
+                | NodeKind::TsTypeAssertion
+                | NodeKind::TsNonNullExpression
+        )
     }
-}
-impl<'a> GetSpan for SwitchStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_array_assignment_target(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ArrayPattern
     }
-}
-impl<'a> SetSpan for SwitchStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_object_assignment_target(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ObjectPattern
     }
-}
-impl<'a> GetSpan for ThrowStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_simple_assignment_target(self, ast: &Ast<'_>) -> Option<SimpleAssignmentTarget> {
+        match ast.assignment_target_data(self) {
+            AssignmentTargetData::SimpleAssignmentTarget(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> SetSpan for ThrowStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn as_array_assignment_target(self, ast: &Ast<'_>) -> Option<ArrayPattern> {
+        match ast.assignment_target_data(self) {
+            AssignmentTargetData::ArrayAssignmentTarget(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> GetSpan for TryStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_object_assignment_target(self, ast: &Ast<'_>) -> Option<ObjectPattern> {
+        match ast.assignment_target_data(self) {
+            AssignmentTargetData::ObjectAssignmentTarget(it) => Some(it),
+            _ => None,
+        }
     }
 }
-impl<'a> SetSpan for TryStmt<'a> {
+impl SimpleAssignmentTarget {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_identifier_reference(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::IdentifierReference
     }
-}
-impl<'a> GetSpan for WhileStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_member_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::MemberExpression
     }
-}
-impl<'a> SetSpan for WhileStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_ts_as_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsAsExpression
     }
-}
-impl<'a> GetSpan for DoWhileStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_ts_satisfies_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsSatisfiesExpression
     }
-}
-impl<'a> SetSpan for DoWhileStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_ts_type_assertion(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsTypeAssertion
     }
-}
-impl<'a> GetSpan for ForStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_ts_non_null_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsNonNullExpression
     }
-}
-impl<'a> SetSpan for ForStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn as_identifier_reference(self, ast: &Ast<'_>) -> Option<IdentifierReference> {
+        match ast.simple_assignment_target_data(self) {
+            SimpleAssignmentTargetData::IdentifierReference(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> GetSpan for ForInStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_member_expression(self, ast: &Ast<'_>) -> Option<MemberExpression> {
+        match ast.simple_assignment_target_data(self) {
+            SimpleAssignmentTargetData::MemberExpression(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> SetSpan for ForInStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn as_ts_as_expression(self, ast: &Ast<'_>) -> Option<TsAsExpression> {
+        match ast.simple_assignment_target_data(self) {
+            SimpleAssignmentTargetData::TsAsExpression(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> GetSpan for ForOfStmt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_ts_satisfies_expression(self, ast: &Ast<'_>) -> Option<TsSatisfiesExpression> {
+        match ast.simple_assignment_target_data(self) {
+            SimpleAssignmentTargetData::TsSatisfiesExpression(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> SetSpan for ForOfStmt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn as_ts_type_assertion(self, ast: &Ast<'_>) -> Option<TsTypeAssertion> {
+        match ast.simple_assignment_target_data(self) {
+            SimpleAssignmentTargetData::TsTypeAssertion(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> GetSpan for SwitchCase<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_ts_non_null_expression(self, ast: &Ast<'_>) -> Option<TsNonNullExpression> {
+        match ast.simple_assignment_target_data(self) {
+            SimpleAssignmentTargetData::TsNonNullExpression(it) => Some(it),
+            _ => None,
+        }
     }
 }
-impl<'a> SetSpan for SwitchCase<'a> {
+impl PropertyKey {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_identifier_name(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::IdentifierName
     }
-}
-impl<'a> GetSpan for CatchClause<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_private_identifier(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::PrivateIdentifier
     }
-}
-impl<'a> SetSpan for CatchClause<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_string_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::StringLiteral
     }
-}
-impl<'a> ForHead<'a> {
     #[inline]
-    pub const fn is_var_decl(&self) -> bool {
-        matches!(self, Self::VarDecl { .. })
+    pub fn is_numeric_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::NumericLiteral
     }
     #[inline]
-    pub const fn is_using_decl(&self) -> bool {
-        matches!(self, Self::UsingDecl { .. })
+    pub fn is_big_int_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::BigIntLiteral
     }
     #[inline]
-    pub const fn is_pat(&self) -> bool {
-        matches!(self, Self::Pat { .. })
+    pub fn is_expr(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::IdentifierReference
+                | NodeKind::ThisExpression
+                | NodeKind::Super
+                | NodeKind::MetaProperty
+                | NodeKind::StringLiteral
+                | NodeKind::NumericLiteral
+                | NodeKind::BigIntLiteral
+                | NodeKind::BooleanLiteral
+                | NodeKind::NullLiteral
+                | NodeKind::RegExpLiteral
+                | NodeKind::TemplateLiteral
+                | NodeKind::BinaryExpression
+                | NodeKind::LogicalExpression
+                | NodeKind::UnaryExpression
+                | NodeKind::UpdateExpression
+                | NodeKind::AssignmentExpression
+                | NodeKind::ConditionalExpression
+                | NodeKind::SequenceExpression
+                | NodeKind::MemberExpression
+                | NodeKind::CallExpression
+                | NodeKind::ChainExpression
+                | NodeKind::NewExpression
+                | NodeKind::TaggedTemplateExpression
+                | NodeKind::ArrowFunctionExpression
+                | NodeKind::ArrayExpression
+                | NodeKind::ObjectExpression
+                | NodeKind::ParenthesizedExpression
+                | NodeKind::Function
+                | NodeKind::Class
+                | NodeKind::ImportExpression
+                | NodeKind::AwaitExpression
+                | NodeKind::YieldExpression
+                | NodeKind::PrivateIdentifier
+                | NodeKind::TsAsExpression
+                | NodeKind::TsSatisfiesExpression
+                | NodeKind::TsTypeAssertion
+                | NodeKind::TsNonNullExpression
+                | NodeKind::TsInstantiationExpression
+                | NodeKind::JsxElement
+                | NodeKind::JsxFragment
+        )
     }
     #[inline]
-    pub fn as_var_decl(&self) -> Option<&VarDecl<'a>> {
-        match self {
-            Self::VarDecl(it) => Some(it),
+    pub fn as_identifier_name(self, ast: &Ast<'_>) -> Option<IdentifierName> {
+        match ast.property_key_data(self) {
+            PropertyKeyData::IdentifierName(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_using_decl(&self) -> Option<&UsingDecl<'a>> {
-        match self {
-            Self::UsingDecl(it) => Some(it),
+    pub fn as_private_identifier(self, ast: &Ast<'_>) -> Option<PrivateIdentifier> {
+        match ast.property_key_data(self) {
+            PropertyKeyData::PrivateIdentifier(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_pat(&self) -> Option<&Pat<'a>> {
-        match self {
-            Self::Pat(it) => Some(it),
+    pub fn as_string_literal(self, ast: &Ast<'_>) -> Option<StringLiteral> {
+        match ast.property_key_data(self) {
+            PropertyKeyData::StringLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_var_decl(&mut self) -> Option<&mut VarDecl<'a>> {
-        match self {
-            Self::VarDecl(it) => Some(it),
+    pub fn as_numeric_literal(self, ast: &Ast<'_>) -> Option<NumericLiteral> {
+        match ast.property_key_data(self) {
+            PropertyKeyData::NumericLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_using_decl(&mut self) -> Option<&mut UsingDecl<'a>> {
-        match self {
-            Self::UsingDecl(it) => Some(it),
+    pub fn as_big_int_literal(self, ast: &Ast<'_>) -> Option<BigIntLiteral> {
+        match ast.property_key_data(self) {
+            PropertyKeyData::BigIntLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_pat(&mut self) -> Option<&mut Pat<'a>> {
-        match self {
-            Self::Pat(it) => Some(it),
+    pub fn as_expr(self, ast: &Ast<'_>) -> Option<Expr> {
+        match ast.property_key_data(self) {
+            PropertyKeyData::Expr(it) => Some(it),
             _ => None,
         }
     }
 }
-impl<'a> GetSpan for ForHead<'a> {
+impl ModuleExportName {
+    #[inline]
+    pub fn is_identifier_name(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::IdentifierName
+    }
+    #[inline]
+    pub fn is_string_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::StringLiteral
+    }
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::VarDecl(it) => it.span(),
-            Self::UsingDecl(it) => it.span(),
-            Self::Pat(it) => it.span(),
+    pub fn as_identifier_name(self, ast: &Ast<'_>) -> Option<IdentifierName> {
+        match ast.module_export_name_data(self) {
+            ModuleExportNameData::IdentifierName(it) => Some(it),
+            _ => None,
         }
     }
-}
-impl<'a> SetSpan for ForHead<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::VarDecl(it) => it.set_span(span),
-            Self::UsingDecl(it) => it.set_span(span),
-            Self::Pat(it) => it.set_span(span),
+    pub fn as_string_literal(self, ast: &Ast<'_>) -> Option<StringLiteral> {
+        match ast.module_export_name_data(self) {
+            ModuleExportNameData::StringLiteral(it) => Some(it),
+            _ => None,
         }
     }
 }
-impl<'a> VarDeclOrExpr<'a> {
+impl Argument {
     #[inline]
-    pub const fn is_var_decl(&self) -> bool {
-        matches!(self, Self::VarDecl { .. })
+    pub fn is_expr(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::IdentifierReference
+                | NodeKind::ThisExpression
+                | NodeKind::Super
+                | NodeKind::MetaProperty
+                | NodeKind::StringLiteral
+                | NodeKind::NumericLiteral
+                | NodeKind::BigIntLiteral
+                | NodeKind::BooleanLiteral
+                | NodeKind::NullLiteral
+                | NodeKind::RegExpLiteral
+                | NodeKind::TemplateLiteral
+                | NodeKind::BinaryExpression
+                | NodeKind::LogicalExpression
+                | NodeKind::UnaryExpression
+                | NodeKind::UpdateExpression
+                | NodeKind::AssignmentExpression
+                | NodeKind::ConditionalExpression
+                | NodeKind::SequenceExpression
+                | NodeKind::MemberExpression
+                | NodeKind::CallExpression
+                | NodeKind::ChainExpression
+                | NodeKind::NewExpression
+                | NodeKind::TaggedTemplateExpression
+                | NodeKind::ArrowFunctionExpression
+                | NodeKind::ArrayExpression
+                | NodeKind::ObjectExpression
+                | NodeKind::ParenthesizedExpression
+                | NodeKind::Function
+                | NodeKind::Class
+                | NodeKind::ImportExpression
+                | NodeKind::AwaitExpression
+                | NodeKind::YieldExpression
+                | NodeKind::PrivateIdentifier
+                | NodeKind::TsAsExpression
+                | NodeKind::TsSatisfiesExpression
+                | NodeKind::TsTypeAssertion
+                | NodeKind::TsNonNullExpression
+                | NodeKind::TsInstantiationExpression
+                | NodeKind::JsxElement
+                | NodeKind::JsxFragment
+        )
     }
     #[inline]
-    pub const fn is_expr(&self) -> bool {
-        matches!(self, Self::Expr { .. })
+    pub fn is_spread_element(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::SpreadElement
     }
     #[inline]
-    pub fn as_var_decl(&self) -> Option<&VarDecl<'a>> {
-        match self {
-            Self::VarDecl(it) => Some(it),
+    pub fn as_expr(self, ast: &Ast<'_>) -> Option<Expr> {
+        match ast.argument_data(self) {
+            ArgumentData::Expr(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_expr(&self) -> Option<&Expr<'a>> {
-        match self {
-            Self::Expr(it) => Some(it),
+    pub fn as_spread_element(self, ast: &Ast<'_>) -> Option<SpreadElement> {
+        match ast.argument_data(self) {
+            ArgumentData::SpreadElement(it) => Some(it),
             _ => None,
         }
     }
+}
+impl ObjectPropertyKind {
     #[inline]
-    pub fn as_mut_var_decl(&mut self) -> Option<&mut VarDecl<'a>> {
-        match self {
-            Self::VarDecl(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_object_property(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ObjectProperty
     }
     #[inline]
-    pub fn as_mut_expr(&mut self) -> Option<&mut Expr<'a>> {
-        match self {
-            Self::Expr(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_spread_element(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::SpreadElement
     }
-}
-impl<'a> GetSpan for VarDeclOrExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::VarDecl(it) => it.span(),
-            Self::Expr(it) => it.span(),
+    pub fn as_object_property(self, ast: &Ast<'_>) -> Option<ObjectProperty> {
+        match ast.object_property_kind_data(self) {
+            ObjectPropertyKindData::ObjectProperty(it) => Some(it),
+            _ => None,
         }
     }
-}
-impl<'a> SetSpan for VarDeclOrExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::VarDecl(it) => it.set_span(span),
-            Self::Expr(it) => it.set_span(span),
+    pub fn as_spread_element(self, ast: &Ast<'_>) -> Option<SpreadElement> {
+        match ast.object_property_kind_data(self) {
+            ObjectPropertyKindData::SpreadElement(it) => Some(it),
+            _ => None,
         }
     }
 }
-impl<'a> Decl<'a> {
-    #[inline]
-    pub const fn is_class(&self) -> bool {
-        matches!(self, Self::Class { .. })
-    }
-    #[inline]
-    pub const fn is_fn(&self) -> bool {
-        matches!(self, Self::Fn { .. })
-    }
+impl ForStatementInit {
     #[inline]
-    pub const fn is_var(&self) -> bool {
-        matches!(self, Self::Var { .. })
+    pub fn is_variable_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::VariableDeclaration
     }
     #[inline]
-    pub const fn is_using(&self) -> bool {
-        matches!(self, Self::Using { .. })
+    pub fn is_expr(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::IdentifierReference
+                | NodeKind::ThisExpression
+                | NodeKind::Super
+                | NodeKind::MetaProperty
+                | NodeKind::StringLiteral
+                | NodeKind::NumericLiteral
+                | NodeKind::BigIntLiteral
+                | NodeKind::BooleanLiteral
+                | NodeKind::NullLiteral
+                | NodeKind::RegExpLiteral
+                | NodeKind::TemplateLiteral
+                | NodeKind::BinaryExpression
+                | NodeKind::LogicalExpression
+                | NodeKind::UnaryExpression
+                | NodeKind::UpdateExpression
+                | NodeKind::AssignmentExpression
+                | NodeKind::ConditionalExpression
+                | NodeKind::SequenceExpression
+                | NodeKind::MemberExpression
+                | NodeKind::CallExpression
+                | NodeKind::ChainExpression
+                | NodeKind::NewExpression
+                | NodeKind::TaggedTemplateExpression
+                | NodeKind::ArrowFunctionExpression
+                | NodeKind::ArrayExpression
+                | NodeKind::ObjectExpression
+                | NodeKind::ParenthesizedExpression
+                | NodeKind::Function
+                | NodeKind::Class
+                | NodeKind::ImportExpression
+                | NodeKind::AwaitExpression
+                | NodeKind::YieldExpression
+                | NodeKind::PrivateIdentifier
+                | NodeKind::TsAsExpression
+                | NodeKind::TsSatisfiesExpression
+                | NodeKind::TsTypeAssertion
+                | NodeKind::TsNonNullExpression
+                | NodeKind::TsInstantiationExpression
+                | NodeKind::JsxElement
+                | NodeKind::JsxFragment
+        )
     }
     #[inline]
-    pub fn as_class(&self) -> Option<&ClassDecl<'a>> {
-        match self {
-            Self::Class(it) => Some(it),
+    pub fn as_variable_declaration(self, ast: &Ast<'_>) -> Option<VariableDeclaration> {
+        match ast.for_statement_init_data(self) {
+            ForStatementInitData::VariableDeclaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_fn(&self) -> Option<&FnDecl<'a>> {
-        match self {
-            Self::Fn(it) => Some(it),
+    pub fn as_expr(self, ast: &Ast<'_>) -> Option<Expr> {
+        match ast.for_statement_init_data(self) {
+            ForStatementInitData::Expr(it) => Some(it),
             _ => None,
         }
     }
+}
+impl ForStatementLeft {
     #[inline]
-    pub fn as_var(&self) -> Option<&VarDecl<'a>> {
-        match self {
-            Self::Var(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_variable_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::VariableDeclaration
     }
     #[inline]
-    pub fn as_using(&self) -> Option<&UsingDecl<'a>> {
-        match self {
-            Self::Using(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_assignment_target(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::IdentifierReference
+                | NodeKind::MemberExpression
+                | NodeKind::TsAsExpression
+                | NodeKind::TsSatisfiesExpression
+                | NodeKind::TsTypeAssertion
+                | NodeKind::TsNonNullExpression
+                | NodeKind::ArrayPattern
+                | NodeKind::ObjectPattern
+        )
     }
     #[inline]
-    pub fn as_mut_class(&mut self) -> Option<&mut ClassDecl<'a>> {
-        match self {
-            Self::Class(it) => Some(it),
+    pub fn as_variable_declaration(self, ast: &Ast<'_>) -> Option<VariableDeclaration> {
+        match ast.for_statement_left_data(self) {
+            ForStatementLeftData::VariableDeclaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_fn(&mut self) -> Option<&mut FnDecl<'a>> {
-        match self {
-            Self::Fn(it) => Some(it),
+    pub fn as_assignment_target(self, ast: &Ast<'_>) -> Option<AssignmentTarget> {
+        match ast.for_statement_left_data(self) {
+            ForStatementLeftData::AssignmentTarget(it) => Some(it),
             _ => None,
         }
     }
+}
+impl ArrowFunctionBody {
     #[inline]
-    pub fn as_mut_var(&mut self) -> Option<&mut VarDecl<'a>> {
-        match self {
-            Self::Var(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_function_body(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::FunctionBody
     }
     #[inline]
-    pub fn as_mut_using(&mut self) -> Option<&mut UsingDecl<'a>> {
-        match self {
-            Self::Using(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_expr(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::IdentifierReference
+                | NodeKind::ThisExpression
+                | NodeKind::Super
+                | NodeKind::MetaProperty
+                | NodeKind::StringLiteral
+                | NodeKind::NumericLiteral
+                | NodeKind::BigIntLiteral
+                | NodeKind::BooleanLiteral
+                | NodeKind::NullLiteral
+                | NodeKind::RegExpLiteral
+                | NodeKind::TemplateLiteral
+                | NodeKind::BinaryExpression
+                | NodeKind::LogicalExpression
+                | NodeKind::UnaryExpression
+                | NodeKind::UpdateExpression
+                | NodeKind::AssignmentExpression
+                | NodeKind::ConditionalExpression
+                | NodeKind::SequenceExpression
+                | NodeKind::MemberExpression
+                | NodeKind::CallExpression
+                | NodeKind::ChainExpression
+                | NodeKind::NewExpression
+                | NodeKind::TaggedTemplateExpression
+                | NodeKind::ArrowFunctionExpression
+                | NodeKind::ArrayExpression
+                | NodeKind::ObjectExpression
+                | NodeKind::ParenthesizedExpression
+                | NodeKind::Function
+                | NodeKind::Class
+                | NodeKind::ImportExpression
+                | NodeKind::AwaitExpression
+                | NodeKind::YieldExpression
+                | NodeKind::PrivateIdentifier
+                | NodeKind::TsAsExpression
+                | NodeKind::TsSatisfiesExpression
+                | NodeKind::TsTypeAssertion
+                | NodeKind::TsNonNullExpression
+                | NodeKind::TsInstantiationExpression
+                | NodeKind::JsxElement
+                | NodeKind::JsxFragment
+        )
     }
-}
-impl<'a> GetSpan for Decl<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Class(it) => it.span(),
-            Self::Fn(it) => it.span(),
-            Self::Var(it) => it.span(),
-            Self::Using(it) => it.span(),
+    pub fn as_function_body(self, ast: &Ast<'_>) -> Option<FunctionBody> {
+        match ast.arrow_function_body_data(self) {
+            ArrowFunctionBodyData::FunctionBody(it) => Some(it),
+            _ => None,
         }
     }
-}
-impl<'a> SetSpan for Decl<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Class(it) => it.set_span(span),
-            Self::Fn(it) => it.set_span(span),
-            Self::Var(it) => it.set_span(span),
-            Self::Using(it) => it.set_span(span),
+    pub fn as_expr(self, ast: &Ast<'_>) -> Option<Expr> {
+        match ast.arrow_function_body_data(self) {
+            ArrowFunctionBodyData::Expr(it) => Some(it),
+            _ => None,
         }
     }
 }
-impl<'a> GetSpan for FnDecl<'a> {
+impl FormalParameterItem {
     #[inline]
-    fn span(&self) -> Span {
-        self.function.span()
+    pub fn is_formal_parameter(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::FormalParameter
     }
-}
-impl<'a> SetSpan for FnDecl<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.function.set_span(span);
+    pub fn is_ts_parameter_property(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsParameterProperty
     }
-}
-impl<'a> GetSpan for ClassDecl<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.class.span()
+    pub fn as_formal_parameter(self, ast: &Ast<'_>) -> Option<FormalParameter> {
+        match ast.formal_parameter_item_data(self) {
+            FormalParameterItemData::FormalParameter(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> SetSpan for ClassDecl<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.class.set_span(span);
+    pub fn as_ts_parameter_property(self, ast: &Ast<'_>) -> Option<TsParameterProperty> {
+        match ast.formal_parameter_item_data(self) {
+            FormalParameterItemData::TsParameterProperty(it) => Some(it),
+            _ => None,
+        }
     }
 }
-impl<'a> GetSpan for VarDecl<'a> {
+impl FormalParameterPattern {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_binding_pattern(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::BindingIdentifier
+                | NodeKind::IdentifierReference
+                | NodeKind::MemberExpression
+                | NodeKind::TsAsExpression
+                | NodeKind::TsSatisfiesExpression
+                | NodeKind::TsTypeAssertion
+                | NodeKind::TsNonNullExpression
+                | NodeKind::AssignmentPattern
+                | NodeKind::BindingRestElement
+                | NodeKind::ArrayPattern
+                | NodeKind::ObjectPattern
+        )
     }
-}
-impl<'a> SetSpan for VarDecl<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_ts_this_parameter(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsThisParameter
     }
-}
-impl<'a> GetSpan for VarDeclarator<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_binding_pattern(self, ast: &Ast<'_>) -> Option<BindingPattern> {
+        match ast.formal_parameter_pattern_data(self) {
+            FormalParameterPatternData::BindingPattern(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> SetSpan for VarDeclarator<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn as_ts_this_parameter(self, ast: &Ast<'_>) -> Option<TsThisParameter> {
+        match ast.formal_parameter_pattern_data(self) {
+            FormalParameterPatternData::TsThisParameter(it) => Some(it),
+            _ => None,
+        }
     }
 }
-impl<'a> GetSpan for UsingDecl<'a> {
+impl ClassElement {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_method_definition(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::MethodDefinition
     }
-}
-impl<'a> SetSpan for UsingDecl<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_property_definition(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::PropertyDefinition
     }
-}
-impl<'a> Expr<'a> {
     #[inline]
-    pub const fn is_this(&self) -> bool {
-        matches!(self, Self::This { .. })
+    pub fn is_static_block(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::StaticBlock
     }
     #[inline]
-    pub const fn is_array(&self) -> bool {
-        matches!(self, Self::Array { .. })
+    pub fn is_ts_index_signature(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsIndexSignature
     }
     #[inline]
-    pub const fn is_object(&self) -> bool {
-        matches!(self, Self::Object { .. })
+    pub fn as_method_definition(self, ast: &Ast<'_>) -> Option<MethodDefinition> {
+        match ast.class_element_data(self) {
+            ClassElementData::MethodDefinition(it) => Some(it),
+            _ => None,
+        }
     }
     #[inline]
-    pub const fn is_fn(&self) -> bool {
-        matches!(self, Self::Fn { .. })
+    pub fn as_property_definition(self, ast: &Ast<'_>) -> Option<PropertyDefinition> {
+        match ast.class_element_data(self) {
+            ClassElementData::PropertyDefinition(it) => Some(it),
+            _ => None,
+        }
     }
     #[inline]
-    pub const fn is_unary(&self) -> bool {
-        matches!(self, Self::Unary { .. })
+    pub fn as_static_block(self, ast: &Ast<'_>) -> Option<StaticBlock> {
+        match ast.class_element_data(self) {
+            ClassElementData::StaticBlock(it) => Some(it),
+            _ => None,
+        }
     }
     #[inline]
-    pub const fn is_update(&self) -> bool {
-        matches!(self, Self::Update { .. })
+    pub fn as_ts_index_signature(self, ast: &Ast<'_>) -> Option<TsIndexSignature> {
+        match ast.class_element_data(self) {
+            ClassElementData::TsIndexSignature(it) => Some(it),
+            _ => None,
+        }
     }
+}
+impl ImportDeclarationSpecifier {
     #[inline]
-    pub const fn is_bin(&self) -> bool {
-        matches!(self, Self::Bin { .. })
+    pub fn is_import_specifier(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ImportSpecifier
     }
     #[inline]
-    pub const fn is_assign(&self) -> bool {
-        matches!(self, Self::Assign { .. })
+    pub fn is_import_default_specifier(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ImportDefaultSpecifier
     }
     #[inline]
-    pub const fn is_member(&self) -> bool {
-        matches!(self, Self::Member { .. })
+    pub fn is_import_namespace_specifier(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ImportNamespaceSpecifier
     }
     #[inline]
-    pub const fn is_super_prop(&self) -> bool {
-        matches!(self, Self::SuperProp { .. })
+    pub fn as_import_specifier(self, ast: &Ast<'_>) -> Option<ImportSpecifier> {
+        match ast.import_declaration_specifier_data(self) {
+            ImportDeclarationSpecifierData::ImportSpecifier(it) => Some(it),
+            _ => None,
+        }
     }
     #[inline]
-    pub const fn is_cond(&self) -> bool {
-        matches!(self, Self::Cond { .. })
+    pub fn as_import_default_specifier(self, ast: &Ast<'_>) -> Option<ImportDefaultSpecifier> {
+        match ast.import_declaration_specifier_data(self) {
+            ImportDeclarationSpecifierData::ImportDefaultSpecifier(it) => Some(it),
+            _ => None,
+        }
     }
     #[inline]
-    pub const fn is_import(&self) -> bool {
-        matches!(self, Self::Import { .. })
+    pub fn as_import_namespace_specifier(self, ast: &Ast<'_>) -> Option<ImportNamespaceSpecifier> {
+        match ast.import_declaration_specifier_data(self) {
+            ImportDeclarationSpecifierData::ImportNamespaceSpecifier(it) => Some(it),
+            _ => None,
+        }
     }
+}
+impl ExportDefaultDeclarationKind {
     #[inline]
-    pub const fn is_call(&self) -> bool {
-        matches!(self, Self::Call { .. })
+    pub fn is_expr(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::IdentifierReference
+                | NodeKind::ThisExpression
+                | NodeKind::Super
+                | NodeKind::MetaProperty
+                | NodeKind::StringLiteral
+                | NodeKind::NumericLiteral
+                | NodeKind::BigIntLiteral
+                | NodeKind::BooleanLiteral
+                | NodeKind::NullLiteral
+                | NodeKind::RegExpLiteral
+                | NodeKind::TemplateLiteral
+                | NodeKind::BinaryExpression
+                | NodeKind::LogicalExpression
+                | NodeKind::UnaryExpression
+                | NodeKind::UpdateExpression
+                | NodeKind::AssignmentExpression
+                | NodeKind::ConditionalExpression
+                | NodeKind::SequenceExpression
+                | NodeKind::MemberExpression
+                | NodeKind::CallExpression
+                | NodeKind::ChainExpression
+                | NodeKind::NewExpression
+                | NodeKind::TaggedTemplateExpression
+                | NodeKind::ArrowFunctionExpression
+                | NodeKind::ArrayExpression
+                | NodeKind::ObjectExpression
+                | NodeKind::ParenthesizedExpression
+                | NodeKind::Function
+                | NodeKind::Class
+                | NodeKind::ImportExpression
+                | NodeKind::AwaitExpression
+                | NodeKind::YieldExpression
+                | NodeKind::PrivateIdentifier
+                | NodeKind::TsAsExpression
+                | NodeKind::TsSatisfiesExpression
+                | NodeKind::TsTypeAssertion
+                | NodeKind::TsNonNullExpression
+                | NodeKind::TsInstantiationExpression
+                | NodeKind::JsxElement
+                | NodeKind::JsxFragment
+        )
     }
     #[inline]
-    pub const fn is_new(&self) -> bool {
-        matches!(self, Self::New { .. })
+    pub fn is_function(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::Function
     }
     #[inline]
-    pub const fn is_seq(&self) -> bool {
-        matches!(self, Self::Seq { .. })
+    pub fn is_class(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::Class
     }
     #[inline]
-    pub const fn is_ident(&self) -> bool {
-        matches!(self, Self::Ident { .. })
+    pub fn is_ts_interface_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsInterfaceDeclaration
     }
     #[inline]
-    pub const fn is_lit(&self) -> bool {
-        matches!(self, Self::Lit { .. })
+    pub fn as_expr(self, ast: &Ast<'_>) -> Option<Expr> {
+        match ast.export_default_declaration_kind_data(self) {
+            ExportDefaultDeclarationKindData::Expr(it) => Some(it),
+            _ => None,
+        }
     }
     #[inline]
-    pub const fn is_tpl(&self) -> bool {
-        matches!(self, Self::Tpl { .. })
+    pub fn as_function(self, ast: &Ast<'_>) -> Option<Function> {
+        match ast.export_default_declaration_kind_data(self) {
+            ExportDefaultDeclarationKindData::Function(it) => Some(it),
+            _ => None,
+        }
     }
     #[inline]
-    pub const fn is_tagged_tpl(&self) -> bool {
-        matches!(self, Self::TaggedTpl { .. })
+    pub fn as_class(self, ast: &Ast<'_>) -> Option<Class> {
+        match ast.export_default_declaration_kind_data(self) {
+            ExportDefaultDeclarationKindData::Class(it) => Some(it),
+            _ => None,
+        }
     }
     #[inline]
-    pub const fn is_arrow(&self) -> bool {
-        matches!(self, Self::Arrow { .. })
+    pub fn as_ts_interface_declaration(self, ast: &Ast<'_>) -> Option<TsInterfaceDeclaration> {
+        match ast.export_default_declaration_kind_data(self) {
+            ExportDefaultDeclarationKindData::TsInterfaceDeclaration(it) => Some(it),
+            _ => None,
+        }
     }
+}
+impl Super {}
+impl ThisExpression {}
+impl StringLiteral {
     #[inline]
-    pub const fn is_class(&self) -> bool {
-        matches!(self, Self::Class { .. })
+    pub fn value<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub const fn is_yield(&self) -> bool {
-        matches!(self, Self::Yield { .. })
+    pub fn raw<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub const fn is_meta_prop(&self) -> bool {
-        matches!(self, Self::MetaProp { .. })
+    pub fn set_value<'a>(self, ast: &mut crate::Ast<'a>, value: String) {
+        let field_val: u64 = unsafe { value.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
     #[inline]
-    pub const fn is_await(&self) -> bool {
-        matches!(self, Self::Await { .. })
+    pub fn set_raw<'a>(self, ast: &mut crate::Ast<'a>, raw: String) {
+        let field_val: u64 = unsafe { raw.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 18446744073709551615u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 64usize);
     }
+}
+impl NumericLiteral {
     #[inline]
-    pub const fn is_paren(&self) -> bool {
-        matches!(self, Self::Paren { .. })
+    pub fn kind<'a>(self, ast: &crate::Ast<'a>) -> NumericLiteralKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, NumericLiteralKind>(raw as u8) }
     }
     #[inline]
-    pub const fn is_jsx_member(&self) -> bool {
-        matches!(self, Self::JSXMember { .. })
+    pub fn raw<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub const fn is_jsx_namespaced_name(&self) -> bool {
-        matches!(self, Self::JSXNamespacedName { .. })
+    pub fn set_kind<'a>(self, ast: &mut crate::Ast<'a>, kind: NumericLiteralKind) {
+        let field_val: u32 = kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
     #[inline]
-    pub const fn is_jsx_empty(&self) -> bool {
-        matches!(self, Self::JSXEmpty { .. })
+    pub fn set_raw<'a>(self, ast: &mut crate::Ast<'a>, raw: String) {
+        let field_val: u64 = unsafe { raw.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
+}
+impl BigIntLiteral {
     #[inline]
-    pub const fn is_jsx_element(&self) -> bool {
-        matches!(self, Self::JSXElement { .. })
+    pub fn raw<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub const fn is_jsx_fragment(&self) -> bool {
-        matches!(self, Self::JSXFragment { .. })
+    pub fn set_raw<'a>(self, ast: &mut crate::Ast<'a>, raw: String) {
+        let field_val: u64 = unsafe { raw.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
+}
+impl BooleanLiteral {
     #[inline]
-    pub const fn is_private_name(&self) -> bool {
-        matches!(self, Self::PrivateName { .. })
+    pub fn value<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub const fn is_opt_chain(&self) -> bool {
-        matches!(self, Self::OptChain { .. })
+    pub fn set_value<'a>(self, ast: &mut crate::Ast<'a>, value: bool) {
+        let field_val: u32 = value as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
     }
+}
+impl NullLiteral {}
+impl RegExpLiteral {
     #[inline]
-    pub const fn is_invalid(&self) -> bool {
-        matches!(self, Self::Invalid { .. })
+    pub fn pattern<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_this(&self) -> Option<&ThisExpr> {
-        match self {
-            Self::This(it) => Some(it),
-            _ => None,
-        }
+    pub fn flags<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_array(&self) -> Option<&ArrayLit<'a>> {
-        match self {
-            Self::Array(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_pattern<'a>(self, ast: &mut crate::Ast<'a>, pattern: String) {
+        let field_val: u64 = unsafe { pattern.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
     #[inline]
-    pub fn as_object(&self) -> Option<&ObjectLit<'a>> {
-        match self {
-            Self::Object(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_flags<'a>(self, ast: &mut crate::Ast<'a>, flags: String) {
+        let field_val: u64 = unsafe { flags.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 18446744073709551615u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 64usize);
     }
+}
+impl TemplateLiteral {
     #[inline]
-    pub fn as_fn(&self) -> Option<&FnExpr<'a>> {
-        match self {
-            Self::Fn(it) => Some(it),
-            _ => None,
-        }
+    pub fn quasis<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TemplateElement> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_unary(&self) -> Option<&UnaryExpr<'a>> {
-        match self {
-            Self::Unary(it) => Some(it),
-            _ => None,
-        }
+    pub fn expressions<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Expr> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_update(&self) -> Option<&UpdateExpr<'a>> {
-        match self {
-            Self::Update(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_quasis<'a>(self, ast: &mut crate::Ast<'a>, quasis: TypedSubRange<TemplateElement>) {
+        let field_val: u64 = unsafe { quasis.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
     #[inline]
-    pub fn as_bin(&self) -> Option<&BinExpr<'a>> {
-        match self {
-            Self::Bin(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_expressions<'a>(self, ast: &mut crate::Ast<'a>, expressions: TypedSubRange<Expr>) {
+        let field_val: u64 = unsafe { expressions.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 18446744073709551615u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 64usize);
     }
+}
+impl TemplateElement {
     #[inline]
-    pub fn as_assign(&self) -> Option<&AssignExpr<'a>> {
-        match self {
-            Self::Assign(it) => Some(it),
-            _ => None,
-        }
+    pub fn cooked<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 16usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_member(&self) -> Option<&MemberExpr<'a>> {
-        match self {
-            Self::Member(it) => Some(it),
-            _ => None,
-        }
+    pub fn tail<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_super_prop(&self) -> Option<&SuperPropExpr<'a>> {
-        match self {
-            Self::SuperProp(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_cooked_undefined<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_cond(&self) -> Option<&CondExpr<'a>> {
-        match self {
-            Self::Cond(it) => Some(it),
-            _ => None,
+    pub fn raw<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_import(&self) -> Option<&ImportExpr<'a>> {
-        match self {
-            Self::Import(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_cooked<'a>(self, ast: &mut crate::Ast<'a>, cooked: String) {
+        let field_val: u64 = unsafe { cooked.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920937254537554992802593570815u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 16usize);
     }
     #[inline]
-    pub fn as_call(&self) -> Option<&CallExpr<'a>> {
-        match self {
-            Self::Call(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_tail<'a>(self, ast: &mut crate::Ast<'a>, tail: bool) {
+        let field_val: u32 = tail as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
     }
     #[inline]
-    pub fn as_new(&self) -> Option<&NewExpr<'a>> {
-        match self {
-            Self::New(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_is_cooked_undefined<'a>(self, ast: &mut crate::Ast<'a>, is_cooked_undefined: bool) {
+        let field_val: u32 = is_cooked_undefined as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768146175u128)
+            | (((field_val as u128) & 255u128) << 8usize);
     }
     #[inline]
-    pub fn as_seq(&self) -> Option<&SeqExpr<'a>> {
-        match self {
-            Self::Seq(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_raw<'a>(self, ast: &mut crate::Ast<'a>, raw: String) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = raw.to_extra_data(ast);
+        };
     }
+}
+impl IdentifierReference {
     #[inline]
-    pub fn as_ident(&self) -> Option<&Ident<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
-        }
+    pub fn name<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_lit(&self) -> Option<&Lit<'a>> {
-        match self {
-            Self::Lit(it) => Some(it),
-            _ => None,
-        }
+    pub fn symbol_id<'a>(self, ast: &crate::Ast<'a>) -> Option<SymbolId> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        (raw != 0).then(|| unsafe {
+            <SymbolId as oxc_index::Idx>::from_usize_unchecked(raw.wrapping_sub(1) as usize)
+        })
     }
     #[inline]
-    pub fn as_tpl(&self) -> Option<&Tpl<'a>> {
-        match self {
-            Self::Tpl(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_name<'a>(self, ast: &mut crate::Ast<'a>, name: String) {
+        let field_val: u64 = unsafe { name.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
     #[inline]
-    pub fn as_tagged_tpl(&self) -> Option<&TaggedTpl<'a>> {
-        match self {
-            Self::TaggedTpl(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_symbol_id<'a>(self, ast: &mut crate::Ast<'a>, symbol_id: Option<SymbolId>) {
+        let field_val: u32 = symbol_id.map_or(0, |id| id.index() as u32 + 1);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
+}
+impl PrivateIdentifier {
     #[inline]
-    pub fn as_arrow(&self) -> Option<&ArrowExpr<'a>> {
-        match self {
-            Self::Arrow(it) => Some(it),
-            _ => None,
-        }
+    pub fn name<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_class(&self) -> Option<&ClassExpr<'a>> {
-        match self {
-            Self::Class(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_name<'a>(self, ast: &mut crate::Ast<'a>, name: String) {
+        let field_val: u64 = unsafe { name.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
+}
+impl BindingIdentifier {
     #[inline]
-    pub fn as_yield(&self) -> Option<&YieldExpr<'a>> {
-        match self {
-            Self::Yield(it) => Some(it),
-            _ => None,
-        }
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeAnnotation(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_meta_prop(&self) -> Option<&MetaPropExpr> {
-        match self {
-            Self::MetaProp(it) => Some(it),
-            _ => None,
-        }
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_await(&self) -> Option<&AwaitExpr<'a>> {
-        match self {
-            Self::Await(it) => Some(it),
-            _ => None,
-        }
+    pub fn symbol_id<'a>(self, ast: &crate::Ast<'a>) -> Option<SymbolId> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 4294967295u32;
+        (raw != 0).then(|| unsafe {
+            <SymbolId as oxc_index::Idx>::from_usize_unchecked(raw.wrapping_sub(1) as usize)
+        })
     }
     #[inline]
-    pub fn as_paren(&self) -> Option<&ParenExpr<'a>> {
-        match self {
-            Self::Paren(it) => Some(it),
-            _ => None,
+    pub fn name<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_jsx_member(&self) -> Option<&JSXMemberExpr<'a>> {
-        match self {
-            Self::JSXMember(it) => Some(it),
-            _ => None,
+    pub fn decorators<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Decorator> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_jsx_namespaced_name(&self) -> Option<&JSXNamespacedName<'a>> {
-        match self {
-            Self::JSXNamespacedName(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_annotation<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_annotation: Option<TsTypeAnnotation>,
+    ) {
+        let field_val: u32 = type_annotation.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606332256583935u128)
+            | (((field_val as u128) & 4294967295u128) << 8usize);
     }
     #[inline]
-    pub fn as_jsx_empty(&self) -> Option<&JSXEmptyExpr> {
-        match self {
-            Self::JSXEmpty(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: bool) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
     }
     #[inline]
-    pub fn as_jsx_element(&self) -> Option<&JSXElement<'a>> {
-        match self {
-            Self::JSXElement(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_symbol_id<'a>(self, ast: &mut crate::Ast<'a>, symbol_id: Option<SymbolId>) {
+        let field_val: u32 = symbol_id.map_or(0, |id| id.index() as u32 + 1);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458741008125661634625535u128)
+            | (((field_val as u128) & 4294967295u128) << 40usize);
     }
     #[inline]
-    pub fn as_jsx_fragment(&self) -> Option<&JSXFragment<'a>> {
-        match self {
-            Self::JSXFragment(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_name<'a>(self, ast: &mut crate::Ast<'a>, name: String) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = name.to_extra_data(ast);
+        };
     }
     #[inline]
-    pub fn as_private_name(&self) -> Option<&PrivateName<'a>> {
-        match self {
-            Self::PrivateName(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_decorators<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        decorators: TypedSubRange<Decorator>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = decorators.to_extra_data(ast);
+        };
     }
+}
+impl IdentifierName {
     #[inline]
-    pub fn as_opt_chain(&self) -> Option<&OptChainExpr<'a>> {
-        match self {
-            Self::OptChain(it) => Some(it),
-            _ => None,
-        }
+    pub fn name<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_invalid(&self) -> Option<&Invalid> {
-        match self {
-            Self::Invalid(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_name<'a>(self, ast: &mut crate::Ast<'a>, name: String) {
+        let field_val: u64 = unsafe { name.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
+}
+impl LabelIdentifier {
     #[inline]
-    pub fn as_mut_this(&mut self) -> Option<&mut ThisExpr> {
-        match self {
-            Self::This(it) => Some(it),
-            _ => None,
-        }
+    pub fn name<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_mut_array(&mut self) -> Option<&mut ArrayLit<'a>> {
-        match self {
-            Self::Array(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_name<'a>(self, ast: &mut crate::Ast<'a>, name: String) {
+        let field_val: u64 = unsafe { name.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
+}
+impl AssignmentPattern {
     #[inline]
-    pub fn as_mut_object(&mut self) -> Option<&mut ObjectLit<'a>> {
-        match self {
-            Self::Object(it) => Some(it),
-            _ => None,
-        }
+    pub fn left<'a>(self, ast: &crate::Ast<'a>) -> BindingPattern {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 4294967295u32;
+        BindingPattern(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_fn(&mut self) -> Option<&mut FnExpr<'a>> {
-        match self {
-            Self::Fn(it) => Some(it),
-            _ => None,
-        }
+    pub fn right<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_unary(&mut self) -> Option<&mut UnaryExpr<'a>> {
-        match self {
-            Self::Unary(it) => Some(it),
-            _ => None,
-        }
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_mut_update(&mut self) -> Option<&mut UpdateExpr<'a>> {
-        match self {
-            Self::Update(it) => Some(it),
-            _ => None,
+    pub fn decorators<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Decorator> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_mut_bin(&mut self) -> Option<&mut BinExpr<'a>> {
-        match self {
-            Self::Bin(it) => Some(it),
-            _ => None,
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_mut_assign(&mut self) -> Option<&mut AssignExpr<'a>> {
-        match self {
-            Self::Assign(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_left<'a>(self, ast: &mut crate::Ast<'a>, left: BindingPattern) {
+        let field_val: u32 = left.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606332256583935u128)
+            | (((field_val as u128) & 4294967295u128) << 8usize);
     }
     #[inline]
-    pub fn as_mut_member(&mut self) -> Option<&mut MemberExpr<'a>> {
-        match self {
-            Self::Member(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_right<'a>(self, ast: &mut crate::Ast<'a>, right: Expr) {
+        let field_val: u32 = right.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458741008125661634625535u128)
+            | (((field_val as u128) & 4294967295u128) << 40usize);
     }
     #[inline]
-    pub fn as_mut_super_prop(&mut self) -> Option<&mut SuperPropExpr<'a>> {
-        match self {
-            Self::SuperProp(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: bool) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_cond(&mut self) -> Option<&mut CondExpr<'a>> {
-        match self {
-            Self::Cond(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_decorators<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        decorators: TypedSubRange<Decorator>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = decorators.to_extra_data(ast);
+        };
     }
     #[inline]
-    pub fn as_mut_import(&mut self) -> Option<&mut ImportExpr<'a>> {
-        match self {
-            Self::Import(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_annotation<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_annotation: Option<TsTypeAnnotation>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = type_annotation.to_extra_data(ast);
+        };
     }
+}
+impl BindingRestElement {
     #[inline]
-    pub fn as_mut_call(&mut self) -> Option<&mut CallExpr<'a>> {
-        match self {
-            Self::Call(it) => Some(it),
-            _ => None,
-        }
+    pub fn argument<'a>(self, ast: &crate::Ast<'a>) -> BindingPattern {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 4294967295u32;
+        BindingPattern(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_new(&mut self) -> Option<&mut NewExpr<'a>> {
-        match self {
-            Self::New(it) => Some(it),
-            _ => None,
-        }
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeAnnotation(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_mut_seq(&mut self) -> Option<&mut SeqExpr<'a>> {
-        match self {
-            Self::Seq(it) => Some(it),
-            _ => None,
-        }
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_mut_ident(&mut self) -> Option<&mut Ident<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
+    pub fn decorators<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Decorator> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_mut_lit(&mut self) -> Option<&mut Lit<'a>> {
-        match self {
-            Self::Lit(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_argument<'a>(self, ast: &mut crate::Ast<'a>, argument: BindingPattern) {
+        let field_val: u32 = argument.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606332256583935u128)
+            | (((field_val as u128) & 4294967295u128) << 8usize);
     }
     #[inline]
-    pub fn as_mut_tpl(&mut self) -> Option<&mut Tpl<'a>> {
-        match self {
-            Self::Tpl(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_annotation<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_annotation: Option<TsTypeAnnotation>,
+    ) {
+        let field_val: u32 = type_annotation.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458741008125661634625535u128)
+            | (((field_val as u128) & 4294967295u128) << 40usize);
     }
     #[inline]
-    pub fn as_mut_tagged_tpl(&mut self) -> Option<&mut TaggedTpl<'a>> {
-        match self {
-            Self::TaggedTpl(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: bool) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_arrow(&mut self) -> Option<&mut ArrowExpr<'a>> {
-        match self {
-            Self::Arrow(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_decorators<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        decorators: TypedSubRange<Decorator>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = decorators.to_extra_data(ast);
+        };
     }
+}
+impl ArrayPattern {
     #[inline]
-    pub fn as_mut_class(&mut self) -> Option<&mut ClassExpr<'a>> {
-        match self {
-            Self::Class(it) => Some(it),
-            _ => None,
-        }
+    pub fn rest<'a>(self, ast: &crate::Ast<'a>) -> Option<BindingRestElement> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| BindingRestElement(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_mut_yield(&mut self) -> Option<&mut YieldExpr<'a>> {
-        match self {
-            Self::Yield(it) => Some(it),
-            _ => None,
-        }
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeAnnotation(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_mut_meta_prop(&mut self) -> Option<&mut MetaPropExpr> {
-        match self {
-            Self::MetaProp(it) => Some(it),
-            _ => None,
-        }
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_mut_await(&mut self) -> Option<&mut AwaitExpr<'a>> {
-        match self {
-            Self::Await(it) => Some(it),
-            _ => None,
+    pub fn elements<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Option<BindingPattern>> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_mut_paren(&mut self) -> Option<&mut ParenExpr<'a>> {
-        match self {
-            Self::Paren(it) => Some(it),
-            _ => None,
+    pub fn decorators<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Decorator> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_mut_jsx_member(&mut self) -> Option<&mut JSXMemberExpr<'a>> {
-        match self {
-            Self::JSXMember(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_rest<'a>(self, ast: &mut crate::Ast<'a>, rest: Option<BindingRestElement>) {
+        let field_val: u32 = rest.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606332256583935u128)
+            | (((field_val as u128) & 4294967295u128) << 8usize);
     }
     #[inline]
-    pub fn as_mut_jsx_namespaced_name(&mut self) -> Option<&mut JSXNamespacedName<'a>> {
-        match self {
-            Self::JSXNamespacedName(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_annotation<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_annotation: Option<TsTypeAnnotation>,
+    ) {
+        let field_val: u32 = type_annotation.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458741008125661634625535u128)
+            | (((field_val as u128) & 4294967295u128) << 40usize);
     }
     #[inline]
-    pub fn as_mut_jsx_empty(&mut self) -> Option<&mut JSXEmptyExpr> {
-        match self {
-            Self::JSXEmpty(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: bool) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_jsx_element(&mut self) -> Option<&mut JSXElement<'a>> {
-        match self {
-            Self::JSXElement(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_elements<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        elements: TypedSubRange<Option<BindingPattern>>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = elements.to_extra_data(ast);
+        };
     }
     #[inline]
-    pub fn as_mut_jsx_fragment(&mut self) -> Option<&mut JSXFragment<'a>> {
-        match self {
-            Self::JSXFragment(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_decorators<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        decorators: TypedSubRange<Decorator>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = decorators.to_extra_data(ast);
+        };
     }
+}
+impl ObjectPattern {
     #[inline]
-    pub fn as_mut_private_name(&mut self) -> Option<&mut PrivateName<'a>> {
-        match self {
-            Self::PrivateName(it) => Some(it),
-            _ => None,
-        }
+    pub fn rest<'a>(self, ast: &crate::Ast<'a>) -> Option<BindingRestElement> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| BindingRestElement(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_mut_opt_chain(&mut self) -> Option<&mut OptChainExpr<'a>> {
-        match self {
-            Self::OptChain(it) => Some(it),
-            _ => None,
-        }
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeAnnotation(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_mut_invalid(&mut self) -> Option<&mut Invalid> {
-        match self {
-            Self::Invalid(it) => Some(it),
-            _ => None,
-        }
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        raw != 0
     }
-}
-impl<'a> GetSpan for Expr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::This(it) => it.span(),
-            Self::Array(it) => it.span(),
-            Self::Object(it) => it.span(),
-            Self::Fn(it) => it.span(),
-            Self::Unary(it) => it.span(),
-            Self::Update(it) => it.span(),
-            Self::Bin(it) => it.span(),
-            Self::Assign(it) => it.span(),
-            Self::Member(it) => it.span(),
-            Self::SuperProp(it) => it.span(),
-            Self::Cond(it) => it.span(),
-            Self::Import(it) => it.span(),
-            Self::Call(it) => it.span(),
-            Self::New(it) => it.span(),
-            Self::Seq(it) => it.span(),
-            Self::Ident(it) => it.span(),
-            Self::Lit(it) => it.span(),
-            Self::Tpl(it) => it.span(),
-            Self::TaggedTpl(it) => it.span(),
-            Self::Arrow(it) => it.span(),
-            Self::Class(it) => it.span(),
-            Self::Yield(it) => it.span(),
-            Self::MetaProp(it) => it.span(),
-            Self::Await(it) => it.span(),
-            Self::Paren(it) => it.span(),
-            Self::JSXMember(it) => it.span(),
-            Self::JSXNamespacedName(it) => it.span(),
-            Self::JSXEmpty(it) => it.span(),
-            Self::JSXElement(it) => it.span(),
-            Self::JSXFragment(it) => it.span(),
-            Self::PrivateName(it) => it.span(),
-            Self::OptChain(it) => it.span(),
-            Self::Invalid(it) => it.span(),
+    pub fn properties<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<BindingProperty> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
-}
-impl<'a> SetSpan for Expr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::This(it) => it.set_span(span),
-            Self::Array(it) => it.set_span(span),
-            Self::Object(it) => it.set_span(span),
-            Self::Fn(it) => it.set_span(span),
-            Self::Unary(it) => it.set_span(span),
-            Self::Update(it) => it.set_span(span),
-            Self::Bin(it) => it.set_span(span),
-            Self::Assign(it) => it.set_span(span),
-            Self::Member(it) => it.set_span(span),
-            Self::SuperProp(it) => it.set_span(span),
-            Self::Cond(it) => it.set_span(span),
-            Self::Import(it) => it.set_span(span),
-            Self::Call(it) => it.set_span(span),
-            Self::New(it) => it.set_span(span),
-            Self::Seq(it) => it.set_span(span),
-            Self::Ident(it) => it.set_span(span),
-            Self::Lit(it) => it.set_span(span),
-            Self::Tpl(it) => it.set_span(span),
-            Self::TaggedTpl(it) => it.set_span(span),
-            Self::Arrow(it) => it.set_span(span),
-            Self::Class(it) => it.set_span(span),
-            Self::Yield(it) => it.set_span(span),
-            Self::MetaProp(it) => it.set_span(span),
-            Self::Await(it) => it.set_span(span),
-            Self::Paren(it) => it.set_span(span),
-            Self::JSXMember(it) => it.set_span(span),
-            Self::JSXNamespacedName(it) => it.set_span(span),
-            Self::JSXEmpty(it) => it.set_span(span),
-            Self::JSXElement(it) => it.set_span(span),
-            Self::JSXFragment(it) => it.set_span(span),
-            Self::PrivateName(it) => it.set_span(span),
-            Self::OptChain(it) => it.set_span(span),
-            Self::Invalid(it) => it.set_span(span),
+    pub fn decorators<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Decorator> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
-}
-impl GetSpan for ThisExpr {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_rest<'a>(self, ast: &mut crate::Ast<'a>, rest: Option<BindingRestElement>) {
+        let field_val: u32 = rest.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606332256583935u128)
+            | (((field_val as u128) & 4294967295u128) << 8usize);
     }
-}
-impl SetSpan for ThisExpr {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_type_annotation<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_annotation: Option<TsTypeAnnotation>,
+    ) {
+        let field_val: u32 = type_annotation.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458741008125661634625535u128)
+            | (((field_val as u128) & 4294967295u128) << 40usize);
     }
-}
-impl<'a> GetSpan for ArrayLit<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: bool) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
     }
-}
-impl<'a> SetSpan for ArrayLit<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_properties<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        properties: TypedSubRange<BindingProperty>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = properties.to_extra_data(ast);
+        };
     }
-}
-impl<'a> GetSpan for ObjectLit<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_decorators<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        decorators: TypedSubRange<Decorator>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = decorators.to_extra_data(ast);
+        };
     }
 }
-impl<'a> SetSpan for ObjectLit<'a> {
+impl BindingProperty {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn key<'a>(self, ast: &crate::Ast<'a>) -> PropertyKey {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        PropertyKey(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> PropOrSpread<'a> {
     #[inline]
-    pub const fn is_spread(&self) -> bool {
-        matches!(self, Self::Spread { .. })
+    pub fn value<'a>(self, ast: &crate::Ast<'a>) -> BindingPattern {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        BindingPattern(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_prop(&self) -> bool {
-        matches!(self, Self::Prop { .. })
+    pub fn shorthand<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_spread(&self) -> Option<&SpreadElement<'a>> {
-        match self {
-            Self::Spread(it) => Some(it),
-            _ => None,
-        }
+    pub fn computed<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 72usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_prop(&self) -> Option<&Prop<'a>> {
-        match self {
-            Self::Prop(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_key<'a>(self, ast: &mut crate::Ast<'a>, key: PropertyKey) {
+        let field_val: u32 = key.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_spread(&mut self) -> Option<&mut SpreadElement<'a>> {
-        match self {
-            Self::Spread(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_value<'a>(self, ast: &mut crate::Ast<'a>, value: BindingPattern) {
+        let field_val: u32 = value.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
     #[inline]
-    pub fn as_mut_prop(&mut self) -> Option<&mut Prop<'a>> {
-        match self {
-            Self::Prop(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_shorthand<'a>(self, ast: &mut crate::Ast<'a>, shorthand: bool) {
+        let field_val: u32 = shorthand as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
-}
-impl<'a> GetSpan for PropOrSpread<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Spread(it) => it.span(),
-            Self::Prop(it) => it.span(),
-        }
+    pub fn set_computed<'a>(self, ast: &mut crate::Ast<'a>, computed: bool) {
+        let field_val: u32 = computed as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920937259259921475672238718975u128)
+            | (((field_val as u128) & 255u128) << 72usize);
     }
 }
-impl<'a> SetSpan for PropOrSpread<'a> {
+impl BinaryExpression {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Spread(it) => it.set_span(span),
-            Self::Prop(it) => it.set_span(span),
-        }
+    pub fn left<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for SpreadElement<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        Span::new(self.dot3_token.start, self.expr.span_hi())
+    pub fn right<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for SpreadElement<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.dot3_token.start = span.start;
-        let current = self.expr.span();
-        self.expr.set_span(Span::new(current.start, span.end));
+    pub fn operator<'a>(self, ast: &crate::Ast<'a>) -> BinaryOperator {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, BinaryOperator>(raw as u8) }
     }
-}
-impl<'a> GetSpan for UnaryExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_left<'a>(self, ast: &mut crate::Ast<'a>, left: Expr) {
+        let field_val: u32 = left.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> SetSpan for UnaryExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_right<'a>(self, ast: &mut crate::Ast<'a>, right: Expr) {
+        let field_val: u32 = right.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
-}
-impl<'a> GetSpan for UpdateExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_operator<'a>(self, ast: &mut crate::Ast<'a>, operator: BinaryOperator) {
+        let field_val: u32 = operator as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
 }
-impl<'a> SetSpan for UpdateExpr<'a> {
+impl LogicalExpression {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn left<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for BinExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn right<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for BinExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn operator<'a>(self, ast: &crate::Ast<'a>) -> LogicalOperator {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, LogicalOperator>(raw as u8) }
     }
-}
-impl<'a> GetSpan for FnExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.function.span()
+    pub fn set_left<'a>(self, ast: &mut crate::Ast<'a>, left: Expr) {
+        let field_val: u32 = left.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> SetSpan for FnExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.function.set_span(span);
+    pub fn set_right<'a>(self, ast: &mut crate::Ast<'a>, right: Expr) {
+        let field_val: u32 = right.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
-}
-impl<'a> GetSpan for ClassExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.class.span()
+    pub fn set_operator<'a>(self, ast: &mut crate::Ast<'a>, operator: LogicalOperator) {
+        let field_val: u32 = operator as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
 }
-impl<'a> SetSpan for ClassExpr<'a> {
+impl ConditionalExpression {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.class.set_span(span);
+    pub fn test<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for AssignExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn consequent<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for AssignExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn alternate<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for MemberExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_test<'a>(self, ast: &mut crate::Ast<'a>, test: Expr) {
+        let field_val: u32 = test.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> SetSpan for MemberExpr<'a> {
+    #[inline]
+    pub fn set_consequent<'a>(self, ast: &mut crate::Ast<'a>, consequent: Expr) {
+        let field_val: u32 = consequent.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_alternate<'a>(self, ast: &mut crate::Ast<'a>, alternate: Expr) {
+        let field_val: u32 = alternate.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
 }
-impl<'a> MemberProp<'a> {
+impl UnaryExpression {
     #[inline]
-    pub const fn is_ident(&self) -> bool {
-        matches!(self, Self::Ident { .. })
+    pub fn argument<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_private_name(&self) -> bool {
-        matches!(self, Self::PrivateName { .. })
+    pub fn operator<'a>(self, ast: &crate::Ast<'a>) -> UnaryOperator {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, UnaryOperator>(raw as u8) }
     }
     #[inline]
-    pub const fn is_computed(&self) -> bool {
-        matches!(self, Self::Computed { .. })
+    pub fn set_argument<'a>(self, ast: &mut crate::Ast<'a>, argument: Expr) {
+        let field_val: u32 = argument.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub fn as_ident(&self) -> Option<&IdentName<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_operator<'a>(self, ast: &mut crate::Ast<'a>, operator: UnaryOperator) {
+        let field_val: u32 = operator as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606336551550975u128)
+            | (((field_val as u128) & 255u128) << 32usize);
     }
+}
+impl UpdateExpression {
     #[inline]
-    pub fn as_private_name(&self) -> Option<&PrivateName<'a>> {
-        match self {
-            Self::PrivateName(it) => Some(it),
-            _ => None,
-        }
+    pub fn argument<'a>(self, ast: &crate::Ast<'a>) -> SimpleAssignmentTarget {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        SimpleAssignmentTarget(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_computed(&self) -> Option<&ComputedPropName<'a>> {
-        match self {
-            Self::Computed(it) => Some(it),
-            _ => None,
-        }
+    pub fn operator<'a>(self, ast: &crate::Ast<'a>) -> UpdateOperator {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, UpdateOperator>(raw as u8) }
     }
     #[inline]
-    pub fn as_mut_ident(&mut self) -> Option<&mut IdentName<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
-        }
+    pub fn prefix<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_mut_private_name(&mut self) -> Option<&mut PrivateName<'a>> {
-        match self {
-            Self::PrivateName(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_argument<'a>(self, ast: &mut crate::Ast<'a>, argument: SimpleAssignmentTarget) {
+        let field_val: u32 = argument.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_computed(&mut self) -> Option<&mut ComputedPropName<'a>> {
-        match self {
-            Self::Computed(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_operator<'a>(self, ast: &mut crate::Ast<'a>, operator: UpdateOperator) {
+        let field_val: u32 = operator as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606336551550975u128)
+            | (((field_val as u128) & 255u128) << 32usize);
     }
-}
-impl<'a> GetSpan for MemberProp<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Ident(it) => it.span(),
-            Self::PrivateName(it) => it.span(),
-            Self::Computed(it) => it.span(),
-        }
+    pub fn set_prefix<'a>(self, ast: &mut crate::Ast<'a>, prefix: bool) {
+        let field_val: u32 = prefix as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374327056303128575u128)
+            | (((field_val as u128) & 255u128) << 40usize);
     }
 }
-impl<'a> SetSpan for MemberProp<'a> {
+impl AssignmentExpression {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Ident(it) => it.set_span(span),
-            Self::PrivateName(it) => it.set_span(span),
-            Self::Computed(it) => it.set_span(span),
-        }
+    pub fn left<'a>(self, ast: &crate::Ast<'a>) -> AssignmentTarget {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        AssignmentTarget(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for SuperPropExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn right<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for SuperPropExpr<'a> {
+    #[inline]
+    pub fn operator<'a>(self, ast: &crate::Ast<'a>) -> AssignmentOperator {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, AssignmentOperator>(raw as u8) }
+    }
+    #[inline]
+    pub fn set_left<'a>(self, ast: &mut crate::Ast<'a>, left: AssignmentTarget) {
+        let field_val: u32 = left.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_right<'a>(self, ast: &mut crate::Ast<'a>, right: Expr) {
+        let field_val: u32 = right.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_operator<'a>(self, ast: &mut crate::Ast<'a>, operator: AssignmentOperator) {
+        let field_val: u32 = operator as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
 }
-impl<'a> SuperProp<'a> {
+impl VariableDeclaration {
     #[inline]
-    pub const fn is_ident(&self) -> bool {
-        matches!(self, Self::Ident { .. })
+    pub fn kind<'a>(self, ast: &crate::Ast<'a>) -> VariableKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, VariableKind>(raw as u8) }
     }
     #[inline]
-    pub const fn is_computed(&self) -> bool {
-        matches!(self, Self::Computed { .. })
+    pub fn declarators<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<VariableDeclarator> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_ident(&self) -> Option<&IdentName<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
-        }
+    pub fn declare<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 72usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_computed(&self) -> Option<&ComputedPropName<'a>> {
-        match self {
-            Self::Computed(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_kind<'a>(self, ast: &mut crate::Ast<'a>, kind: VariableKind) {
+        let field_val: u32 = kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
     #[inline]
-    pub fn as_mut_ident(&mut self) -> Option<&mut IdentName<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_declarators<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        declarators: TypedSubRange<VariableDeclarator>,
+    ) {
+        let field_val: u64 = unsafe { declarators.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_computed(&mut self) -> Option<&mut ComputedPropName<'a>> {
-        match self {
-            Self::Computed(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_declare<'a>(self, ast: &mut crate::Ast<'a>, declare: bool) {
+        let field_val: u32 = declare as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920937259259921475672238718975u128)
+            | (((field_val as u128) & 255u128) << 72usize);
     }
 }
-impl<'a> GetSpan for SuperProp<'a> {
+impl VariableDeclarator {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Ident(it) => it.span(),
-            Self::Computed(it) => it.span(),
-        }
+    pub fn id<'a>(self, ast: &crate::Ast<'a>) -> BindingPattern {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        BindingPattern(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for SuperProp<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Ident(it) => it.set_span(span),
-            Self::Computed(it) => it.set_span(span),
-        }
+    pub fn init<'a>(self, ast: &crate::Ast<'a>) -> Option<Expr> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Expr(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> GetSpan for CondExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn definite<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        raw != 0
     }
-}
-impl<'a> SetSpan for CondExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_id<'a>(self, ast: &mut crate::Ast<'a>, id: BindingPattern) {
+        let field_val: u32 = id.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> GetSpan for ImportExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_init<'a>(self, ast: &mut crate::Ast<'a>, init: Option<Expr>) {
+        let field_val: u32 = init.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
-}
-impl<'a> SetSpan for ImportExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_definite<'a>(self, ast: &mut crate::Ast<'a>, definite: bool) {
+        let field_val: u32 = definite as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
 }
-impl<'a> GetSpan for CallExpr<'a> {
+impl IfStatement {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn test<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for CallExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn consequent<'a>(self, ast: &crate::Ast<'a>) -> Stmt {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Stmt(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for NewExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn alternate<'a>(self, ast: &crate::Ast<'a>) -> Option<Stmt> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Stmt(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> SetSpan for NewExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_test<'a>(self, ast: &mut crate::Ast<'a>, test: Expr) {
+        let field_val: u32 = test.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> GetSpan for SeqExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_consequent<'a>(self, ast: &mut crate::Ast<'a>, consequent: Stmt) {
+        let field_val: u32 = consequent.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
-}
-impl<'a> SetSpan for SeqExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_alternate<'a>(self, ast: &mut crate::Ast<'a>, alternate: Option<Stmt>) {
+        let field_val: u32 = alternate.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
 }
-impl<'a> GetSpan for ArrowExpr<'a> {
+impl SwitchStatement {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn discriminant<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for ArrowExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn cases<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<SwitchCase> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
-}
-impl<'a> GetSpan for YieldExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_discriminant<'a>(self, ast: &mut crate::Ast<'a>, discriminant: Expr) {
+        let field_val: u32 = discriminant.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
-}
-impl<'a> SetSpan for YieldExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_cases<'a>(self, ast: &mut crate::Ast<'a>, cases: TypedSubRange<SwitchCase>) {
+        let field_val: u64 = unsafe { cases.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
 }
-impl GetSpan for MetaPropExpr {
+impl SwitchCase {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn test<'a>(self, ast: &crate::Ast<'a>) -> Option<Expr> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Expr(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl SetSpan for MetaPropExpr {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn consequent<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Stmt> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
-}
-impl<'a> GetSpan for AwaitExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_test<'a>(self, ast: &mut crate::Ast<'a>, test: Option<Expr>) {
+        let field_val: u32 = test.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
-}
-impl<'a> SetSpan for AwaitExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_consequent<'a>(self, ast: &mut crate::Ast<'a>, consequent: TypedSubRange<Stmt>) {
+        let field_val: u64 = unsafe { consequent.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
 }
-impl<'a> GetSpan for Tpl<'a> {
+impl ForStatement {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn init<'a>(self, ast: &crate::Ast<'a>) -> Option<ForStatementInit> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| ForStatementInit(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> SetSpan for Tpl<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn test<'a>(self, ast: &crate::Ast<'a>) -> Option<Expr> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Expr(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> GetSpan for TaggedTpl<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn update<'a>(self, ast: &crate::Ast<'a>) -> Option<Expr> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Expr(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> SetSpan for TaggedTpl<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> Stmt {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 4294967295u32;
+        Stmt(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for TplElement<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_init<'a>(self, ast: &mut crate::Ast<'a>, init: Option<ForStatementInit>) {
+        let field_val: u32 = init.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> SetSpan for TplElement<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_test<'a>(self, ast: &mut crate::Ast<'a>, test: Option<Expr>) {
+        let field_val: u32 = test.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
-}
-impl<'a> GetSpan for ParenExpr<'a> {
+    #[inline]
+    pub fn set_update<'a>(self, ast: &mut crate::Ast<'a>, update: Option<Expr>) {
+        let field_val: u32 = update.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
+    }
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: Stmt) {
+        let field_val: u32 = body.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 79228162514264337593543950335u128)
+            | (((field_val as u128) & 4294967295u128) << 96usize);
+    }
+}
+impl ForInStatement {
+    #[inline]
+    pub fn left<'a>(self, ast: &crate::Ast<'a>) -> ForStatementLeft {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        ForStatementLeft(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn right<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> Stmt {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        Stmt(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_left<'a>(self, ast: &mut crate::Ast<'a>, left: ForStatementLeft) {
+        let field_val: u32 = left.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_right<'a>(self, ast: &mut crate::Ast<'a>, right: Expr) {
+        let field_val: u32 = right.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: Stmt) {
+        let field_val: u32 = body.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
+    }
+}
+impl ForOfStatement {
+    #[inline]
+    pub fn left<'a>(self, ast: &crate::Ast<'a>) -> ForStatementLeft {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        ForStatementLeft(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn right<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> Stmt {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        Stmt(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn r#await<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn set_left<'a>(self, ast: &mut crate::Ast<'a>, left: ForStatementLeft) {
+        let field_val: u32 = left.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_right<'a>(self, ast: &mut crate::Ast<'a>, right: Expr) {
+        let field_val: u32 = right.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: Stmt) {
+        let field_val: u32 = body.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
+    }
+    #[inline]
+    pub fn set_await<'a>(self, ast: &mut crate::Ast<'a>, r#await: bool) {
+        let field_val: u32 = r#await as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282346717757022325968521078060875775u128)
+            | (((field_val as u128) & 255u128) << 96usize);
+    }
+}
+impl TryStatement {
+    #[inline]
+    pub fn block<'a>(self, ast: &crate::Ast<'a>) -> BlockStatement {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        BlockStatement(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn handler<'a>(self, ast: &crate::Ast<'a>) -> Option<CatchClause> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| CatchClause(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn finalizer<'a>(self, ast: &crate::Ast<'a>) -> Option<BlockStatement> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| BlockStatement(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn set_block<'a>(self, ast: &mut crate::Ast<'a>, block: BlockStatement) {
+        let field_val: u32 = block.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_handler<'a>(self, ast: &mut crate::Ast<'a>, handler: Option<CatchClause>) {
+        let field_val: u32 = handler.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_finalizer<'a>(self, ast: &mut crate::Ast<'a>, finalizer: Option<BlockStatement>) {
+        let field_val: u32 = finalizer.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
+    }
+}
+impl CatchClause {
+    #[inline]
+    pub fn param<'a>(self, ast: &crate::Ast<'a>) -> Option<BindingPattern> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| BindingPattern(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> BlockStatement {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        BlockStatement(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_param<'a>(self, ast: &mut crate::Ast<'a>, param: Option<BindingPattern>) {
+        let field_val: u32 = param.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: BlockStatement) {
+        let field_val: u32 = body.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+}
+impl BreakStatement {
+    #[inline]
+    pub fn label<'a>(self, ast: &crate::Ast<'a>) -> Option<LabelIdentifier> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| LabelIdentifier(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn set_label<'a>(self, ast: &mut crate::Ast<'a>, label: Option<LabelIdentifier>) {
+        let field_val: u32 = label.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl ContinueStatement {
+    #[inline]
+    pub fn label<'a>(self, ast: &crate::Ast<'a>) -> Option<LabelIdentifier> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| LabelIdentifier(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn set_label<'a>(self, ast: &mut crate::Ast<'a>, label: Option<LabelIdentifier>) {
+        let field_val: u32 = label.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl LabeledStatement {
+    #[inline]
+    pub fn label<'a>(self, ast: &crate::Ast<'a>) -> LabelIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        LabelIdentifier(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> Stmt {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Stmt(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_label<'a>(self, ast: &mut crate::Ast<'a>, label: LabelIdentifier) {
+        let field_val: u32 = label.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: Stmt) {
+        let field_val: u32 = body.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+}
+impl ExpressionStatement {
+    #[inline]
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl ReturnStatement {
+    #[inline]
+    pub fn argument<'a>(self, ast: &crate::Ast<'a>) -> Option<Expr> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Expr(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn set_argument<'a>(self, ast: &mut crate::Ast<'a>, argument: Option<Expr>) {
+        let field_val: u32 = argument.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl ThrowStatement {
+    #[inline]
+    pub fn argument<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_argument<'a>(self, ast: &mut crate::Ast<'a>, argument: Expr) {
+        let field_val: u32 = argument.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl DebuggerStatement {}
+impl EmptyStatement {}
+impl Directive {
+    #[inline]
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> StringLiteral {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        StringLiteral(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn value<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
+    #[inline]
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: StringLiteral) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
+    }
+    #[inline]
+    pub fn set_value<'a>(self, ast: &mut crate::Ast<'a>, value: String) {
+        let field_val: u64 = unsafe { value.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
+}
+impl Decorator {
+    #[inline]
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl Class {
+    #[inline]
+    pub fn class_type<'a>(self, ast: &crate::Ast<'a>) -> ClassType {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, ClassType>(raw as u8) }
+    }
+    #[inline]
+    pub fn id<'a>(self, ast: &crate::Ast<'a>) -> Option<BindingIdentifier> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 24usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| BindingIdentifier(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn super_class<'a>(self, ast: &crate::Ast<'a>) -> Option<Expr> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 56usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Expr(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn r#abstract<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn declare<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 16usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn decorators<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Decorator> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> ClassBody {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn type_parameters<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterDeclaration> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(2usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn super_type_arguments<'a>(
+        self,
+        ast: &crate::Ast<'a>,
+    ) -> Option<TsTypeParameterInstantiation> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(3usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn implements<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TsClassImplements> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(4usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn set_class_type<'a>(self, ast: &mut crate::Ast<'a>, class_type: ClassType) {
+        let field_val: u32 = class_type as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_id<'a>(self, ast: &mut crate::Ast<'a>, id: Option<BindingIdentifier>) {
+        let field_val: u32 = id.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463302549837747060735u128)
+            | (((field_val as u128) & 4294967295u128) << 24usize);
+    }
+    #[inline]
+    pub fn set_super_class<'a>(self, ast: &mut crate::Ast<'a>, super_class: Option<Expr>) {
+        let field_val: u32 = super_class.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920628978453625319957081358335u128)
+            | (((field_val as u128) & 4294967295u128) << 56usize);
+    }
+    #[inline]
+    pub fn set_abstract<'a>(self, ast: &mut crate::Ast<'a>, r#abstract: bool) {
+        let field_val: u32 = r#abstract as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768146175u128)
+            | (((field_val as u128) & 255u128) << 8usize);
+    }
+    #[inline]
+    pub fn set_declare<'a>(self, ast: &mut crate::Ast<'a>, declare: bool) {
+        let field_val: u32 = declare as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431751499775u128)
+            | (((field_val as u128) & 255u128) << 16usize);
+    }
+    #[inline]
+    pub fn set_decorators<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        decorators: TypedSubRange<Decorator>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = decorators.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: ClassBody) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = body.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_type_parameters<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_parameters: Option<TsTypeParameterDeclaration>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(2usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = type_parameters.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_super_type_arguments<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        super_type_arguments: Option<TsTypeParameterInstantiation>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(3usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = super_type_arguments.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_implements<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        implements: TypedSubRange<TsClassImplements>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(4usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = implements.to_extra_data(ast);
+        };
+    }
+}
+impl ClassBody {
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<ClassElement> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: TypedSubRange<ClassElement>) {
+        let field_val: u64 = unsafe { body.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
+}
+impl MethodDefinition {
+    #[inline]
+    pub fn key<'a>(self, ast: &crate::Ast<'a>) -> PropertyKey {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 56usize) as u32) & 4294967295u32;
+        PropertyKey(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn kind<'a>(self, ast: &crate::Ast<'a>) -> MethodDefinitionKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, MethodDefinitionKind>(raw as u8) }
+    }
+    #[inline]
+    pub fn computed<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn r#static<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 16usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn r#override<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 24usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn r#abstract<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn accessibility<'a>(self, ast: &crate::Ast<'a>) -> Accessibility {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 48usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, Accessibility>(raw as u8) }
+    }
+    #[inline]
+    pub fn decorators<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Decorator> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn value<'a>(self, ast: &crate::Ast<'a>) -> Function {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn set_key<'a>(self, ast: &mut crate::Ast<'a>, key: PropertyKey) {
+        let field_val: u32 = key.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920628978453625319957081358335u128)
+            | (((field_val as u128) & 4294967295u128) << 56usize);
+    }
+    #[inline]
+    pub fn set_kind<'a>(self, ast: &mut crate::Ast<'a>, kind: MethodDefinitionKind) {
+        let field_val: u32 = kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_computed<'a>(self, ast: &mut crate::Ast<'a>, computed: bool) {
+        let field_val: u32 = computed as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768146175u128)
+            | (((field_val as u128) & 255u128) << 8usize);
+    }
+    #[inline]
+    pub fn set_static<'a>(self, ast: &mut crate::Ast<'a>, r#static: bool) {
+        let field_val: u32 = r#static as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431751499775u128)
+            | (((field_val as u128) & 255u128) << 16usize);
+    }
+    #[inline]
+    pub fn set_override<'a>(self, ast: &mut crate::Ast<'a>, r#override: bool) {
+        let field_val: u32 = r#override as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427490021375u128)
+            | (((field_val as u128) & 255u128) << 24usize);
+    }
+    #[inline]
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: bool) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606336551550975u128)
+            | (((field_val as u128) & 255u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_abstract<'a>(self, ast: &mut crate::Ast<'a>, r#abstract: bool) {
+        let field_val: u32 = r#abstract as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374327056303128575u128)
+            | (((field_val as u128) & 255u128) << 40usize);
+    }
+    #[inline]
+    pub fn set_accessibility<'a>(self, ast: &mut crate::Ast<'a>, accessibility: Accessibility) {
+        let field_val: u32 = accessibility as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463302831312706994175u128)
+            | (((field_val as u128) & 255u128) << 48usize);
+    }
+    #[inline]
+    pub fn set_decorators<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        decorators: TypedSubRange<Decorator>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = decorators.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_value<'a>(self, ast: &mut crate::Ast<'a>, value: Function) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = value.to_extra_data(ast);
+        };
+    }
+}
+impl PropertyDefinition {
+    #[inline]
+    pub fn computed<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn r#static<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn accessor<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 16usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn declare<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 24usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn r#override<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn definite<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 48usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn readonly<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 56usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn r#abstract<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn accessibility<'a>(self, ast: &crate::Ast<'a>) -> Accessibility {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 72usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, Accessibility>(raw as u8) }
+    }
+    #[inline]
+    pub fn decorators<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Decorator> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn key<'a>(self, ast: &crate::Ast<'a>) -> PropertyKey {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn value<'a>(self, ast: &crate::Ast<'a>) -> Option<Expr> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(2usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(3usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn set_computed<'a>(self, ast: &mut crate::Ast<'a>, computed: bool) {
+        let field_val: u32 = computed as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_static<'a>(self, ast: &mut crate::Ast<'a>, r#static: bool) {
+        let field_val: u32 = r#static as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768146175u128)
+            | (((field_val as u128) & 255u128) << 8usize);
+    }
+    #[inline]
+    pub fn set_accessor<'a>(self, ast: &mut crate::Ast<'a>, accessor: bool) {
+        let field_val: u32 = accessor as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431751499775u128)
+            | (((field_val as u128) & 255u128) << 16usize);
+    }
+    #[inline]
+    pub fn set_declare<'a>(self, ast: &mut crate::Ast<'a>, declare: bool) {
+        let field_val: u32 = declare as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427490021375u128)
+            | (((field_val as u128) & 255u128) << 24usize);
+    }
+    #[inline]
+    pub fn set_override<'a>(self, ast: &mut crate::Ast<'a>, r#override: bool) {
+        let field_val: u32 = r#override as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606336551550975u128)
+            | (((field_val as u128) & 255u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: bool) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374327056303128575u128)
+            | (((field_val as u128) & 255u128) << 40usize);
+    }
+    #[inline]
+    pub fn set_definite<'a>(self, ast: &mut crate::Ast<'a>, definite: bool) {
+        let field_val: u32 = definite as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463302831312706994175u128)
+            | (((field_val as u128) & 255u128) << 48usize);
+    }
+    #[inline]
+    pub fn set_readonly<'a>(self, ast: &mut crate::Ast<'a>, readonly: bool) {
+        let field_val: u32 = readonly as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444999920952096587775u128)
+            | (((field_val as u128) & 255u128) << 56usize);
+    }
+    #[inline]
+    pub fn set_abstract<'a>(self, ast: &mut crate::Ast<'a>, r#abstract: bool) {
+        let field_val: u32 = r#abstract as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
+    }
+    #[inline]
+    pub fn set_accessibility<'a>(self, ast: &mut crate::Ast<'a>, accessibility: Accessibility) {
+        let field_val: u32 = accessibility as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920937259259921475672238718975u128)
+            | (((field_val as u128) & 255u128) << 72usize);
+    }
+    #[inline]
+    pub fn set_decorators<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        decorators: TypedSubRange<Decorator>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = decorators.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_key<'a>(self, ast: &mut crate::Ast<'a>, key: PropertyKey) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = key.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_value<'a>(self, ast: &mut crate::Ast<'a>, value: Option<Expr>) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(2usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = value.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_type_annotation<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_annotation: Option<TsTypeAnnotation>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(3usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = type_annotation.to_extra_data(ast);
+        };
+    }
+}
+impl StaticBlock {
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Stmt> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: TypedSubRange<Stmt>) {
+        let field_val: u64 = unsafe { body.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
+}
+impl Function {
+    #[inline]
+    pub fn function_type<'a>(self, ast: &crate::Ast<'a>) -> FunctionType {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, FunctionType>(raw as u8) }
+    }
+    #[inline]
+    pub fn id<'a>(self, ast: &crate::Ast<'a>) -> Option<BindingIdentifier> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| BindingIdentifier(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn generator<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn r#async<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 16usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn declare<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 24usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn params<'a>(self, ast: &crate::Ast<'a>) -> FormalParameters {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        FormalParameters(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> Option<FunctionBody> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn type_parameters<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterDeclaration> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn return_type<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(2usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn set_function_type<'a>(self, ast: &mut crate::Ast<'a>, function_type: FunctionType) {
+        let field_val: u32 = function_type as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_id<'a>(self, ast: &mut crate::Ast<'a>, id: Option<BindingIdentifier>) {
+        let field_val: u32 = id.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_generator<'a>(self, ast: &mut crate::Ast<'a>, generator: bool) {
+        let field_val: u32 = generator as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768146175u128)
+            | (((field_val as u128) & 255u128) << 8usize);
+    }
+    #[inline]
+    pub fn set_async<'a>(self, ast: &mut crate::Ast<'a>, r#async: bool) {
+        let field_val: u32 = r#async as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431751499775u128)
+            | (((field_val as u128) & 255u128) << 16usize);
+    }
+    #[inline]
+    pub fn set_declare<'a>(self, ast: &mut crate::Ast<'a>, declare: bool) {
+        let field_val: u32 = declare as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427490021375u128)
+            | (((field_val as u128) & 255u128) << 24usize);
+    }
+    #[inline]
+    pub fn set_params<'a>(self, ast: &mut crate::Ast<'a>, params: FormalParameters) {
+        let field_val: u32 = params.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: Option<FunctionBody>) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = body.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_type_parameters<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_parameters: Option<TsTypeParameterDeclaration>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = type_parameters.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_return_type<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        return_type: Option<TsTypeAnnotation>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(2usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = return_type.to_extra_data(ast);
+        };
+    }
+}
+impl FunctionBody {
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<StatementListItem> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: TypedSubRange<StatementListItem>) {
+        let field_val: u64 = unsafe { body.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
+}
+impl BlockStatement {
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Stmt> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: TypedSubRange<Stmt>) {
+        let field_val: u64 = unsafe { body.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
+}
+impl WhileStatement {
+    #[inline]
+    pub fn test<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> Stmt {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Stmt(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_test<'a>(self, ast: &mut crate::Ast<'a>, test: Expr) {
+        let field_val: u32 = test.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: Stmt) {
+        let field_val: u32 = body.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+}
+impl DoWhileStatement {
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> Stmt {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Stmt(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn test<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: Stmt) {
+        let field_val: u32 = body.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_test<'a>(self, ast: &mut crate::Ast<'a>, test: Expr) {
+        let field_val: u32 = test.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+}
+impl WithStatement {
+    #[inline]
+    pub fn object<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> Stmt {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Stmt(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_object<'a>(self, ast: &mut crate::Ast<'a>, object: Expr) {
+        let field_val: u32 = object.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: Stmt) {
+        let field_val: u32 = body.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+}
+impl FormalParameters {
+    #[inline]
+    pub fn items<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<FormalParameterItem> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
+    #[inline]
+    pub fn rest<'a>(self, ast: &crate::Ast<'a>) -> Option<BindingRestElement> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| BindingRestElement(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn kind<'a>(self, ast: &crate::Ast<'a>) -> FormalParameterKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, FormalParameterKind>(raw as u8) }
+    }
+    #[inline]
+    pub fn set_items<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        items: TypedSubRange<FormalParameterItem>,
+    ) {
+        let field_val: u64 = unsafe { items.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_rest<'a>(self, ast: &mut crate::Ast<'a>, rest: Option<BindingRestElement>) {
+        let field_val: u32 = rest.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
+    }
+    #[inline]
+    pub fn set_kind<'a>(self, ast: &mut crate::Ast<'a>, kind: FormalParameterKind) {
+        let field_val: u32 = kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282346717757022325968521078060875775u128)
+            | (((field_val as u128) & 255u128) << 96usize);
+    }
+}
+impl FormalParameter {
+    #[inline]
+    pub fn pattern<'a>(self, ast: &crate::Ast<'a>) -> FormalParameterPattern {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        FormalParameterPattern(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_pattern<'a>(self, ast: &mut crate::Ast<'a>, pattern: FormalParameterPattern) {
+        let field_val: u32 = pattern.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl ArrayExpression {
+    #[inline]
+    pub fn elements<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Option<Argument>> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
+    #[inline]
+    pub fn set_elements<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        elements: TypedSubRange<Option<Argument>>,
+    ) {
+        let field_val: u64 = unsafe { elements.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
+}
+impl ObjectExpression {
+    #[inline]
+    pub fn properties<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<ObjectPropertyKind> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
+    #[inline]
+    pub fn set_properties<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        properties: TypedSubRange<ObjectPropertyKind>,
+    ) {
+        let field_val: u64 = unsafe { properties.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
+}
+impl SpreadElement {
+    #[inline]
+    pub fn argument<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_argument<'a>(self, ast: &mut crate::Ast<'a>, argument: Expr) {
+        let field_val: u32 = argument.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl ObjectProperty {
+    #[inline]
+    pub fn key<'a>(self, ast: &crate::Ast<'a>) -> PropertyKey {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        PropertyKey(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn value<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn kind<'a>(self, ast: &crate::Ast<'a>) -> PropertyKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, PropertyKind>(raw as u8) }
+    }
+    #[inline]
+    pub fn method<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 72usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn shorthand<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 80usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn computed<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 88usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn set_key<'a>(self, ast: &mut crate::Ast<'a>, key: PropertyKey) {
+        let field_val: u32 = key.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_value<'a>(self, ast: &mut crate::Ast<'a>, value: Expr) {
+        let field_val: u32 = value.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_kind<'a>(self, ast: &mut crate::Ast<'a>, kind: PropertyKind) {
+        let field_val: u32 = kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
+    }
+    #[inline]
+    pub fn set_method<'a>(self, ast: &mut crate::Ast<'a>, method: bool) {
+        let field_val: u32 = method as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920937259259921475672238718975u128)
+            | (((field_val as u128) & 255u128) << 72usize);
+    }
+    #[inline]
+    pub fn set_shorthand<'a>(self, ast: &mut crate::Ast<'a>, shorthand: bool) {
+        let field_val: u32 = shorthand as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920630187379372876992218136575u128)
+            | (((field_val as u128) & 255u128) << 80usize);
+    }
+    #[inline]
+    pub fn set_computed<'a>(self, ast: &mut crate::Ast<'a>, computed: bool) {
+        let field_val: u32 = computed as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366842019785958931614906949042175u128)
+            | (((field_val as u128) & 255u128) << 88usize);
+    }
+}
+impl ParenthesizedExpression {
+    #[inline]
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl ArrowFunctionExpression {
+    #[inline]
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn r#async<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn params<'a>(self, ast: &crate::Ast<'a>) -> FormalParameters {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 16usize) as u32) & 4294967295u32;
+        FormalParameters(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> ArrowFunctionBody {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 48usize) as u32) & 4294967295u32;
+        ArrowFunctionBody(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn type_parameters<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterDeclaration> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn return_type<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: bool) {
+        let field_val: u32 = expression as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_async<'a>(self, ast: &mut crate::Ast<'a>, r#async: bool) {
+        let field_val: u32 = r#async as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768146175u128)
+            | (((field_val as u128) & 255u128) << 8usize);
+    }
+    #[inline]
+    pub fn set_params<'a>(self, ast: &mut crate::Ast<'a>, params: FormalParameters) {
+        let field_val: u32 = params.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374325956791566335u128)
+            | (((field_val as u128) & 4294967295u128) << 16usize);
+    }
+    #[inline]
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: ArrowFunctionBody) {
+        let field_val: u32 = body.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920937254537555274277570215935u128)
+            | (((field_val as u128) & 4294967295u128) << 48usize);
+    }
+    #[inline]
+    pub fn set_type_parameters<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_parameters: Option<TsTypeParameterDeclaration>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = type_parameters.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_return_type<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        return_type: Option<TsTypeAnnotation>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = return_type.to_extra_data(ast);
+        };
+    }
+}
+impl SequenceExpression {
+    #[inline]
+    pub fn expressions<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Expr> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
+    #[inline]
+    pub fn set_expressions<'a>(self, ast: &mut crate::Ast<'a>, expressions: TypedSubRange<Expr>) {
+        let field_val: u64 = unsafe { expressions.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
+}
+impl MemberExpression {
+    #[inline]
+    pub fn object<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn property<'a>(self, ast: &crate::Ast<'a>) -> PropertyKey {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        PropertyKey(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn computed<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 72usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn set_object<'a>(self, ast: &mut crate::Ast<'a>, object: Expr) {
+        let field_val: u32 = object.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_property<'a>(self, ast: &mut crate::Ast<'a>, property: PropertyKey) {
+        let field_val: u32 = property.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_computed<'a>(self, ast: &mut crate::Ast<'a>, computed: bool) {
+        let field_val: u32 = computed as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
+    }
+    #[inline]
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: bool) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920937259259921475672238718975u128)
+            | (((field_val as u128) & 255u128) << 72usize);
+    }
+}
+impl CallExpression {
+    #[inline]
+    pub fn callee<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn type_arguments<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterInstantiation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterInstantiation(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn arguments<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Argument> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn set_callee<'a>(self, ast: &mut crate::Ast<'a>, callee: Expr) {
+        let field_val: u32 = callee.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606332256583935u128)
+            | (((field_val as u128) & 4294967295u128) << 8usize);
+    }
+    #[inline]
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: bool) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_type_arguments<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_arguments: Option<TsTypeParameterInstantiation>,
+    ) {
+        let field_val: u32 = type_arguments.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458741008125661634625535u128)
+            | (((field_val as u128) & 4294967295u128) << 40usize);
+    }
+    #[inline]
+    pub fn set_arguments<'a>(self, ast: &mut crate::Ast<'a>, arguments: TypedSubRange<Argument>) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = arguments.to_extra_data(ast);
+        };
+    }
+}
+impl ChainExpression {
+    #[inline]
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl TaggedTemplateExpression {
+    #[inline]
+    pub fn tag<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn quasi<'a>(self, ast: &crate::Ast<'a>) -> TemplateLiteral {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        TemplateLiteral(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn type_arguments<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterInstantiation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterInstantiation(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn set_tag<'a>(self, ast: &mut crate::Ast<'a>, tag: Expr) {
+        let field_val: u32 = tag.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_quasi<'a>(self, ast: &mut crate::Ast<'a>, quasi: TemplateLiteral) {
+        let field_val: u32 = quasi.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_type_arguments<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_arguments: Option<TsTypeParameterInstantiation>,
+    ) {
+        let field_val: u32 = type_arguments.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
+    }
+}
+impl NewExpression {
+    #[inline]
+    pub fn callee<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn arguments<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Argument> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
+    #[inline]
+    pub fn type_arguments<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterInstantiation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterInstantiation(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn set_callee<'a>(self, ast: &mut crate::Ast<'a>, callee: Expr) {
+        let field_val: u32 = callee.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
+    }
+    #[inline]
+    pub fn set_arguments<'a>(self, ast: &mut crate::Ast<'a>, arguments: TypedSubRange<Argument>) {
+        let field_val: u64 = unsafe { arguments.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_type_arguments<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_arguments: Option<TsTypeParameterInstantiation>,
+    ) {
+        let field_val: u32 = type_arguments.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 79228162514264337593543950335u128)
+            | (((field_val as u128) & 4294967295u128) << 96usize);
+    }
+}
+impl AwaitExpression {
+    #[inline]
+    pub fn argument<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_argument<'a>(self, ast: &mut crate::Ast<'a>, argument: Expr) {
+        let field_val: u32 = argument.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl YieldExpression {
+    #[inline]
+    pub fn argument<'a>(self, ast: &crate::Ast<'a>) -> Option<Expr> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Expr(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn delegate<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn set_argument<'a>(self, ast: &mut crate::Ast<'a>, argument: Option<Expr>) {
+        let field_val: u32 = argument.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_delegate<'a>(self, ast: &mut crate::Ast<'a>, delegate: bool) {
+        let field_val: u32 = delegate as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606336551550975u128)
+            | (((field_val as u128) & 255u128) << 32usize);
+    }
+}
+impl MetaProperty {
+    #[inline]
+    pub fn meta<'a>(self, ast: &crate::Ast<'a>) -> IdentifierName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        IdentifierName(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn property<'a>(self, ast: &crate::Ast<'a>) -> IdentifierName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        IdentifierName(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_meta<'a>(self, ast: &mut crate::Ast<'a>, meta: IdentifierName) {
+        let field_val: u32 = meta.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_property<'a>(self, ast: &mut crate::Ast<'a>, property: IdentifierName) {
+        let field_val: u32 = property.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+}
+impl ImportExpression {
+    #[inline]
+    pub fn source<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn options<'a>(self, ast: &crate::Ast<'a>) -> Option<Expr> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Expr(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn phase<'a>(self, ast: &crate::Ast<'a>) -> Option<ImportPhase> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn set_source<'a>(self, ast: &mut crate::Ast<'a>, source: Expr) {
+        let field_val: u32 = source.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_options<'a>(self, ast: &mut crate::Ast<'a>, options: Option<Expr>) {
+        let field_val: u32 = options.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_phase<'a>(self, ast: &mut crate::Ast<'a>, phase: Option<ImportPhase>) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = phase.to_extra_data(ast);
+        };
+    }
+}
+impl ImportDeclaration {
+    #[inline]
+    pub fn source<'a>(self, ast: &crate::Ast<'a>) -> StringLiteral {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 4294967295u32;
+        StringLiteral(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn import_kind<'a>(self, ast: &crate::Ast<'a>) -> ImportOrExportKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, ImportOrExportKind>(raw as u8) }
+    }
+    #[inline]
+    pub fn specifiers<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<ImportDeclarationSpecifier> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn attributes<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<ImportAttribute> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn phase<'a>(self, ast: &crate::Ast<'a>) -> Option<ImportPhase> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(2usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn set_source<'a>(self, ast: &mut crate::Ast<'a>, source: StringLiteral) {
+        let field_val: u32 = source.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606332256583935u128)
+            | (((field_val as u128) & 4294967295u128) << 8usize);
+    }
+    #[inline]
+    pub fn set_import_kind<'a>(self, ast: &mut crate::Ast<'a>, import_kind: ImportOrExportKind) {
+        let field_val: u32 = import_kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_specifiers<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        specifiers: TypedSubRange<ImportDeclarationSpecifier>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = specifiers.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_attributes<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        attributes: TypedSubRange<ImportAttribute>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = attributes.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_phase<'a>(self, ast: &mut crate::Ast<'a>, phase: Option<ImportPhase>) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(2usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = phase.to_extra_data(ast);
+        };
+    }
+}
+impl ImportSpecifier {
+    #[inline]
+    pub fn imported<'a>(self, ast: &crate::Ast<'a>) -> ModuleExportName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        ModuleExportName(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn local<'a>(self, ast: &crate::Ast<'a>) -> BindingIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        BindingIdentifier(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn import_kind<'a>(self, ast: &crate::Ast<'a>) -> ImportOrExportKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, ImportOrExportKind>(raw as u8) }
+    }
+    #[inline]
+    pub fn set_imported<'a>(self, ast: &mut crate::Ast<'a>, imported: ModuleExportName) {
+        let field_val: u32 = imported.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_local<'a>(self, ast: &mut crate::Ast<'a>, local: BindingIdentifier) {
+        let field_val: u32 = local.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_import_kind<'a>(self, ast: &mut crate::Ast<'a>, import_kind: ImportOrExportKind) {
+        let field_val: u32 = import_kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
+    }
+}
+impl ImportDefaultSpecifier {
+    #[inline]
+    pub fn local<'a>(self, ast: &crate::Ast<'a>) -> BindingIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        BindingIdentifier(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_local<'a>(self, ast: &mut crate::Ast<'a>, local: BindingIdentifier) {
+        let field_val: u32 = local.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl ImportNamespaceSpecifier {
+    #[inline]
+    pub fn local<'a>(self, ast: &crate::Ast<'a>) -> BindingIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        BindingIdentifier(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_local<'a>(self, ast: &mut crate::Ast<'a>, local: BindingIdentifier) {
+        let field_val: u32 = local.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl ImportAttribute {
+    #[inline]
+    pub fn key<'a>(self, ast: &crate::Ast<'a>) -> ModuleExportName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        ModuleExportName(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn value<'a>(self, ast: &crate::Ast<'a>) -> StringLiteral {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        StringLiteral(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_key<'a>(self, ast: &mut crate::Ast<'a>, key: ModuleExportName) {
+        let field_val: u32 = key.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_value<'a>(self, ast: &mut crate::Ast<'a>, value: StringLiteral) {
+        let field_val: u32 = value.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+}
+impl ExportNamedDeclaration {
+    #[inline]
+    pub fn declaration<'a>(self, ast: &crate::Ast<'a>) -> Option<Decl> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Decl(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn source<'a>(self, ast: &crate::Ast<'a>) -> Option<StringLiteral> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| StringLiteral(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn export_kind<'a>(self, ast: &crate::Ast<'a>) -> ImportOrExportKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, ImportOrExportKind>(raw as u8) }
+    }
+    #[inline]
+    pub fn specifiers<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<ExportSpecifier> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn attributes<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<ImportAttribute> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn set_declaration<'a>(self, ast: &mut crate::Ast<'a>, declaration: Option<Decl>) {
+        let field_val: u32 = declaration.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606332256583935u128)
+            | (((field_val as u128) & 4294967295u128) << 8usize);
+    }
+    #[inline]
+    pub fn set_source<'a>(self, ast: &mut crate::Ast<'a>, source: Option<StringLiteral>) {
+        let field_val: u32 = source.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458741008125661634625535u128)
+            | (((field_val as u128) & 4294967295u128) << 40usize);
+    }
+    #[inline]
+    pub fn set_export_kind<'a>(self, ast: &mut crate::Ast<'a>, export_kind: ImportOrExportKind) {
+        let field_val: u32 = export_kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_specifiers<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        specifiers: TypedSubRange<ExportSpecifier>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = specifiers.to_extra_data(ast);
+        };
+    }
+    #[inline]
+    pub fn set_attributes<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        attributes: TypedSubRange<ImportAttribute>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = attributes.to_extra_data(ast);
+        };
+    }
+}
+impl ExportDefaultDeclaration {
+    #[inline]
+    pub fn declaration<'a>(self, ast: &crate::Ast<'a>) -> ExportDefaultDeclarationKind {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        ExportDefaultDeclarationKind(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_declaration<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        declaration: ExportDefaultDeclarationKind,
+    ) {
+        let field_val: u32 = declaration.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+}
+impl ExportAllDeclaration {
+    #[inline]
+    pub fn exported<'a>(self, ast: &crate::Ast<'a>) -> Option<ModuleExportName> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| ModuleExportName(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn source<'a>(self, ast: &crate::Ast<'a>) -> StringLiteral {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 4294967295u32;
+        StringLiteral(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn export_kind<'a>(self, ast: &crate::Ast<'a>) -> ImportOrExportKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, ImportOrExportKind>(raw as u8) }
+    }
+    #[inline]
+    pub fn attributes<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<ImportAttribute> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
+        }
+    }
+    #[inline]
+    pub fn set_exported<'a>(self, ast: &mut crate::Ast<'a>, exported: Option<ModuleExportName>) {
+        let field_val: u32 = exported.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606332256583935u128)
+            | (((field_val as u128) & 4294967295u128) << 8usize);
+    }
+    #[inline]
+    pub fn set_source<'a>(self, ast: &mut crate::Ast<'a>, source: StringLiteral) {
+        let field_val: u32 = source.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458741008125661634625535u128)
+            | (((field_val as u128) & 4294967295u128) << 40usize);
+    }
+    #[inline]
+    pub fn set_export_kind<'a>(self, ast: &mut crate::Ast<'a>, export_kind: ImportOrExportKind) {
+        let field_val: u32 = export_kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_attributes<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        attributes: TypedSubRange<ImportAttribute>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = attributes.to_extra_data(ast);
+        };
+    }
+}
+impl ExportSpecifier {
+    #[inline]
+    pub fn local<'a>(self, ast: &crate::Ast<'a>) -> ModuleExportName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        ModuleExportName(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn exported<'a>(self, ast: &crate::Ast<'a>) -> ModuleExportName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        ModuleExportName(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn export_kind<'a>(self, ast: &crate::Ast<'a>) -> ImportOrExportKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, ImportOrExportKind>(raw as u8) }
+    }
+    #[inline]
+    pub fn set_local<'a>(self, ast: &mut crate::Ast<'a>, local: ModuleExportName) {
+        let field_val: u32 = local.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_exported<'a>(self, ast: &mut crate::Ast<'a>, exported: ModuleExportName) {
+        let field_val: u32 = exported.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_export_kind<'a>(self, ast: &mut crate::Ast<'a>, export_kind: ImportOrExportKind) {
+        let field_val: u32 = export_kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
+    }
+}
+impl Hashbang {
+    #[inline]
+    pub fn value<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
+    #[inline]
+    pub fn set_value<'a>(self, ast: &mut crate::Ast<'a>, value: String) {
+        let field_val: u64 = unsafe { value.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
+}
+impl TsType {
+    #[inline]
+    pub fn is_ts_any_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsAnyKeyword
+    }
+    #[inline]
+    pub fn is_ts_unknown_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsUnknownKeyword
+    }
+    #[inline]
+    pub fn is_ts_never_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsNeverKeyword
+    }
+    #[inline]
+    pub fn is_ts_void_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsVoidKeyword
+    }
+    #[inline]
+    pub fn is_ts_null_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsNullKeyword
+    }
+    #[inline]
+    pub fn is_ts_undefined_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsUndefinedKeyword
+    }
+    #[inline]
+    pub fn is_ts_string_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsStringKeyword
+    }
+    #[inline]
+    pub fn is_ts_number_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsNumberKeyword
+    }
+    #[inline]
+    pub fn is_ts_big_int_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsBigIntKeyword
+    }
+    #[inline]
+    pub fn is_ts_boolean_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsBooleanKeyword
+    }
+    #[inline]
+    pub fn is_ts_symbol_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsSymbolKeyword
+    }
+    #[inline]
+    pub fn is_ts_object_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsObjectKeyword
+    }
+    #[inline]
+    pub fn is_ts_intrinsic_keyword(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsIntrinsicKeyword
+    }
+    #[inline]
+    pub fn is_ts_this_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsThisType
+    }
+    #[inline]
+    pub fn is_ts_type_reference(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsTypeReference
+    }
+    #[inline]
+    pub fn is_ts_type_query(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsTypeQuery
+    }
+    #[inline]
+    pub fn is_ts_import_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsImportType
+    }
+    #[inline]
+    pub fn is_ts_literal_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsLiteralType
+    }
+    #[inline]
+    pub fn is_ts_template_literal_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsTemplateLiteralType
+    }
+    #[inline]
+    pub fn is_ts_array_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsArrayType
+    }
+    #[inline]
+    pub fn is_ts_indexed_access_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsIndexedAccessType
+    }
+    #[inline]
+    pub fn is_ts_tuple_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsTupleType
+    }
+    #[inline]
+    pub fn is_ts_optional_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsOptionalType
+    }
+    #[inline]
+    pub fn is_ts_rest_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsRestType
+    }
+    #[inline]
+    pub fn is_ts_js_doc_nullable_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsJsDocNullableType
+    }
+    #[inline]
+    pub fn is_ts_js_doc_non_nullable_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsJsDocNonNullableType
+    }
+    #[inline]
+    pub fn is_ts_js_doc_unknown_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsJsDocUnknownType
+    }
+    #[inline]
+    pub fn is_ts_union_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsUnionType
+    }
+    #[inline]
+    pub fn is_ts_intersection_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsIntersectionType
+    }
+    #[inline]
+    pub fn is_ts_conditional_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsConditionalType
+    }
+    #[inline]
+    pub fn is_ts_infer_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsInferType
+    }
+    #[inline]
+    pub fn is_ts_type_operator(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsTypeOperator
+    }
+    #[inline]
+    pub fn is_ts_parenthesized_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsParenthesizedType
+    }
+    #[inline]
+    pub fn is_ts_function_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsFunctionType
+    }
+    #[inline]
+    pub fn is_ts_constructor_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsConstructorType
+    }
+    #[inline]
+    pub fn is_ts_type_predicate(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsTypePredicate
+    }
+    #[inline]
+    pub fn is_ts_type_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsTypeLiteral
+    }
+    #[inline]
+    pub fn is_ts_mapped_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsMappedType
+    }
+    #[inline]
+    pub fn as_ts_any_keyword(self, ast: &Ast<'_>) -> Option<TsAnyKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsAnyKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_unknown_keyword(self, ast: &Ast<'_>) -> Option<TsUnknownKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsUnknownKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_never_keyword(self, ast: &Ast<'_>) -> Option<TsNeverKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsNeverKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_void_keyword(self, ast: &Ast<'_>) -> Option<TsVoidKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsVoidKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_null_keyword(self, ast: &Ast<'_>) -> Option<TsNullKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsNullKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_undefined_keyword(self, ast: &Ast<'_>) -> Option<TsUndefinedKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsUndefinedKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_string_keyword(self, ast: &Ast<'_>) -> Option<TsStringKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsStringKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_number_keyword(self, ast: &Ast<'_>) -> Option<TsNumberKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsNumberKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_big_int_keyword(self, ast: &Ast<'_>) -> Option<TsBigIntKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsBigIntKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_boolean_keyword(self, ast: &Ast<'_>) -> Option<TsBooleanKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsBooleanKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_symbol_keyword(self, ast: &Ast<'_>) -> Option<TsSymbolKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsSymbolKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_object_keyword(self, ast: &Ast<'_>) -> Option<TsObjectKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsObjectKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_intrinsic_keyword(self, ast: &Ast<'_>) -> Option<TsIntrinsicKeyword> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsIntrinsicKeyword(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_this_type(self, ast: &Ast<'_>) -> Option<TsThisType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsThisType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_type_reference(self, ast: &Ast<'_>) -> Option<TsTypeReference> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsTypeReference(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_type_query(self, ast: &Ast<'_>) -> Option<TsTypeQuery> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsTypeQuery(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_import_type(self, ast: &Ast<'_>) -> Option<TsImportType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsImportType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_literal_type(self, ast: &Ast<'_>) -> Option<TsLiteralType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsLiteralType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_template_literal_type(self, ast: &Ast<'_>) -> Option<TsTemplateLiteralType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsTemplateLiteralType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_array_type(self, ast: &Ast<'_>) -> Option<TsArrayType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsArrayType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_indexed_access_type(self, ast: &Ast<'_>) -> Option<TsIndexedAccessType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsIndexedAccessType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_tuple_type(self, ast: &Ast<'_>) -> Option<TsTupleType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsTupleType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_optional_type(self, ast: &Ast<'_>) -> Option<TsOptionalType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsOptionalType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_rest_type(self, ast: &Ast<'_>) -> Option<TsRestType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsRestType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_js_doc_nullable_type(self, ast: &Ast<'_>) -> Option<TsJsDocNullableType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsJsDocNullableType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_js_doc_non_nullable_type(self, ast: &Ast<'_>) -> Option<TsJsDocNonNullableType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsJsDocNonNullableType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_js_doc_unknown_type(self, ast: &Ast<'_>) -> Option<TsJsDocUnknownType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsJsDocUnknownType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_union_type(self, ast: &Ast<'_>) -> Option<TsUnionType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsUnionType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_intersection_type(self, ast: &Ast<'_>) -> Option<TsIntersectionType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsIntersectionType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_conditional_type(self, ast: &Ast<'_>) -> Option<TsConditionalType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsConditionalType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_infer_type(self, ast: &Ast<'_>) -> Option<TsInferType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsInferType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_type_operator(self, ast: &Ast<'_>) -> Option<TsTypeOperator> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsTypeOperator(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_parenthesized_type(self, ast: &Ast<'_>) -> Option<TsParenthesizedType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsParenthesizedType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_function_type(self, ast: &Ast<'_>) -> Option<TsFunctionType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsFunctionType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_constructor_type(self, ast: &Ast<'_>) -> Option<TsConstructorType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsConstructorType(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_type_predicate(self, ast: &Ast<'_>) -> Option<TsTypePredicate> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsTypePredicate(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_type_literal(self, ast: &Ast<'_>) -> Option<TsTypeLiteral> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsTypeLiteral(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_mapped_type(self, ast: &Ast<'_>) -> Option<TsMappedType> {
+        match ast.ts_type_data(self) {
+            TsTypeData::TsMappedType(it) => Some(it),
+            _ => None,
+        }
+    }
+}
+impl TsTypeName {
+    #[inline]
+    pub fn is_identifier_reference(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::IdentifierReference
+    }
+    #[inline]
+    pub fn is_ts_qualified_name(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsQualifiedName
+    }
+    #[inline]
+    pub fn as_identifier_reference(self, ast: &Ast<'_>) -> Option<IdentifierReference> {
+        match ast.ts_type_name_data(self) {
+            TsTypeNameData::IdentifierReference(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_qualified_name(self, ast: &Ast<'_>) -> Option<TsQualifiedName> {
+        match ast.ts_type_name_data(self) {
+            TsTypeNameData::TsQualifiedName(it) => Some(it),
+            _ => None,
+        }
+    }
+}
+impl TsQualifiedNameLeft {
+    #[inline]
+    pub fn is_identifier_reference(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::IdentifierReference
+    }
+    #[inline]
+    pub fn is_identifier_name(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::IdentifierName
+    }
+    #[inline]
+    pub fn is_binding_identifier(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::BindingIdentifier
+    }
+    #[inline]
+    pub fn is_this_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ThisExpression
+    }
+    #[inline]
+    pub fn is_ts_qualified_name(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsQualifiedName
+    }
+    #[inline]
+    pub fn as_identifier_reference(self, ast: &Ast<'_>) -> Option<IdentifierReference> {
+        match ast.ts_qualified_name_left_data(self) {
+            TsQualifiedNameLeftData::IdentifierReference(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_identifier_name(self, ast: &Ast<'_>) -> Option<IdentifierName> {
+        match ast.ts_qualified_name_left_data(self) {
+            TsQualifiedNameLeftData::IdentifierName(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_binding_identifier(self, ast: &Ast<'_>) -> Option<BindingIdentifier> {
+        match ast.ts_qualified_name_left_data(self) {
+            TsQualifiedNameLeftData::BindingIdentifier(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_this_expression(self, ast: &Ast<'_>) -> Option<ThisExpression> {
+        match ast.ts_qualified_name_left_data(self) {
+            TsQualifiedNameLeftData::ThisExpression(it) => Some(it),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn as_ts_qualified_name(self, ast: &Ast<'_>) -> Option<TsQualifiedName> {
+        match ast.ts_qualified_name_left_data(self) {
+            TsQualifiedNameLeftData::TsQualifiedName(it) => Some(it),
+            _ => None,
+        }
+    }
+}
+impl TsImportTypeQualifier {
+    #[inline]
+    pub fn is_identifier_name(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::IdentifierName
+    }
+    #[inline]
+    pub fn is_ts_qualified_name(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsQualifiedName
+    }
+    #[inline]
+    pub fn as_identifier_name(self, ast: &Ast<'_>) -> Option<IdentifierName> {
+        match ast.ts_import_type_qualifier_data(self) {
+            TsImportTypeQualifierData::IdentifierName(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> SetSpan for ParenExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn as_ts_qualified_name(self, ast: &Ast<'_>) -> Option<TsQualifiedName> {
+        match ast.ts_import_type_qualifier_data(self) {
+            TsImportTypeQualifierData::TsQualifiedName(it) => Some(it),
+            _ => None,
+        }
     }
 }
-impl<'a> Callee<'a> {
+impl TsTypeQueryExprName {
     #[inline]
-    pub const fn is_super(&self) -> bool {
-        matches!(self, Self::Super { .. })
+    pub fn is_ts_type_name(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::IdentifierReference | NodeKind::TsQualifiedName
+        )
     }
     #[inline]
-    pub const fn is_expr(&self) -> bool {
-        matches!(self, Self::Expr { .. })
+    pub fn is_this_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::ThisExpression
     }
     #[inline]
-    pub fn as_super(&self) -> Option<&Super> {
-        match self {
-            Self::Super(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_ts_import_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsImportType
     }
     #[inline]
-    pub fn as_expr(&self) -> Option<&Expr<'a>> {
-        match self {
-            Self::Expr(it) => Some(it),
+    pub fn as_ts_type_name(self, ast: &Ast<'_>) -> Option<TsTypeName> {
+        match ast.ts_type_query_expr_name_data(self) {
+            TsTypeQueryExprNameData::TsTypeName(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_super(&mut self) -> Option<&mut Super> {
-        match self {
-            Self::Super(it) => Some(it),
+    pub fn as_this_expression(self, ast: &Ast<'_>) -> Option<ThisExpression> {
+        match ast.ts_type_query_expr_name_data(self) {
+            TsTypeQueryExprNameData::ThisExpression(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_expr(&mut self) -> Option<&mut Expr<'a>> {
-        match self {
-            Self::Expr(it) => Some(it),
+    pub fn as_ts_import_type(self, ast: &Ast<'_>) -> Option<TsImportType> {
+        match ast.ts_type_query_expr_name_data(self) {
+            TsTypeQueryExprNameData::TsImportType(it) => Some(it),
             _ => None,
         }
     }
 }
-impl<'a> GetSpan for Callee<'a> {
+impl TsLiteral {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Super(it) => it.span(),
-            Self::Expr(it) => it.span(),
-        }
+    pub fn is_string_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::StringLiteral
     }
-}
-impl<'a> SetSpan for Callee<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Super(it) => it.set_span(span),
-            Self::Expr(it) => it.set_span(span),
-        }
+    pub fn is_numeric_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::NumericLiteral
     }
-}
-impl GetSpan for Super {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_big_int_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::BigIntLiteral
     }
-}
-impl SetSpan for Super {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_boolean_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::BooleanLiteral
     }
-}
-impl<'a> BlockStmtOrExpr<'a> {
     #[inline]
-    pub const fn is_block_stmt(&self) -> bool {
-        matches!(self, Self::BlockStmt { .. })
+    pub fn is_template_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TemplateLiteral
     }
     #[inline]
-    pub const fn is_expr(&self) -> bool {
-        matches!(self, Self::Expr { .. })
+    pub fn is_unary_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::UnaryExpression
     }
     #[inline]
-    pub fn as_block_stmt(&self) -> Option<&BlockStmt<'a>> {
-        match self {
-            Self::BlockStmt(it) => Some(it),
+    pub fn as_string_literal(self, ast: &Ast<'_>) -> Option<StringLiteral> {
+        match ast.ts_literal_data(self) {
+            TsLiteralData::StringLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_expr(&self) -> Option<&Expr<'a>> {
-        match self {
-            Self::Expr(it) => Some(it),
+    pub fn as_numeric_literal(self, ast: &Ast<'_>) -> Option<NumericLiteral> {
+        match ast.ts_literal_data(self) {
+            TsLiteralData::NumericLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_block_stmt(&mut self) -> Option<&mut BlockStmt<'a>> {
-        match self {
-            Self::BlockStmt(it) => Some(it),
+    pub fn as_big_int_literal(self, ast: &Ast<'_>) -> Option<BigIntLiteral> {
+        match ast.ts_literal_data(self) {
+            TsLiteralData::BigIntLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_expr(&mut self) -> Option<&mut Expr<'a>> {
-        match self {
-            Self::Expr(it) => Some(it),
+    pub fn as_boolean_literal(self, ast: &Ast<'_>) -> Option<BooleanLiteral> {
+        match ast.ts_literal_data(self) {
+            TsLiteralData::BooleanLiteral(it) => Some(it),
             _ => None,
         }
     }
-}
-impl<'a> GetSpan for BlockStmtOrExpr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::BlockStmt(it) => it.span(),
-            Self::Expr(it) => it.span(),
+    pub fn as_template_literal(self, ast: &Ast<'_>) -> Option<TemplateLiteral> {
+        match ast.ts_literal_data(self) {
+            TsLiteralData::TemplateLiteral(it) => Some(it),
+            _ => None,
         }
     }
-}
-impl<'a> SetSpan for BlockStmtOrExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::BlockStmt(it) => it.set_span(span),
-            Self::Expr(it) => it.set_span(span),
+    pub fn as_unary_expression(self, ast: &Ast<'_>) -> Option<UnaryExpression> {
+        match ast.ts_literal_data(self) {
+            TsLiteralData::UnaryExpression(it) => Some(it),
+            _ => None,
         }
     }
 }
-impl<'a> AssignTarget<'a> {
+impl TsTupleElement {
     #[inline]
-    pub const fn is_simple(&self) -> bool {
-        matches!(self, Self::Simple { .. })
+    pub fn is_ts_type(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::TsAnyKeyword
+                | NodeKind::TsUnknownKeyword
+                | NodeKind::TsNeverKeyword
+                | NodeKind::TsVoidKeyword
+                | NodeKind::TsNullKeyword
+                | NodeKind::TsUndefinedKeyword
+                | NodeKind::TsStringKeyword
+                | NodeKind::TsNumberKeyword
+                | NodeKind::TsBigIntKeyword
+                | NodeKind::TsBooleanKeyword
+                | NodeKind::TsSymbolKeyword
+                | NodeKind::TsObjectKeyword
+                | NodeKind::TsIntrinsicKeyword
+                | NodeKind::TsThisType
+                | NodeKind::TsTypeReference
+                | NodeKind::TsTypeQuery
+                | NodeKind::TsImportType
+                | NodeKind::TsLiteralType
+                | NodeKind::TsTemplateLiteralType
+                | NodeKind::TsArrayType
+                | NodeKind::TsIndexedAccessType
+                | NodeKind::TsTupleType
+                | NodeKind::TsOptionalType
+                | NodeKind::TsRestType
+                | NodeKind::TsJsDocNullableType
+                | NodeKind::TsJsDocNonNullableType
+                | NodeKind::TsJsDocUnknownType
+                | NodeKind::TsUnionType
+                | NodeKind::TsIntersectionType
+                | NodeKind::TsConditionalType
+                | NodeKind::TsInferType
+                | NodeKind::TsTypeOperator
+                | NodeKind::TsParenthesizedType
+                | NodeKind::TsFunctionType
+                | NodeKind::TsConstructorType
+                | NodeKind::TsTypePredicate
+                | NodeKind::TsTypeLiteral
+                | NodeKind::TsMappedType
+        )
     }
     #[inline]
-    pub const fn is_pat(&self) -> bool {
-        matches!(self, Self::Pat { .. })
+    pub fn is_ts_named_tuple_member(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsNamedTupleMember
     }
     #[inline]
-    pub fn as_simple(&self) -> Option<&SimpleAssignTarget<'a>> {
-        match self {
-            Self::Simple(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_ts_optional_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsOptionalType
+    }
+    #[inline]
+    pub fn is_ts_rest_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsRestType
     }
     #[inline]
-    pub fn as_pat(&self) -> Option<&AssignTargetPat<'a>> {
-        match self {
-            Self::Pat(it) => Some(it),
+    pub fn as_ts_type(self, ast: &Ast<'_>) -> Option<TsType> {
+        match ast.ts_tuple_element_data(self) {
+            TsTupleElementData::TsType(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_simple(&mut self) -> Option<&mut SimpleAssignTarget<'a>> {
-        match self {
-            Self::Simple(it) => Some(it),
+    pub fn as_ts_named_tuple_member(self, ast: &Ast<'_>) -> Option<TsNamedTupleMember> {
+        match ast.ts_tuple_element_data(self) {
+            TsTupleElementData::TsNamedTupleMember(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_pat(&mut self) -> Option<&mut AssignTargetPat<'a>> {
-        match self {
-            Self::Pat(it) => Some(it),
+    pub fn as_ts_optional_type(self, ast: &Ast<'_>) -> Option<TsOptionalType> {
+        match ast.ts_tuple_element_data(self) {
+            TsTupleElementData::TsOptionalType(it) => Some(it),
             _ => None,
         }
     }
-}
-impl<'a> GetSpan for AssignTarget<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Simple(it) => it.span(),
-            Self::Pat(it) => it.span(),
+    pub fn as_ts_rest_type(self, ast: &Ast<'_>) -> Option<TsRestType> {
+        match ast.ts_tuple_element_data(self) {
+            TsTupleElementData::TsRestType(it) => Some(it),
+            _ => None,
         }
     }
 }
-impl<'a> SetSpan for AssignTarget<'a> {
+impl TsTypeElement {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Simple(it) => it.set_span(span),
-            Self::Pat(it) => it.set_span(span),
-        }
+    pub fn is_ts_property_signature(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsPropertySignature
     }
-}
-impl<'a> AssignTargetPat<'a> {
     #[inline]
-    pub const fn is_array(&self) -> bool {
-        matches!(self, Self::Array { .. })
+    pub fn is_ts_method_signature(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsMethodSignature
     }
     #[inline]
-    pub const fn is_object(&self) -> bool {
-        matches!(self, Self::Object { .. })
+    pub fn is_ts_call_signature_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsCallSignatureDeclaration
     }
     #[inline]
-    pub const fn is_invalid(&self) -> bool {
-        matches!(self, Self::Invalid { .. })
+    pub fn is_ts_construct_signature_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsConstructSignatureDeclaration
     }
     #[inline]
-    pub fn as_array(&self) -> Option<&ArrayPat<'a>> {
-        match self {
-            Self::Array(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_ts_index_signature(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsIndexSignature
     }
     #[inline]
-    pub fn as_object(&self) -> Option<&ObjectPat<'a>> {
-        match self {
-            Self::Object(it) => Some(it),
+    pub fn as_ts_property_signature(self, ast: &Ast<'_>) -> Option<TsPropertySignature> {
+        match ast.ts_type_element_data(self) {
+            TsTypeElementData::TsPropertySignature(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_invalid(&self) -> Option<&Invalid> {
-        match self {
-            Self::Invalid(it) => Some(it),
+    pub fn as_ts_method_signature(self, ast: &Ast<'_>) -> Option<TsMethodSignature> {
+        match ast.ts_type_element_data(self) {
+            TsTypeElementData::TsMethodSignature(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_array(&mut self) -> Option<&mut ArrayPat<'a>> {
-        match self {
-            Self::Array(it) => Some(it),
+    pub fn as_ts_call_signature_declaration(
+        self,
+        ast: &Ast<'_>,
+    ) -> Option<TsCallSignatureDeclaration> {
+        match ast.ts_type_element_data(self) {
+            TsTypeElementData::TsCallSignatureDeclaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_object(&mut self) -> Option<&mut ObjectPat<'a>> {
-        match self {
-            Self::Object(it) => Some(it),
+    pub fn as_ts_construct_signature_declaration(
+        self,
+        ast: &Ast<'_>,
+    ) -> Option<TsConstructSignatureDeclaration> {
+        match ast.ts_type_element_data(self) {
+            TsTypeElementData::TsConstructSignatureDeclaration(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_invalid(&mut self) -> Option<&mut Invalid> {
-        match self {
-            Self::Invalid(it) => Some(it),
+    pub fn as_ts_index_signature(self, ast: &Ast<'_>) -> Option<TsIndexSignature> {
+        match ast.ts_type_element_data(self) {
+            TsTypeElementData::TsIndexSignature(it) => Some(it),
             _ => None,
         }
     }
 }
-impl<'a> GetSpan for AssignTargetPat<'a> {
+impl TsTypePredicateName {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Array(it) => it.span(),
-            Self::Object(it) => it.span(),
-            Self::Invalid(it) => it.span(),
-        }
+    pub fn is_identifier_name(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::IdentifierName
     }
-}
-impl<'a> SetSpan for AssignTargetPat<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Array(it) => it.set_span(span),
-            Self::Object(it) => it.set_span(span),
-            Self::Invalid(it) => it.set_span(span),
-        }
+    pub fn is_ts_this_type(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsThisType
     }
-}
-impl<'a> SimpleAssignTarget<'a> {
     #[inline]
-    pub const fn is_ident(&self) -> bool {
-        matches!(self, Self::Ident { .. })
+    pub fn as_identifier_name(self, ast: &Ast<'_>) -> Option<IdentifierName> {
+        match ast.ts_type_predicate_name_data(self) {
+            TsTypePredicateNameData::IdentifierName(it) => Some(it),
+            _ => None,
+        }
     }
     #[inline]
-    pub const fn is_member(&self) -> bool {
-        matches!(self, Self::Member { .. })
+    pub fn as_ts_this_type(self, ast: &Ast<'_>) -> Option<TsThisType> {
+        match ast.ts_type_predicate_name_data(self) {
+            TsTypePredicateNameData::TsThisType(it) => Some(it),
+            _ => None,
+        }
     }
+}
+impl TsEnumMemberName {
     #[inline]
-    pub const fn is_super_prop(&self) -> bool {
-        matches!(self, Self::SuperProp { .. })
+    pub fn is_identifier_name(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::IdentifierName
     }
     #[inline]
-    pub const fn is_paren(&self) -> bool {
-        matches!(self, Self::Paren { .. })
+    pub fn is_string_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::StringLiteral
     }
     #[inline]
-    pub const fn is_opt_chain(&self) -> bool {
-        matches!(self, Self::OptChain { .. })
+    pub fn is_template_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TemplateLiteral
     }
     #[inline]
-    pub const fn is_invalid(&self) -> bool {
-        matches!(self, Self::Invalid { .. })
+    pub fn is_expr(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::IdentifierReference
+                | NodeKind::ThisExpression
+                | NodeKind::Super
+                | NodeKind::MetaProperty
+                | NodeKind::StringLiteral
+                | NodeKind::NumericLiteral
+                | NodeKind::BigIntLiteral
+                | NodeKind::BooleanLiteral
+                | NodeKind::NullLiteral
+                | NodeKind::RegExpLiteral
+                | NodeKind::TemplateLiteral
+                | NodeKind::BinaryExpression
+                | NodeKind::LogicalExpression
+                | NodeKind::UnaryExpression
+                | NodeKind::UpdateExpression
+                | NodeKind::AssignmentExpression
+                | NodeKind::ConditionalExpression
+                | NodeKind::SequenceExpression
+                | NodeKind::MemberExpression
+                | NodeKind::CallExpression
+                | NodeKind::ChainExpression
+                | NodeKind::NewExpression
+                | NodeKind::TaggedTemplateExpression
+                | NodeKind::ArrowFunctionExpression
+                | NodeKind::ArrayExpression
+                | NodeKind::ObjectExpression
+                | NodeKind::ParenthesizedExpression
+                | NodeKind::Function
+                | NodeKind::Class
+                | NodeKind::ImportExpression
+                | NodeKind::AwaitExpression
+                | NodeKind::YieldExpression
+                | NodeKind::PrivateIdentifier
+                | NodeKind::TsAsExpression
+                | NodeKind::TsSatisfiesExpression
+                | NodeKind::TsTypeAssertion
+                | NodeKind::TsNonNullExpression
+                | NodeKind::TsInstantiationExpression
+                | NodeKind::JsxElement
+                | NodeKind::JsxFragment
+        )
     }
     #[inline]
-    pub fn as_ident(&self) -> Option<&BindingIdent<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
+    pub fn as_identifier_name(self, ast: &Ast<'_>) -> Option<IdentifierName> {
+        match ast.ts_enum_member_name_data(self) {
+            TsEnumMemberNameData::IdentifierName(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_member(&self) -> Option<&MemberExpr<'a>> {
-        match self {
-            Self::Member(it) => Some(it),
+    pub fn as_string_literal(self, ast: &Ast<'_>) -> Option<StringLiteral> {
+        match ast.ts_enum_member_name_data(self) {
+            TsEnumMemberNameData::StringLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_super_prop(&self) -> Option<&SuperPropExpr<'a>> {
-        match self {
-            Self::SuperProp(it) => Some(it),
+    pub fn as_template_literal(self, ast: &Ast<'_>) -> Option<TemplateLiteral> {
+        match ast.ts_enum_member_name_data(self) {
+            TsEnumMemberNameData::TemplateLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_paren(&self) -> Option<&ParenExpr<'a>> {
-        match self {
-            Self::Paren(it) => Some(it),
+    pub fn as_expr(self, ast: &Ast<'_>) -> Option<Expr> {
+        match ast.ts_enum_member_name_data(self) {
+            TsEnumMemberNameData::Expr(it) => Some(it),
             _ => None,
         }
     }
+}
+impl TsModuleName {
     #[inline]
-    pub fn as_opt_chain(&self) -> Option<&OptChainExpr<'a>> {
-        match self {
-            Self::OptChain(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_binding_identifier(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::BindingIdentifier
+    }
+    #[inline]
+    pub fn is_string_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::StringLiteral
+    }
+    #[inline]
+    pub fn is_ts_qualified_name(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsQualifiedName
     }
     #[inline]
-    pub fn as_invalid(&self) -> Option<&Invalid> {
-        match self {
-            Self::Invalid(it) => Some(it),
+    pub fn as_binding_identifier(self, ast: &Ast<'_>) -> Option<BindingIdentifier> {
+        match ast.ts_module_name_data(self) {
+            TsModuleNameData::BindingIdentifier(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_ident(&mut self) -> Option<&mut BindingIdent<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
+    pub fn as_string_literal(self, ast: &Ast<'_>) -> Option<StringLiteral> {
+        match ast.ts_module_name_data(self) {
+            TsModuleNameData::StringLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_member(&mut self) -> Option<&mut MemberExpr<'a>> {
-        match self {
-            Self::Member(it) => Some(it),
+    pub fn as_ts_qualified_name(self, ast: &Ast<'_>) -> Option<TsQualifiedName> {
+        match ast.ts_module_name_data(self) {
+            TsModuleNameData::TsQualifiedName(it) => Some(it),
             _ => None,
         }
+    }
+}
+impl TsModuleBody {
+    #[inline]
+    pub fn is_ts_module_block(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsModuleBlock
     }
     #[inline]
-    pub fn as_mut_super_prop(&mut self) -> Option<&mut SuperPropExpr<'a>> {
-        match self {
-            Self::SuperProp(it) => Some(it),
+    pub fn is_ts_module_declaration(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsModuleDeclaration
+    }
+    #[inline]
+    pub fn as_ts_module_block(self, ast: &Ast<'_>) -> Option<TsModuleBlock> {
+        match ast.ts_module_body_data(self) {
+            TsModuleBodyData::TsModuleBlock(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_paren(&mut self) -> Option<&mut ParenExpr<'a>> {
-        match self {
-            Self::Paren(it) => Some(it),
+    pub fn as_ts_module_declaration(self, ast: &Ast<'_>) -> Option<TsModuleDeclaration> {
+        match ast.ts_module_body_data(self) {
+            TsModuleBodyData::TsModuleDeclaration(it) => Some(it),
             _ => None,
         }
+    }
+}
+impl TsModuleReference {
+    #[inline]
+    pub fn is_ts_type_name(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::IdentifierReference | NodeKind::TsQualifiedName
+        )
+    }
+    #[inline]
+    pub fn is_ts_external_module_reference(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::TsExternalModuleReference
     }
     #[inline]
-    pub fn as_mut_opt_chain(&mut self) -> Option<&mut OptChainExpr<'a>> {
-        match self {
-            Self::OptChain(it) => Some(it),
+    pub fn as_ts_type_name(self, ast: &Ast<'_>) -> Option<TsTypeName> {
+        match ast.ts_module_reference_data(self) {
+            TsModuleReferenceData::TsTypeName(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_invalid(&mut self) -> Option<&mut Invalid> {
-        match self {
-            Self::Invalid(it) => Some(it),
+    pub fn as_ts_external_module_reference(
+        self,
+        ast: &Ast<'_>,
+    ) -> Option<TsExternalModuleReference> {
+        match ast.ts_module_reference_data(self) {
+            TsModuleReferenceData::TsExternalModuleReference(it) => Some(it),
             _ => None,
         }
     }
 }
-impl<'a> GetSpan for SimpleAssignTarget<'a> {
+impl TsTypeAnnotation {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Ident(it) => it.span(),
-            Self::Member(it) => it.span(),
-            Self::SuperProp(it) => it.span(),
-            Self::Paren(it) => it.span(),
-            Self::OptChain(it) => it.span(),
-            Self::Invalid(it) => it.span(),
-        }
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
+    #[inline]
+    pub fn set_type_annotation<'a>(self, ast: &mut crate::Ast<'a>, type_annotation: TsType) {
+        let field_val: u32 = type_annotation.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
 }
-impl<'a> SetSpan for SimpleAssignTarget<'a> {
+impl TsAnyKeyword {}
+impl TsUnknownKeyword {}
+impl TsNeverKeyword {}
+impl TsVoidKeyword {}
+impl TsNullKeyword {}
+impl TsUndefinedKeyword {}
+impl TsStringKeyword {}
+impl TsNumberKeyword {}
+impl TsBigIntKeyword {}
+impl TsBooleanKeyword {}
+impl TsSymbolKeyword {}
+impl TsObjectKeyword {}
+impl TsIntrinsicKeyword {}
+impl TsThisType {}
+impl TsTypeReference {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Ident(it) => it.set_span(span),
-            Self::Member(it) => it.set_span(span),
-            Self::SuperProp(it) => it.set_span(span),
-            Self::Paren(it) => it.set_span(span),
-            Self::OptChain(it) => it.set_span(span),
-            Self::Invalid(it) => it.set_span(span),
-        }
+    pub fn type_name<'a>(self, ast: &crate::Ast<'a>) -> TsTypeName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsTypeName(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn type_arguments<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterInstantiation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterInstantiation(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn set_type_name<'a>(self, ast: &mut crate::Ast<'a>, type_name: TsTypeName) {
+        let field_val: u32 = type_name.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_type_arguments<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_arguments: Option<TsTypeParameterInstantiation>,
+    ) {
+        let field_val: u32 = type_arguments.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
 }
-impl<'a> GetSpan for OptChainExpr<'a> {
+impl TsQualifiedName {
+    #[inline]
+    pub fn left<'a>(self, ast: &crate::Ast<'a>) -> TsQualifiedNameLeft {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsQualifiedNameLeft(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn right<'a>(self, ast: &crate::Ast<'a>) -> IdentifierName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        IdentifierName(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_left<'a>(self, ast: &mut crate::Ast<'a>, left: TsQualifiedNameLeft) {
+        let field_val: u32 = left.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_right<'a>(self, ast: &mut crate::Ast<'a>, right: IdentifierName) {
+        let field_val: u32 = right.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
 }
-impl<'a> SetSpan for OptChainExpr<'a> {
+impl TsTypeQuery {
+    #[inline]
+    pub fn expr_name<'a>(self, ast: &crate::Ast<'a>) -> TsTypeQueryExprName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsTypeQueryExprName(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn type_arguments<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterInstantiation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterInstantiation(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn set_expr_name<'a>(self, ast: &mut crate::Ast<'a>, expr_name: TsTypeQueryExprName) {
+        let field_val: u32 = expr_name.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_type_arguments<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_arguments: Option<TsTypeParameterInstantiation>,
+    ) {
+        let field_val: u32 = type_arguments.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
 }
-impl<'a> OptChainBase<'a> {
+impl TsImportType {
     #[inline]
-    pub const fn is_member(&self) -> bool {
-        matches!(self, Self::Member { .. })
+    pub fn source<'a>(self, ast: &crate::Ast<'a>) -> StringLiteral {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        StringLiteral(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_call(&self) -> bool {
-        matches!(self, Self::Call { .. })
+    pub fn options<'a>(self, ast: &crate::Ast<'a>) -> Option<Expr> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Expr(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_member(&self) -> Option<&MemberExpr<'a>> {
-        match self {
-            Self::Member(it) => Some(it),
-            _ => None,
-        }
+    pub fn qualifier<'a>(self, ast: &crate::Ast<'a>) -> Option<TsImportTypeQualifier> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsImportTypeQualifier(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_call(&self) -> Option<&OptCall<'a>> {
-        match self {
-            Self::Call(it) => Some(it),
-            _ => None,
-        }
+    pub fn type_arguments<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterInstantiation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterInstantiation(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_mut_member(&mut self) -> Option<&mut MemberExpr<'a>> {
-        match self {
-            Self::Member(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_source<'a>(self, ast: &mut crate::Ast<'a>, source: StringLiteral) {
+        let field_val: u32 = source.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_call(&mut self) -> Option<&mut OptCall<'a>> {
-        match self {
-            Self::Call(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_options<'a>(self, ast: &mut crate::Ast<'a>, options: Option<Expr>) {
+        let field_val: u32 = options.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
-}
-impl<'a> GetSpan for OptChainBase<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Member(it) => it.span(),
-            Self::Call(it) => it.span(),
-        }
+    pub fn set_qualifier<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        qualifier: Option<TsImportTypeQualifier>,
+    ) {
+        let field_val: u32 = qualifier.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
-}
-impl<'a> SetSpan for OptChainBase<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Member(it) => it.set_span(span),
-            Self::Call(it) => it.set_span(span),
-        }
+    pub fn set_type_arguments<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_arguments: Option<TsTypeParameterInstantiation>,
+    ) {
+        let field_val: u32 = type_arguments.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 79228162514264337593543950335u128)
+            | (((field_val as u128) & 4294967295u128) << 96usize);
     }
 }
-impl<'a> GetSpan for OptCall<'a> {
+impl TsTypeParameter {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn name<'a>(self, ast: &crate::Ast<'a>) -> BindingIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        BindingIdentifier(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for OptCall<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn constraint<'a>(self, ast: &crate::Ast<'a>) -> Option<TsType> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsType(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl GetSpan for Invalid {
     #[inline]
-    fn span(&self) -> Span {
-        DUMMY_SP
+    pub fn default<'a>(self, ast: &crate::Ast<'a>) -> Option<TsType> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsType(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl SetSpan for Invalid {
     #[inline]
-    fn set_span(&mut self, span: Span) {}
-}
-impl<'a> GetSpan for Function<'a> {
+    pub fn r#in<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn out<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 104usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn r#const<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 112usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn set_name<'a>(self, ast: &mut crate::Ast<'a>, name: BindingIdentifier) {
+        let field_val: u32 = name.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_constraint<'a>(self, ast: &mut crate::Ast<'a>, constraint: Option<TsType>) {
+        let field_val: u32 = constraint.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
+    #[inline]
+    pub fn set_default<'a>(self, ast: &mut crate::Ast<'a>, default: Option<TsType>) {
+        let field_val: u32 = default.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
+    }
+    #[inline]
+    pub fn set_in<'a>(self, ast: &mut crate::Ast<'a>, r#in: bool) {
+        let field_val: u32 = r#in as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282346717757022325968521078060875775u128)
+            | (((field_val as u128) & 255u128) << 96usize);
+    }
+    #[inline]
+    pub fn set_out<'a>(self, ast: &mut crate::Ast<'a>, out: bool) {
+        let field_val: u32 = out as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340277194906489532287416500882690277375u128)
+            | (((field_val as u128) & 255u128) << 104usize);
+    }
+    #[inline]
+    pub fn set_const<'a>(self, ast: &mut crate::Ast<'a>, r#const: bool) {
+        let field_val: u32 = r#const as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 338958331222012082418099330867817086975u128)
+            | (((field_val as u128) & 255u128) << 112usize);
+    }
 }
-impl<'a> SetSpan for Function<'a> {
+impl TsTypeParameterDeclaration {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn params<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TsTypeParameter> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
+    #[inline]
+    pub fn set_params<'a>(self, ast: &mut crate::Ast<'a>, params: TypedSubRange<TsTypeParameter>) {
+        let field_val: u64 = unsafe { params.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
 }
-impl<'a> GetSpan for Param<'a> {
+impl TsTypeParameterInstantiation {
+    #[inline]
+    pub fn params<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TsType> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_params<'a>(self, ast: &mut crate::Ast<'a>, params: TypedSubRange<TsType>) {
+        let field_val: u64 = unsafe { params.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
 }
-impl<'a> SetSpan for Param<'a> {
+impl TsLiteralType {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn literal<'a>(self, ast: &crate::Ast<'a>) -> TsLiteral {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsLiteral(NodeId::from_raw_unchecked(raw))
     }
+    #[inline]
+    pub fn set_literal<'a>(self, ast: &mut crate::Ast<'a>, literal: TsLiteral) {
+        let field_val: u32 = literal.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
 }
-impl<'a> ParamOrTsParamProp<'a> {
+impl TsTemplateLiteralType {
     #[inline]
-    pub const fn is_param(&self) -> bool {
-        matches!(self, Self::Param { .. })
+    pub fn quasis<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TemplateElement> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_param(&self) -> Option<&Param<'a>> {
-        match self {
-            Self::Param(it) => Some(it),
-            _ => None,
-        }
+    pub fn types<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TsType> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_mut_param(&mut self) -> Option<&mut Param<'a>> {
-        match self {
-            Self::Param(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_quasis<'a>(self, ast: &mut crate::Ast<'a>, quasis: TypedSubRange<TemplateElement>) {
+        let field_val: u64 = unsafe { quasis.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_types<'a>(self, ast: &mut crate::Ast<'a>, types: TypedSubRange<TsType>) {
+        let field_val: u64 = unsafe { types.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 18446744073709551615u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 64usize);
     }
 }
-impl<'a> GetSpan for ParamOrTsParamProp<'a> {
+impl TsArrayType {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Param(it) => it.span(),
-        }
+    pub fn element_type<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_element_type<'a>(self, ast: &mut crate::Ast<'a>, element_type: TsType) {
+        let field_val: u32 = element_type.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }
-impl<'a> SetSpan for ParamOrTsParamProp<'a> {
+impl TsIndexedAccessType {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Param(it) => it.set_span(span),
-        }
+    pub fn object_type<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
+    #[inline]
+    pub fn index_type<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn set_object_type<'a>(self, ast: &mut crate::Ast<'a>, object_type: TsType) {
+        let field_val: u32 = object_type.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_index_type<'a>(self, ast: &mut crate::Ast<'a>, index_type: TsType) {
+        let field_val: u32 = index_type.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
 }
-impl<'a> GetSpan for Class<'a> {
+impl TsTupleType {
+    #[inline]
+    pub fn element_types<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TsTupleElement> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
+    }
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_element_types<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        element_types: TypedSubRange<TsTupleElement>,
+    ) {
+        let field_val: u64 = unsafe { element_types.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
 }
-impl<'a> SetSpan for Class<'a> {
+impl TsNamedTupleMember {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn label<'a>(self, ast: &crate::Ast<'a>) -> IdentifierName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        IdentifierName(NodeId::from_raw_unchecked(raw))
     }
+    #[inline]
+    pub fn element_type<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn set_label<'a>(self, ast: &mut crate::Ast<'a>, label: IdentifierName) {
+        let field_val: u32 = label.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_element_type<'a>(self, ast: &mut crate::Ast<'a>, element_type: TsType) {
+        let field_val: u32 = element_type.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: bool) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
+    }
 }
-impl<'a> ClassMember<'a> {
+impl TsOptionalType {
     #[inline]
-    pub const fn is_constructor(&self) -> bool {
-        matches!(self, Self::Constructor { .. })
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_method(&self) -> bool {
-        matches!(self, Self::Method { .. })
+    pub fn set_type_annotation<'a>(self, ast: &mut crate::Ast<'a>, type_annotation: TsType) {
+        let field_val: u32 = type_annotation.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
+}
+impl TsRestType {
     #[inline]
-    pub const fn is_private_method(&self) -> bool {
-        matches!(self, Self::PrivateMethod { .. })
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_class_prop(&self) -> bool {
-        matches!(self, Self::ClassProp { .. })
+    pub fn set_type_annotation<'a>(self, ast: &mut crate::Ast<'a>, type_annotation: TsType) {
+        let field_val: u32 = type_annotation.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
+}
+impl TsJsDocNullableType {
     #[inline]
-    pub const fn is_private_prop(&self) -> bool {
-        matches!(self, Self::PrivateProp { .. })
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_empty(&self) -> bool {
-        matches!(self, Self::Empty { .. })
+    pub fn postfix<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub const fn is_static_block(&self) -> bool {
-        matches!(self, Self::StaticBlock { .. })
+    pub fn set_type_annotation<'a>(self, ast: &mut crate::Ast<'a>, type_annotation: TsType) {
+        let field_val: u32 = type_annotation.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub const fn is_auto_accessor(&self) -> bool {
-        matches!(self, Self::AutoAccessor { .. })
+    pub fn set_postfix<'a>(self, ast: &mut crate::Ast<'a>, postfix: bool) {
+        let field_val: u32 = postfix as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606336551550975u128)
+            | (((field_val as u128) & 255u128) << 32usize);
     }
+}
+impl TsJsDocNonNullableType {
     #[inline]
-    pub fn as_constructor(&self) -> Option<&Constructor<'a>> {
-        match self {
-            Self::Constructor(it) => Some(it),
-            _ => None,
-        }
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_method(&self) -> Option<&ClassMethod<'a>> {
-        match self {
-            Self::Method(it) => Some(it),
-            _ => None,
-        }
+    pub fn postfix<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_private_method(&self) -> Option<&PrivateMethod<'a>> {
-        match self {
-            Self::PrivateMethod(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_annotation<'a>(self, ast: &mut crate::Ast<'a>, type_annotation: TsType) {
+        let field_val: u32 = type_annotation.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub fn as_class_prop(&self) -> Option<&ClassProp<'a>> {
-        match self {
-            Self::ClassProp(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_postfix<'a>(self, ast: &mut crate::Ast<'a>, postfix: bool) {
+        let field_val: u32 = postfix as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606336551550975u128)
+            | (((field_val as u128) & 255u128) << 32usize);
     }
+}
+impl TsJsDocUnknownType {}
+impl TsUnionType {
     #[inline]
-    pub fn as_private_prop(&self) -> Option<&PrivateProp<'a>> {
-        match self {
-            Self::PrivateProp(it) => Some(it),
-            _ => None,
-        }
+    pub fn types<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TsType> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_empty(&self) -> Option<&EmptyStmt> {
-        match self {
-            Self::Empty(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_types<'a>(self, ast: &mut crate::Ast<'a>, types: TypedSubRange<TsType>) {
+        let field_val: u64 = unsafe { types.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
+}
+impl TsIntersectionType {
     #[inline]
-    pub fn as_static_block(&self) -> Option<&StaticBlock<'a>> {
-        match self {
-            Self::StaticBlock(it) => Some(it),
-            _ => None,
-        }
+    pub fn types<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TsType> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_auto_accessor(&self) -> Option<&AutoAccessor<'a>> {
-        match self {
-            Self::AutoAccessor(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_types<'a>(self, ast: &mut crate::Ast<'a>, types: TypedSubRange<TsType>) {
+        let field_val: u64 = unsafe { types.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
+}
+impl TsConditionalType {
     #[inline]
-    pub fn as_mut_constructor(&mut self) -> Option<&mut Constructor<'a>> {
-        match self {
-            Self::Constructor(it) => Some(it),
-            _ => None,
-        }
+    pub fn check_type<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_method(&mut self) -> Option<&mut ClassMethod<'a>> {
-        match self {
-            Self::Method(it) => Some(it),
-            _ => None,
-        }
+    pub fn extends_type<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_private_method(&mut self) -> Option<&mut PrivateMethod<'a>> {
-        match self {
-            Self::PrivateMethod(it) => Some(it),
-            _ => None,
-        }
+    pub fn true_type<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_class_prop(&mut self) -> Option<&mut ClassProp<'a>> {
-        match self {
-            Self::ClassProp(it) => Some(it),
-            _ => None,
-        }
+    pub fn false_type<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_private_prop(&mut self) -> Option<&mut PrivateProp<'a>> {
-        match self {
-            Self::PrivateProp(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_check_type<'a>(self, ast: &mut crate::Ast<'a>, check_type: TsType) {
+        let field_val: u32 = check_type.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_empty(&mut self) -> Option<&mut EmptyStmt> {
-        match self {
-            Self::Empty(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_extends_type<'a>(self, ast: &mut crate::Ast<'a>, extends_type: TsType) {
+        let field_val: u32 = extends_type.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
     #[inline]
-    pub fn as_mut_static_block(&mut self) -> Option<&mut StaticBlock<'a>> {
-        match self {
-            Self::StaticBlock(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_true_type<'a>(self, ast: &mut crate::Ast<'a>, true_type: TsType) {
+        let field_val: u32 = true_type.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
     #[inline]
-    pub fn as_mut_auto_accessor(&mut self) -> Option<&mut AutoAccessor<'a>> {
-        match self {
-            Self::AutoAccessor(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_false_type<'a>(self, ast: &mut crate::Ast<'a>, false_type: TsType) {
+        let field_val: u32 = false_type.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 79228162514264337593543950335u128)
+            | (((field_val as u128) & 4294967295u128) << 96usize);
     }
 }
-impl<'a> GetSpan for ClassMember<'a> {
+impl TsInferType {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Constructor(it) => it.span(),
-            Self::Method(it) => it.span(),
-            Self::PrivateMethod(it) => it.span(),
-            Self::ClassProp(it) => it.span(),
-            Self::PrivateProp(it) => it.span(),
-            Self::Empty(it) => it.span(),
-            Self::StaticBlock(it) => it.span(),
-            Self::AutoAccessor(it) => it.span(),
-        }
+    pub fn type_parameter<'a>(self, ast: &crate::Ast<'a>) -> TsTypeParameter {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsTypeParameter(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for ClassMember<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Constructor(it) => it.set_span(span),
-            Self::Method(it) => it.set_span(span),
-            Self::PrivateMethod(it) => it.set_span(span),
-            Self::ClassProp(it) => it.set_span(span),
-            Self::PrivateProp(it) => it.set_span(span),
-            Self::Empty(it) => it.set_span(span),
-            Self::StaticBlock(it) => it.set_span(span),
-            Self::AutoAccessor(it) => it.set_span(span),
-        }
+    pub fn set_type_parameter<'a>(self, ast: &mut crate::Ast<'a>, type_parameter: TsTypeParameter) {
+        let field_val: u32 = type_parameter.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }
-impl<'a> GetSpan for ClassProp<'a> {
+impl TsTypeOperator {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn operator<'a>(self, ast: &crate::Ast<'a>) -> TsTypeOperatorKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, TsTypeOperatorKind>(raw as u8) }
     }
-}
-impl<'a> SetSpan for ClassProp<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for PrivateProp<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_operator<'a>(self, ast: &mut crate::Ast<'a>, operator: TsTypeOperatorKind) {
+        let field_val: u32 = operator as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606336551550975u128)
+            | (((field_val as u128) & 255u128) << 32usize);
     }
-}
-impl<'a> SetSpan for PrivateProp<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_type_annotation<'a>(self, ast: &mut crate::Ast<'a>, type_annotation: TsType) {
+        let field_val: u32 = type_annotation.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }
-impl<'a> GetSpan for ClassMethod<'a> {
+impl TsParenthesizedType {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for ClassMethod<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_type_annotation<'a>(self, ast: &mut crate::Ast<'a>, type_annotation: TsType) {
+        let field_val: u32 = type_annotation.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }
-impl<'a> GetSpan for PrivateMethod<'a> {
+impl TsFunctionType {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn type_parameters<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterDeclaration> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterDeclaration(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> SetSpan for PrivateMethod<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn params<'a>(self, ast: &crate::Ast<'a>) -> FormalParameters {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        FormalParameters(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for Constructor<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn return_type<'a>(self, ast: &crate::Ast<'a>) -> TsTypeAnnotation {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        TsTypeAnnotation(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for Constructor<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_type_parameters<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_parameters: Option<TsTypeParameterDeclaration>,
+    ) {
+        let field_val: u32 = type_parameters.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> GetSpan for Decorator<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_params<'a>(self, ast: &mut crate::Ast<'a>, params: FormalParameters) {
+        let field_val: u32 = params.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
-}
-impl<'a> SetSpan for Decorator<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_return_type<'a>(self, ast: &mut crate::Ast<'a>, return_type: TsTypeAnnotation) {
+        let field_val: u32 = return_type.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
 }
-impl<'a> GetSpan for StaticBlock<'a> {
+impl TsConstructorType {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn type_parameters<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterDeclaration> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterDeclaration(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> SetSpan for StaticBlock<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn params<'a>(self, ast: &crate::Ast<'a>) -> FormalParameters {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        FormalParameters(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> Key<'a> {
     #[inline]
-    pub const fn is_private(&self) -> bool {
-        matches!(self, Self::Private { .. })
+    pub fn return_type<'a>(self, ast: &crate::Ast<'a>) -> TsTypeAnnotation {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        TsTypeAnnotation(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_public(&self) -> bool {
-        matches!(self, Self::Public { .. })
+    pub fn r#abstract<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_private(&self) -> Option<&PrivateName<'a>> {
-        match self {
-            Self::Private(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_parameters<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_parameters: Option<TsTypeParameterDeclaration>,
+    ) {
+        let field_val: u32 = type_parameters.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub fn as_public(&self) -> Option<&PropName<'a>> {
-        match self {
-            Self::Public(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_params<'a>(self, ast: &mut crate::Ast<'a>, params: FormalParameters) {
+        let field_val: u32 = params.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
     #[inline]
-    pub fn as_mut_private(&mut self) -> Option<&mut PrivateName<'a>> {
-        match self {
-            Self::Private(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_return_type<'a>(self, ast: &mut crate::Ast<'a>, return_type: TsTypeAnnotation) {
+        let field_val: u32 = return_type.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
     #[inline]
-    pub fn as_mut_public(&mut self) -> Option<&mut PropName<'a>> {
-        match self {
-            Self::Public(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_abstract<'a>(self, ast: &mut crate::Ast<'a>, r#abstract: bool) {
+        let field_val: u32 = r#abstract as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282346717757022325968521078060875775u128)
+            | (((field_val as u128) & 255u128) << 96usize);
     }
 }
-impl<'a> GetSpan for Key<'a> {
+impl TsTypePredicate {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Private(it) => it.span(),
-            Self::Public(it) => it.span(),
-        }
+    pub fn parameter_name<'a>(self, ast: &crate::Ast<'a>) -> TsTypePredicateName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsTypePredicateName(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for Key<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Private(it) => it.set_span(span),
-            Self::Public(it) => it.set_span(span),
-        }
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeAnnotation(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> GetSpan for AutoAccessor<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn asserts<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        raw != 0
     }
-}
-impl<'a> SetSpan for AutoAccessor<'a> {
+    #[inline]
+    pub fn set_parameter_name<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        parameter_name: TsTypePredicateName,
+    ) {
+        let field_val: u32 = parameter_name.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_type_annotation<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_annotation: Option<TsTypeAnnotation>,
+    ) {
+        let field_val: u32 = type_annotation.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_asserts<'a>(self, ast: &mut crate::Ast<'a>, asserts: bool) {
+        let field_val: u32 = asserts as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
 }
-impl<'a> Prop<'a> {
+impl TsTypeLiteral {
     #[inline]
-    pub const fn is_shorthand(&self) -> bool {
-        matches!(self, Self::Shorthand { .. })
+    pub fn members<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TsTypeElement> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub const fn is_key_value(&self) -> bool {
-        matches!(self, Self::KeyValue { .. })
+    pub fn set_members<'a>(self, ast: &mut crate::Ast<'a>, members: TypedSubRange<TsTypeElement>) {
+        let field_val: u64 = unsafe { members.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
+}
+impl TsMappedType {
     #[inline]
-    pub const fn is_assign(&self) -> bool {
-        matches!(self, Self::Assign { .. })
+    pub fn key<'a>(self, ast: &crate::Ast<'a>) -> BindingIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 16usize) as u32) & 4294967295u32;
+        BindingIdentifier(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_getter(&self) -> bool {
-        matches!(self, Self::Getter { .. })
+    pub fn constraint<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 48usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_setter(&self) -> bool {
-        matches!(self, Self::Setter { .. })
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> TsMappedTypeModifier {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, TsMappedTypeModifier>(raw as u8) }
     }
     #[inline]
-    pub const fn is_method(&self) -> bool {
-        matches!(self, Self::Method { .. })
+    pub fn readonly<'a>(self, ast: &crate::Ast<'a>) -> TsMappedTypeModifier {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, TsMappedTypeModifier>(raw as u8) }
     }
     #[inline]
-    pub fn as_shorthand(&self) -> Option<&Ident<'a>> {
-        match self {
-            Self::Shorthand(it) => Some(it),
-            _ => None,
+    pub fn name_type<'a>(self, ast: &crate::Ast<'a>) -> Option<TsType> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_key_value(&self) -> Option<&KeyValueProp<'a>> {
-        match self {
-            Self::KeyValue(it) => Some(it),
-            _ => None,
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> Option<TsType> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_assign(&self) -> Option<&AssignProp<'a>> {
-        match self {
-            Self::Assign(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_key<'a>(self, ast: &mut crate::Ast<'a>, key: BindingIdentifier) {
+        let field_val: u32 = key.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374325956791566335u128)
+            | (((field_val as u128) & 4294967295u128) << 16usize);
     }
     #[inline]
-    pub fn as_getter(&self) -> Option<&GetterProp<'a>> {
-        match self {
-            Self::Getter(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_constraint<'a>(self, ast: &mut crate::Ast<'a>, constraint: TsType) {
+        let field_val: u32 = constraint.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920937254537555274277570215935u128)
+            | (((field_val as u128) & 4294967295u128) << 48usize);
     }
     #[inline]
-    pub fn as_setter(&self) -> Option<&SetterProp<'a>> {
-        match self {
-            Self::Setter(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: TsMappedTypeModifier) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
     }
     #[inline]
-    pub fn as_method(&self) -> Option<&MethodProp<'a>> {
-        match self {
-            Self::Method(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_readonly<'a>(self, ast: &mut crate::Ast<'a>, readonly: TsMappedTypeModifier) {
+        let field_val: u32 = readonly as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768146175u128)
+            | (((field_val as u128) & 255u128) << 8usize);
     }
     #[inline]
-    pub fn as_mut_shorthand(&mut self) -> Option<&mut Ident<'a>> {
-        match self {
-            Self::Shorthand(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_name_type<'a>(self, ast: &mut crate::Ast<'a>, name_type: Option<TsType>) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = name_type.to_extra_data(ast);
+        };
     }
     #[inline]
-    pub fn as_mut_key_value(&mut self) -> Option<&mut KeyValueProp<'a>> {
-        match self {
-            Self::KeyValue(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_annotation<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_annotation: Option<TsType>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = type_annotation.to_extra_data(ast);
+        };
     }
+}
+impl TsPropertySignature {
     #[inline]
-    pub fn as_mut_assign(&mut self) -> Option<&mut AssignProp<'a>> {
-        match self {
-            Self::Assign(it) => Some(it),
-            _ => None,
-        }
+    pub fn key<'a>(self, ast: &crate::Ast<'a>) -> PropertyKey {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        PropertyKey(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_getter(&mut self) -> Option<&mut GetterProp<'a>> {
-        match self {
-            Self::Getter(it) => Some(it),
-            _ => None,
-        }
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeAnnotation(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_mut_setter(&mut self) -> Option<&mut SetterProp<'a>> {
-        match self {
-            Self::Setter(it) => Some(it),
-            _ => None,
-        }
+    pub fn computed<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_mut_method(&mut self) -> Option<&mut MethodProp<'a>> {
-        match self {
-            Self::Method(it) => Some(it),
-            _ => None,
-        }
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 72usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn readonly<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 80usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn set_key<'a>(self, ast: &mut crate::Ast<'a>, key: PropertyKey) {
+        let field_val: u32 = key.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
+    }
+    #[inline]
+    pub fn set_type_annotation<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_annotation: Option<TsTypeAnnotation>,
+    ) {
+        let field_val: u32 = type_annotation.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
+    }
+    #[inline]
+    pub fn set_computed<'a>(self, ast: &mut crate::Ast<'a>, computed: bool) {
+        let field_val: u32 = computed as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
+    }
+    #[inline]
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: bool) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920937259259921475672238718975u128)
+            | (((field_val as u128) & 255u128) << 72usize);
+    }
+    #[inline]
+    pub fn set_readonly<'a>(self, ast: &mut crate::Ast<'a>, readonly: bool) {
+        let field_val: u32 = readonly as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920630187379372876992218136575u128)
+            | (((field_val as u128) & 255u128) << 80usize);
     }
 }
-impl<'a> GetSpan for Prop<'a> {
+impl TsMethodSignature {
+    #[inline]
+    pub fn key<'a>(self, ast: &crate::Ast<'a>) -> PropertyKey {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 24usize) as u32) & 4294967295u32;
+        PropertyKey(NodeId::from_raw_unchecked(raw))
+    }
+    #[inline]
+    pub fn type_parameters<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterDeclaration> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 56usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterDeclaration(NodeId::from_raw_unchecked(raw)))
+    }
+    #[inline]
+    pub fn kind<'a>(self, ast: &crate::Ast<'a>) -> TsMethodSignatureKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, TsMethodSignatureKind>(raw as u8) }
+    }
+    #[inline]
+    pub fn computed<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 255u32;
+        raw != 0
+    }
+    #[inline]
+    pub fn optional<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 16usize) as u32) & 255u32;
+        raw != 0
+    }
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Shorthand(it) => it.span(),
-            Self::KeyValue(it) => it.span(),
-            Self::Assign(it) => it.span(),
-            Self::Getter(it) => it.span(),
-            Self::Setter(it) => it.span(),
-            Self::Method(it) => it.span(),
+    pub fn params<'a>(self, ast: &crate::Ast<'a>) -> FormalParameters {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
-}
-impl<'a> SetSpan for Prop<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Shorthand(it) => it.set_span(span),
-            Self::KeyValue(it) => it.set_span(span),
-            Self::Assign(it) => it.set_span(span),
-            Self::Getter(it) => it.set_span(span),
-            Self::Setter(it) => it.set_span(span),
-            Self::Method(it) => it.set_span(span),
+    pub fn return_type<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
-}
-impl<'a> GetSpan for KeyValueProp<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        Span::new(self.key.span_lo(), self.value.span_hi())
+    pub fn set_key<'a>(self, ast: &mut crate::Ast<'a>, key: PropertyKey) {
+        let field_val: u32 = key.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463302549837747060735u128)
+            | (((field_val as u128) & 4294967295u128) << 24usize);
     }
-}
-impl<'a> SetSpan for KeyValueProp<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        let current = self.key.span();
-        self.key.set_span(Span::new(span.start, current.end));
-        let current = self.value.span();
-        self.value.set_span(Span::new(current.start, span.end));
+    pub fn set_type_parameters<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_parameters: Option<TsTypeParameterDeclaration>,
+    ) {
+        let field_val: u32 = type_parameters.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920628978453625319957081358335u128)
+            | (((field_val as u128) & 4294967295u128) << 56usize);
     }
-}
-impl<'a> GetSpan for AssignProp<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_kind<'a>(self, ast: &mut crate::Ast<'a>, kind: TsMethodSignatureKind) {
+        let field_val: u32 = kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
     }
-}
-impl<'a> SetSpan for AssignProp<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_computed<'a>(self, ast: &mut crate::Ast<'a>, computed: bool) {
+        let field_val: u32 = computed as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768146175u128)
+            | (((field_val as u128) & 255u128) << 8usize);
     }
-}
-impl<'a> GetSpan for GetterProp<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_optional<'a>(self, ast: &mut crate::Ast<'a>, optional: bool) {
+        let field_val: u32 = optional as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431751499775u128)
+            | (((field_val as u128) & 255u128) << 16usize);
     }
-}
-impl<'a> SetSpan for GetterProp<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_params<'a>(self, ast: &mut crate::Ast<'a>, params: FormalParameters) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = params.to_extra_data(ast);
+        };
     }
-}
-impl<'a> GetSpan for SetterProp<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_return_type<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        return_type: Option<TsTypeAnnotation>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = return_type.to_extra_data(ast);
+        };
     }
 }
-impl<'a> SetSpan for SetterProp<'a> {
+impl TsCallSignatureDeclaration {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn type_parameters<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterDeclaration> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterDeclaration(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> GetSpan for MethodProp<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.function.span()
+    pub fn params<'a>(self, ast: &crate::Ast<'a>) -> FormalParameters {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        FormalParameters(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for MethodProp<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.function.set_span(span);
+    pub fn return_type<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeAnnotation(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> PropName<'a> {
     #[inline]
-    pub const fn is_ident(&self) -> bool {
-        matches!(self, Self::Ident { .. })
+    pub fn set_type_parameters<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_parameters: Option<TsTypeParameterDeclaration>,
+    ) {
+        let field_val: u32 = type_parameters.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub const fn is_str(&self) -> bool {
-        matches!(self, Self::Str { .. })
+    pub fn set_params<'a>(self, ast: &mut crate::Ast<'a>, params: FormalParameters) {
+        let field_val: u32 = params.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
     #[inline]
-    pub const fn is_num(&self) -> bool {
-        matches!(self, Self::Num { .. })
+    pub fn set_return_type<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        return_type: Option<TsTypeAnnotation>,
+    ) {
+        let field_val: u32 = return_type.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
+}
+impl TsConstructSignatureDeclaration {
     #[inline]
-    pub const fn is_computed(&self) -> bool {
-        matches!(self, Self::Computed { .. })
+    pub fn type_parameters<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterDeclaration> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterDeclaration(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub const fn is_big_int(&self) -> bool {
-        matches!(self, Self::BigInt { .. })
+    pub fn params<'a>(self, ast: &crate::Ast<'a>) -> FormalParameters {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        FormalParameters(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_ident(&self) -> Option<&IdentName<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
-        }
+    pub fn return_type<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeAnnotation(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_str(&self) -> Option<&Str<'a>> {
-        match self {
-            Self::Str(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_parameters<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_parameters: Option<TsTypeParameterDeclaration>,
+    ) {
+        let field_val: u32 = type_parameters.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub fn as_num(&self) -> Option<&Number<'a>> {
-        match self {
-            Self::Num(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_params<'a>(self, ast: &mut crate::Ast<'a>, params: FormalParameters) {
+        let field_val: u32 = params.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
     #[inline]
-    pub fn as_computed(&self) -> Option<&ComputedPropName<'a>> {
-        match self {
-            Self::Computed(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_return_type<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        return_type: Option<TsTypeAnnotation>,
+    ) {
+        let field_val: u32 = return_type.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
+}
+impl TsIndexSignature {
     #[inline]
-    pub fn as_big_int(&self) -> Option<&BigInt<'a>> {
-        match self {
-            Self::BigInt(it) => Some(it),
-            _ => None,
-        }
+    pub fn parameters<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<BindingIdentifier> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_mut_ident(&mut self) -> Option<&mut IdentName<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
-        }
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> TsTypeAnnotation {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        TsTypeAnnotation(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_str(&mut self) -> Option<&mut Str<'a>> {
-        match self {
-            Self::Str(it) => Some(it),
-            _ => None,
-        }
+    pub fn readonly<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_mut_num(&mut self) -> Option<&mut Number<'a>> {
-        match self {
-            Self::Num(it) => Some(it),
-            _ => None,
-        }
+    pub fn r#static<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 104usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_mut_computed(&mut self) -> Option<&mut ComputedPropName<'a>> {
-        match self {
-            Self::Computed(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_parameters<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        parameters: TypedSubRange<BindingIdentifier>,
+    ) {
+        let field_val: u64 = unsafe { parameters.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_big_int(&mut self) -> Option<&mut BigInt<'a>> {
-        match self {
-            Self::BigInt(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_annotation<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_annotation: TsTypeAnnotation,
+    ) {
+        let field_val: u32 = type_annotation.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
-}
-impl<'a> GetSpan for PropName<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Ident(it) => it.span(),
-            Self::Str(it) => it.span(),
-            Self::Num(it) => it.span(),
-            Self::Computed(it) => it.span(),
-            Self::BigInt(it) => it.span(),
-        }
+    pub fn set_readonly<'a>(self, ast: &mut crate::Ast<'a>, readonly: bool) {
+        let field_val: u32 = readonly as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282346717757022325968521078060875775u128)
+            | (((field_val as u128) & 255u128) << 96usize);
     }
-}
-impl<'a> SetSpan for PropName<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Ident(it) => it.set_span(span),
-            Self::Str(it) => it.set_span(span),
-            Self::Num(it) => it.set_span(span),
-            Self::Computed(it) => it.set_span(span),
-            Self::BigInt(it) => it.set_span(span),
-        }
+    pub fn set_static<'a>(self, ast: &mut crate::Ast<'a>, r#static: bool) {
+        let field_val: u32 = r#static as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340277194906489532287416500882690277375u128)
+            | (((field_val as u128) & 255u128) << 104usize);
     }
 }
-impl<'a> GetSpan for ComputedPropName<'a> {
+impl TsTypeAliasDeclaration {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn id<'a>(self, ast: &crate::Ast<'a>) -> BindingIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        BindingIdentifier(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for ComputedPropName<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn type_parameters<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterDeclaration> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterDeclaration(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> Pat<'a> {
     #[inline]
-    pub const fn is_ident(&self) -> bool {
-        matches!(self, Self::Ident { .. })
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_array(&self) -> bool {
-        matches!(self, Self::Array { .. })
+    pub fn declare<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub const fn is_rest(&self) -> bool {
-        matches!(self, Self::Rest { .. })
+    pub fn set_id<'a>(self, ast: &mut crate::Ast<'a>, id: BindingIdentifier) {
+        let field_val: u32 = id.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub const fn is_object(&self) -> bool {
-        matches!(self, Self::Object { .. })
+    pub fn set_type_parameters<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_parameters: Option<TsTypeParameterDeclaration>,
+    ) {
+        let field_val: u32 = type_parameters.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
     #[inline]
-    pub const fn is_assign(&self) -> bool {
-        matches!(self, Self::Assign { .. })
+    pub fn set_type_annotation<'a>(self, ast: &mut crate::Ast<'a>, type_annotation: TsType) {
+        let field_val: u32 = type_annotation.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
     #[inline]
-    pub const fn is_invalid(&self) -> bool {
-        matches!(self, Self::Invalid { .. })
+    pub fn set_declare<'a>(self, ast: &mut crate::Ast<'a>, declare: bool) {
+        let field_val: u32 = declare as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282346717757022325968521078060875775u128)
+            | (((field_val as u128) & 255u128) << 96usize);
     }
+}
+impl TsInterfaceDeclaration {
     #[inline]
-    pub const fn is_expr(&self) -> bool {
-        matches!(self, Self::Expr { .. })
+    pub fn id<'a>(self, ast: &crate::Ast<'a>) -> BindingIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 4294967295u32;
+        BindingIdentifier(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_ident(&self) -> Option<&BindingIdent<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
-        }
+    pub fn type_parameters<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterDeclaration> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterDeclaration(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_array(&self) -> Option<&ArrayPat<'a>> {
-        match self {
-            Self::Array(it) => Some(it),
-            _ => None,
-        }
+    pub fn declare<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_rest(&self) -> Option<&RestPat<'a>> {
-        match self {
-            Self::Rest(it) => Some(it),
-            _ => None,
+    pub fn extends<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TsInterfaceHeritage> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_object(&self) -> Option<&ObjectPat<'a>> {
-        match self {
-            Self::Object(it) => Some(it),
-            _ => None,
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> TsInterfaceBody {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_assign(&self) -> Option<&AssignPat<'a>> {
-        match self {
-            Self::Assign(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_id<'a>(self, ast: &mut crate::Ast<'a>, id: BindingIdentifier) {
+        let field_val: u32 = id.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606332256583935u128)
+            | (((field_val as u128) & 4294967295u128) << 8usize);
     }
     #[inline]
-    pub fn as_invalid(&self) -> Option<&Invalid> {
-        match self {
-            Self::Invalid(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_parameters<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_parameters: Option<TsTypeParameterDeclaration>,
+    ) {
+        let field_val: u32 = type_parameters.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458741008125661634625535u128)
+            | (((field_val as u128) & 4294967295u128) << 40usize);
     }
     #[inline]
-    pub fn as_expr(&self) -> Option<&Expr<'a>> {
-        match self {
-            Self::Expr(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_declare<'a>(self, ast: &mut crate::Ast<'a>, declare: bool) {
+        let field_val: u32 = declare as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_ident(&mut self) -> Option<&mut BindingIdent<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_extends<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        extends: TypedSubRange<TsInterfaceHeritage>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = extends.to_extra_data(ast);
+        };
     }
     #[inline]
-    pub fn as_mut_array(&mut self) -> Option<&mut ArrayPat<'a>> {
-        match self {
-            Self::Array(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: TsInterfaceBody) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(1usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = body.to_extra_data(ast);
+        };
     }
+}
+impl TsInterfaceBody {
     #[inline]
-    pub fn as_mut_rest(&mut self) -> Option<&mut RestPat<'a>> {
-        match self {
-            Self::Rest(it) => Some(it),
-            _ => None,
-        }
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TsTypeElement> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_mut_object(&mut self) -> Option<&mut ObjectPat<'a>> {
-        match self {
-            Self::Object(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: TypedSubRange<TsTypeElement>) {
+        let field_val: u64 = unsafe { body.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
+}
+impl TsInterfaceHeritage {
     #[inline]
-    pub fn as_mut_assign(&mut self) -> Option<&mut AssignPat<'a>> {
-        match self {
-            Self::Assign(it) => Some(it),
-            _ => None,
-        }
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_invalid(&mut self) -> Option<&mut Invalid> {
-        match self {
-            Self::Invalid(it) => Some(it),
-            _ => None,
-        }
+    pub fn type_arguments<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterInstantiation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterInstantiation(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_mut_expr(&mut self) -> Option<&mut Expr<'a>> {
-        match self {
-            Self::Expr(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> GetSpan for Pat<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Ident(it) => it.span(),
-            Self::Array(it) => it.span(),
-            Self::Rest(it) => it.span(),
-            Self::Object(it) => it.span(),
-            Self::Assign(it) => it.span(),
-            Self::Invalid(it) => it.span(),
-            Self::Expr(it) => it.span(),
-        }
+    pub fn set_type_arguments<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_arguments: Option<TsTypeParameterInstantiation>,
+    ) {
+        let field_val: u32 = type_arguments.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
 }
-impl<'a> SetSpan for Pat<'a> {
+impl TsClassImplements {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Ident(it) => it.set_span(span),
-            Self::Array(it) => it.set_span(span),
-            Self::Rest(it) => it.set_span(span),
-            Self::Object(it) => it.set_span(span),
-            Self::Assign(it) => it.set_span(span),
-            Self::Invalid(it) => it.set_span(span),
-            Self::Expr(it) => it.set_span(span),
-        }
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for ArrayPat<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn type_arguments<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterInstantiation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterInstantiation(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> SetSpan for ArrayPat<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> GetSpan for ObjectPat<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_type_arguments<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_arguments: Option<TsTypeParameterInstantiation>,
+    ) {
+        let field_val: u32 = type_arguments.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
 }
-impl<'a> SetSpan for ObjectPat<'a> {
+impl TsEnumDeclaration {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn id<'a>(self, ast: &crate::Ast<'a>) -> BindingIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        BindingIdentifier(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for AssignPat<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> TsEnumBody {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        TsEnumBody(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for AssignPat<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_const<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        raw != 0
     }
-}
-impl<'a> GetSpan for RestPat<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn declare<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 72usize) as u32) & 255u32;
+        raw != 0
     }
-}
-impl<'a> SetSpan for RestPat<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_id<'a>(self, ast: &mut crate::Ast<'a>, id: BindingIdentifier) {
+        let field_val: u32 = id.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> ObjectPatProp<'a> {
     #[inline]
-    pub const fn is_key_value(&self) -> bool {
-        matches!(self, Self::KeyValue { .. })
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: TsEnumBody) {
+        let field_val: u32 = body.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
     #[inline]
-    pub const fn is_assign(&self) -> bool {
-        matches!(self, Self::Assign { .. })
+    pub fn set_is_const<'a>(self, ast: &mut crate::Ast<'a>, is_const: bool) {
+        let field_val: u32 = is_const as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
     #[inline]
-    pub const fn is_rest(&self) -> bool {
-        matches!(self, Self::Rest { .. })
+    pub fn set_declare<'a>(self, ast: &mut crate::Ast<'a>, declare: bool) {
+        let field_val: u32 = declare as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920937259259921475672238718975u128)
+            | (((field_val as u128) & 255u128) << 72usize);
     }
+}
+impl TsEnumBody {
     #[inline]
-    pub fn as_key_value(&self) -> Option<&KeyValuePatProp<'a>> {
-        match self {
-            Self::KeyValue(it) => Some(it),
-            _ => None,
-        }
+    pub fn members<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<TsEnumMember> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_assign(&self) -> Option<&AssignPatProp<'a>> {
-        match self {
-            Self::Assign(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_members<'a>(self, ast: &mut crate::Ast<'a>, members: TypedSubRange<TsEnumMember>) {
+        let field_val: u64 = unsafe { members.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
+}
+impl TsEnumMember {
     #[inline]
-    pub fn as_rest(&self) -> Option<&RestPat<'a>> {
-        match self {
-            Self::Rest(it) => Some(it),
-            _ => None,
-        }
+    pub fn id<'a>(self, ast: &crate::Ast<'a>) -> TsEnumMemberName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsEnumMemberName(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_key_value(&mut self) -> Option<&mut KeyValuePatProp<'a>> {
-        match self {
-            Self::KeyValue(it) => Some(it),
-            _ => None,
-        }
+    pub fn initializer<'a>(self, ast: &crate::Ast<'a>) -> Option<Expr> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| Expr(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_mut_assign(&mut self) -> Option<&mut AssignPatProp<'a>> {
-        match self {
-            Self::Assign(it) => Some(it),
-            _ => None,
-        }
+    pub fn computed<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_mut_rest(&mut self) -> Option<&mut RestPat<'a>> {
-        match self {
-            Self::Rest(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_id<'a>(self, ast: &mut crate::Ast<'a>, id: TsEnumMemberName) {
+        let field_val: u32 = id.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> GetSpan for ObjectPatProp<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::KeyValue(it) => it.span(),
-            Self::Assign(it) => it.span(),
-            Self::Rest(it) => it.span(),
-        }
+    pub fn set_initializer<'a>(self, ast: &mut crate::Ast<'a>, initializer: Option<Expr>) {
+        let field_val: u32 = initializer.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
-}
-impl<'a> SetSpan for ObjectPatProp<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::KeyValue(it) => it.set_span(span),
-            Self::Assign(it) => it.set_span(span),
-            Self::Rest(it) => it.set_span(span),
-        }
+    pub fn set_computed<'a>(self, ast: &mut crate::Ast<'a>, computed: bool) {
+        let field_val: u32 = computed as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
 }
-impl<'a> GetSpan for KeyValuePatProp<'a> {
+impl TsModuleDeclaration {
     #[inline]
-    fn span(&self) -> Span {
-        Span::new(self.key.span_lo(), self.value.span_hi())
+    pub fn id<'a>(self, ast: &crate::Ast<'a>) -> TsModuleName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsModuleName(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for KeyValuePatProp<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        let current = self.key.span();
-        self.key.set_span(Span::new(span.start, current.end));
-        let current = self.value.span();
-        self.value.set_span(Span::new(current.start, span.end));
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> Option<TsModuleBody> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsModuleBody(NodeId::from_raw_unchecked(raw)))
     }
-}
-impl<'a> GetSpan for AssignPatProp<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn kind<'a>(self, ast: &crate::Ast<'a>) -> TsModuleDeclarationKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, TsModuleDeclarationKind>(raw as u8) }
     }
-}
-impl<'a> SetSpan for AssignPatProp<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn declare<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 72usize) as u32) & 255u32;
+        raw != 0
     }
-}
-impl<'a> GetSpan for Ident<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_id<'a>(self, ast: &mut crate::Ast<'a>, id: TsModuleName) {
+        let field_val: u32 = id.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> SetSpan for Ident<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: Option<TsModuleBody>) {
+        let field_val: u32 = body.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
-}
-impl<'a> GetSpan for IdentName<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_kind<'a>(self, ast: &mut crate::Ast<'a>, kind: TsModuleDeclarationKind) {
+        let field_val: u32 = kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
-}
-impl<'a> SetSpan for IdentName<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_declare<'a>(self, ast: &mut crate::Ast<'a>, declare: bool) {
+        let field_val: u32 = declare as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920937259259921475672238718975u128)
+            | (((field_val as u128) & 255u128) << 72usize);
     }
 }
-impl<'a> GetSpan for PrivateName<'a> {
+impl TsModuleBlock {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<StatementListItem> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
-}
-impl<'a> SetSpan for PrivateName<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: TypedSubRange<StatementListItem>) {
+        let field_val: u64 = unsafe { body.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
 }
-impl<'a> Lit<'a> {
+impl TsGlobalDeclaration {
     #[inline]
-    pub const fn is_str(&self) -> bool {
-        matches!(self, Self::Str { .. })
+    pub fn id<'a>(self, ast: &crate::Ast<'a>) -> IdentifierName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        IdentifierName(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_bool(&self) -> bool {
-        matches!(self, Self::Bool { .. })
+    pub fn body<'a>(self, ast: &crate::Ast<'a>) -> TsModuleBlock {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        TsModuleBlock(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_null(&self) -> bool {
-        matches!(self, Self::Null { .. })
+    pub fn declare<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub const fn is_num(&self) -> bool {
-        matches!(self, Self::Num { .. })
+    pub fn set_id<'a>(self, ast: &mut crate::Ast<'a>, id: IdentifierName) {
+        let field_val: u32 = id.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub const fn is_big_int(&self) -> bool {
-        matches!(self, Self::BigInt { .. })
+    pub fn set_body<'a>(self, ast: &mut crate::Ast<'a>, body: TsModuleBlock) {
+        let field_val: u32 = body.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
     #[inline]
-    pub const fn is_regex(&self) -> bool {
-        matches!(self, Self::Regex { .. })
+    pub fn set_declare<'a>(self, ast: &mut crate::Ast<'a>, declare: bool) {
+        let field_val: u32 = declare as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
+}
+impl TsParameterProperty {
     #[inline]
-    pub fn as_str(&self) -> Option<&Str<'a>> {
-        match self {
-            Self::Str(it) => Some(it),
-            _ => None,
-        }
+    pub fn decorators<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<Decorator> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub fn as_bool(&self) -> Option<&Bool> {
-        match self {
-            Self::Bool(it) => Some(it),
-            _ => None,
-        }
+    pub fn parameter<'a>(self, ast: &crate::Ast<'a>) -> BindingPattern {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        BindingPattern(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_null(&self) -> Option<&Null> {
-        match self {
-            Self::Null(it) => Some(it),
-            _ => None,
-        }
+    pub fn r#override<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_num(&self) -> Option<&Number<'a>> {
-        match self {
-            Self::Num(it) => Some(it),
-            _ => None,
-        }
+    pub fn readonly<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 104usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_big_int(&self) -> Option<&BigInt<'a>> {
-        match self {
-            Self::BigInt(it) => Some(it),
-            _ => None,
-        }
+    pub fn accessibility<'a>(self, ast: &crate::Ast<'a>) -> Accessibility {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 112usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, Accessibility>(raw as u8) }
     }
     #[inline]
-    pub fn as_regex(&self) -> Option<&Regex<'a>> {
-        match self {
-            Self::Regex(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_decorators<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        decorators: TypedSubRange<Decorator>,
+    ) {
+        let field_val: u64 = unsafe { decorators.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_str(&mut self) -> Option<&mut Str<'a>> {
-        match self {
-            Self::Str(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_parameter<'a>(self, ast: &mut crate::Ast<'a>, parameter: BindingPattern) {
+        let field_val: u32 = parameter.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
     #[inline]
-    pub fn as_mut_bool(&mut self) -> Option<&mut Bool> {
-        match self {
-            Self::Bool(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_override<'a>(self, ast: &mut crate::Ast<'a>, r#override: bool) {
+        let field_val: u32 = r#override as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282346717757022325968521078060875775u128)
+            | (((field_val as u128) & 255u128) << 96usize);
     }
     #[inline]
-    pub fn as_mut_null(&mut self) -> Option<&mut Null> {
-        match self {
-            Self::Null(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_readonly<'a>(self, ast: &mut crate::Ast<'a>, readonly: bool) {
+        let field_val: u32 = readonly as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340277194906489532287416500882690277375u128)
+            | (((field_val as u128) & 255u128) << 104usize);
     }
     #[inline]
-    pub fn as_mut_num(&mut self) -> Option<&mut Number<'a>> {
-        match self {
-            Self::Num(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_accessibility<'a>(self, ast: &mut crate::Ast<'a>, accessibility: Accessibility) {
+        let field_val: u32 = accessibility as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 338958331222012082418099330867817086975u128)
+            | (((field_val as u128) & 255u128) << 112usize);
     }
+}
+impl TsThisParameter {
     #[inline]
-    pub fn as_mut_big_int(&mut self) -> Option<&mut BigInt<'a>> {
-        match self {
-            Self::BigInt(it) => Some(it),
-            _ => None,
-        }
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeAnnotation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeAnnotation(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_mut_regex(&mut self) -> Option<&mut Regex<'a>> {
-        match self {
-            Self::Regex(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_annotation<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_annotation: Option<TsTypeAnnotation>,
+    ) {
+        let field_val: u32 = type_annotation.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }
-impl<'a> GetSpan for Lit<'a> {
+impl TsAsExpression {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Str(it) => it.span(),
-            Self::Bool(it) => it.span(),
-            Self::Null(it) => it.span(),
-            Self::Num(it) => it.span(),
-            Self::BigInt(it) => it.span(),
-            Self::Regex(it) => it.span(),
-        }
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for Lit<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Str(it) => it.set_span(span),
-            Self::Bool(it) => it.set_span(span),
-            Self::Null(it) => it.set_span(span),
-            Self::Num(it) => it.set_span(span),
-            Self::BigInt(it) => it.set_span(span),
-            Self::Regex(it) => it.set_span(span),
-        }
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for Str<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> SetSpan for Str<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_type_annotation<'a>(self, ast: &mut crate::Ast<'a>, type_annotation: TsType) {
+        let field_val: u32 = type_annotation.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
 }
-impl GetSpan for Bool {
+impl TsSatisfiesExpression {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl SetSpan for Bool {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
-}
-impl GetSpan for Null {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl SetSpan for Null {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_type_annotation<'a>(self, ast: &mut crate::Ast<'a>, type_annotation: TsType) {
+        let field_val: u32 = type_annotation.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
 }
-impl<'a> GetSpan for Number<'a> {
+impl TsTypeAssertion {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn type_annotation<'a>(self, ast: &crate::Ast<'a>) -> TsType {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        TsType(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for Number<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for BigInt<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_type_annotation<'a>(self, ast: &mut crate::Ast<'a>, type_annotation: TsType) {
+        let field_val: u32 = type_annotation.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> SetSpan for BigInt<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
 }
-impl<'a> GetSpan for Regex<'a> {
+impl TsNonNullExpression {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for Regex<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }
-impl<'a> JSXObject<'a> {
+impl TsInstantiationExpression {
     #[inline]
-    pub const fn is_jsx_member_expr(&self) -> bool {
-        matches!(self, Self::JSXMemberExpr { .. })
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub const fn is_ident(&self) -> bool {
-        matches!(self, Self::Ident { .. })
+    pub fn type_arguments<'a>(self, ast: &crate::Ast<'a>) -> TsTypeParameterInstantiation {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        TsTypeParameterInstantiation(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_jsx_member_expr(&self) -> Option<&JSXMemberExpr<'a>> {
-        match self {
-            Self::JSXMemberExpr(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub fn as_ident(&self) -> Option<&Ident<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_arguments<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_arguments: TsTypeParameterInstantiation,
+    ) {
+        let field_val: u32 = type_arguments.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
+}
+impl TsExportAssignment {
     #[inline]
-    pub fn as_mut_jsx_member_expr(&mut self) -> Option<&mut JSXMemberExpr<'a>> {
-        match self {
-            Self::JSXMemberExpr(it) => Some(it),
-            _ => None,
-        }
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_ident(&mut self) -> Option<&mut Ident<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }
-impl<'a> GetSpan for JSXObject<'a> {
+impl TsNamespaceExportDeclaration {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::JSXMemberExpr(it) => it.span(),
-            Self::Ident(it) => it.span(),
-        }
+    pub fn id<'a>(self, ast: &crate::Ast<'a>) -> IdentifierName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        IdentifierName(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for JSXObject<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::JSXMemberExpr(it) => it.set_span(span),
-            Self::Ident(it) => it.set_span(span),
-        }
+    pub fn set_id<'a>(self, ast: &mut crate::Ast<'a>, id: IdentifierName) {
+        let field_val: u32 = id.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }
-impl<'a> GetSpan for JSXMemberExpr<'a> {
+impl TsImportEqualsDeclaration {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn id<'a>(self, ast: &crate::Ast<'a>) -> BindingIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        BindingIdentifier(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for JSXMemberExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn module_reference<'a>(self, ast: &crate::Ast<'a>) -> TsModuleReference {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        TsModuleReference(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for JSXNamespacedName<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn import_kind<'a>(self, ast: &crate::Ast<'a>) -> ImportOrExportKind {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 255u32;
+        unsafe { std::mem::transmute::<u8, ImportOrExportKind>(raw as u8) }
     }
-}
-impl<'a> SetSpan for JSXNamespacedName<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_id<'a>(self, ast: &mut crate::Ast<'a>, id: BindingIdentifier) {
+        let field_val: u32 = id.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl GetSpan for JSXEmptyExpr {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_module_reference<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        module_reference: TsModuleReference,
+    ) {
+        let field_val: u32 = module_reference.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
-}
-impl SetSpan for JSXEmptyExpr {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_import_kind<'a>(self, ast: &mut crate::Ast<'a>, import_kind: ImportOrExportKind) {
+        let field_val: u32 = import_kind as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458759454868635832549375u128)
+            | (((field_val as u128) & 255u128) << 64usize);
     }
 }
-impl<'a> GetSpan for JSXExprContainer<'a> {
+impl TsExternalModuleReference {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> StringLiteral {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        StringLiteral(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> SetSpan for JSXExprContainer<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: StringLiteral) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }
-impl<'a> JSXExpr<'a> {
+impl JsxElementName {
     #[inline]
-    pub const fn is_jsx_empty_expr(&self) -> bool {
-        matches!(self, Self::JSXEmptyExpr { .. })
+    pub fn is_jsx_identifier(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxIdentifier
     }
     #[inline]
-    pub const fn is_expr(&self) -> bool {
-        matches!(self, Self::Expr { .. })
+    pub fn is_jsx_namespaced_name(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxNamespacedName
     }
     #[inline]
-    pub fn as_jsx_empty_expr(&self) -> Option<&JSXEmptyExpr> {
-        match self {
-            Self::JSXEmptyExpr(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_jsx_member_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxMemberExpression
     }
     #[inline]
-    pub fn as_expr(&self) -> Option<&Expr<'a>> {
-        match self {
-            Self::Expr(it) => Some(it),
+    pub fn as_jsx_identifier(self, ast: &Ast<'_>) -> Option<JsxIdentifier> {
+        match ast.jsx_element_name_data(self) {
+            JsxElementNameData::JsxIdentifier(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_jsx_empty_expr(&mut self) -> Option<&mut JSXEmptyExpr> {
-        match self {
-            Self::JSXEmptyExpr(it) => Some(it),
+    pub fn as_jsx_namespaced_name(self, ast: &Ast<'_>) -> Option<JsxNamespacedName> {
+        match ast.jsx_element_name_data(self) {
+            JsxElementNameData::JsxNamespacedName(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_expr(&mut self) -> Option<&mut Expr<'a>> {
-        match self {
-            Self::Expr(it) => Some(it),
+    pub fn as_jsx_member_expression(self, ast: &Ast<'_>) -> Option<JsxMemberExpression> {
+        match ast.jsx_element_name_data(self) {
+            JsxElementNameData::JsxMemberExpression(it) => Some(it),
             _ => None,
         }
     }
 }
-impl<'a> GetSpan for JSXExpr<'a> {
+impl JsxMemberExpressionObject {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::JSXEmptyExpr(it) => it.span(),
-            Self::Expr(it) => it.span(),
-        }
+    pub fn is_jsx_identifier(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxIdentifier
     }
-}
-impl<'a> SetSpan for JSXExpr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::JSXEmptyExpr(it) => it.set_span(span),
-            Self::Expr(it) => it.set_span(span),
-        }
+    pub fn is_jsx_member_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxMemberExpression
     }
-}
-impl<'a> GetSpan for JSXSpreadChild<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_jsx_identifier(self, ast: &Ast<'_>) -> Option<JsxIdentifier> {
+        match ast.jsx_member_expression_object_data(self) {
+            JsxMemberExpressionObjectData::JsxIdentifier(it) => Some(it),
+            _ => None,
+        }
     }
-}
-impl<'a> SetSpan for JSXSpreadChild<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn as_jsx_member_expression(self, ast: &Ast<'_>) -> Option<JsxMemberExpression> {
+        match ast.jsx_member_expression_object_data(self) {
+            JsxMemberExpressionObjectData::JsxMemberExpression(it) => Some(it),
+            _ => None,
+        }
     }
 }
-impl<'a> JSXElementName<'a> {
+impl JsxAttributeName {
     #[inline]
-    pub const fn is_ident(&self) -> bool {
-        matches!(self, Self::Ident { .. })
+    pub fn is_jsx_identifier(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxIdentifier
     }
     #[inline]
-    pub const fn is_jsx_member_expr(&self) -> bool {
-        matches!(self, Self::JSXMemberExpr { .. })
+    pub fn is_jsx_namespaced_name(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxNamespacedName
     }
     #[inline]
-    pub const fn is_jsx_namespaced_name(&self) -> bool {
-        matches!(self, Self::JSXNamespacedName { .. })
-    }
-    #[inline]
-    pub fn as_ident(&self) -> Option<&Ident<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
+    pub fn as_jsx_identifier(self, ast: &Ast<'_>) -> Option<JsxIdentifier> {
+        match ast.jsx_attribute_name_data(self) {
+            JsxAttributeNameData::JsxIdentifier(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_jsx_member_expr(&self) -> Option<&JSXMemberExpr<'a>> {
-        match self {
-            Self::JSXMemberExpr(it) => Some(it),
+    pub fn as_jsx_namespaced_name(self, ast: &Ast<'_>) -> Option<JsxNamespacedName> {
+        match ast.jsx_attribute_name_data(self) {
+            JsxAttributeNameData::JsxNamespacedName(it) => Some(it),
             _ => None,
         }
     }
+}
+impl JsxAttributeItem {
     #[inline]
-    pub fn as_jsx_namespaced_name(&self) -> Option<&JSXNamespacedName<'a>> {
-        match self {
-            Self::JSXNamespacedName(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_jsx_attribute(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxAttribute
     }
     #[inline]
-    pub fn as_mut_ident(&mut self) -> Option<&mut Ident<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
-            _ => None,
-        }
+    pub fn is_jsx_spread_attribute(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxSpreadAttribute
     }
     #[inline]
-    pub fn as_mut_jsx_member_expr(&mut self) -> Option<&mut JSXMemberExpr<'a>> {
-        match self {
-            Self::JSXMemberExpr(it) => Some(it),
+    pub fn as_jsx_attribute(self, ast: &Ast<'_>) -> Option<JsxAttribute> {
+        match ast.jsx_attribute_item_data(self) {
+            JsxAttributeItemData::JsxAttribute(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_jsx_namespaced_name(&mut self) -> Option<&mut JSXNamespacedName<'a>> {
-        match self {
-            Self::JSXNamespacedName(it) => Some(it),
+    pub fn as_jsx_spread_attribute(self, ast: &Ast<'_>) -> Option<JsxSpreadAttribute> {
+        match ast.jsx_attribute_item_data(self) {
+            JsxAttributeItemData::JsxSpreadAttribute(it) => Some(it),
             _ => None,
-        }
-    }
-}
-impl<'a> GetSpan for JSXElementName<'a> {
-    #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Ident(it) => it.span(),
-            Self::JSXMemberExpr(it) => it.span(),
-            Self::JSXNamespacedName(it) => it.span(),
-        }
-    }
-}
-impl<'a> SetSpan for JSXElementName<'a> {
-    #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Ident(it) => it.set_span(span),
-            Self::JSXMemberExpr(it) => it.set_span(span),
-            Self::JSXNamespacedName(it) => it.set_span(span),
         }
     }
 }
-impl<'a> GetSpan for JSXOpeningElement<'a> {
+impl JsxAttributeValue {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_string_literal(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::StringLiteral
     }
-}
-impl<'a> SetSpan for JSXOpeningElement<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_jsx_expression_container(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxExpressionContainer
     }
-}
-impl<'a> JSXAttrOrSpread<'a> {
     #[inline]
-    pub const fn is_jsx_attr(&self) -> bool {
-        matches!(self, Self::JSXAttr { .. })
+    pub fn is_jsx_element(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxElement
     }
     #[inline]
-    pub const fn is_spread_element(&self) -> bool {
-        matches!(self, Self::SpreadElement { .. })
+    pub fn is_jsx_fragment(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxFragment
     }
     #[inline]
-    pub fn as_jsx_attr(&self) -> Option<&JSXAttr<'a>> {
-        match self {
-            Self::JSXAttr(it) => Some(it),
+    pub fn as_string_literal(self, ast: &Ast<'_>) -> Option<StringLiteral> {
+        match ast.jsx_attribute_value_data(self) {
+            JsxAttributeValueData::StringLiteral(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_spread_element(&self) -> Option<&SpreadElement<'a>> {
-        match self {
-            Self::SpreadElement(it) => Some(it),
+    pub fn as_jsx_expression_container(self, ast: &Ast<'_>) -> Option<JsxExpressionContainer> {
+        match ast.jsx_attribute_value_data(self) {
+            JsxAttributeValueData::JsxExpressionContainer(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_jsx_attr(&mut self) -> Option<&mut JSXAttr<'a>> {
-        match self {
-            Self::JSXAttr(it) => Some(it),
+    pub fn as_jsx_element(self, ast: &Ast<'_>) -> Option<JsxElement> {
+        match ast.jsx_attribute_value_data(self) {
+            JsxAttributeValueData::JsxElement(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_spread_element(&mut self) -> Option<&mut SpreadElement<'a>> {
-        match self {
-            Self::SpreadElement(it) => Some(it),
+    pub fn as_jsx_fragment(self, ast: &Ast<'_>) -> Option<JsxFragment> {
+        match ast.jsx_attribute_value_data(self) {
+            JsxAttributeValueData::JsxFragment(it) => Some(it),
             _ => None,
         }
     }
 }
-impl<'a> GetSpan for JSXAttrOrSpread<'a> {
+impl JsxExpression {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::JSXAttr(it) => it.span(),
-            Self::SpreadElement(it) => it.span(),
-        }
+    pub fn is_expr(self, ast: &Ast<'_>) -> bool {
+        matches!(
+            ast.node_kind(self.0),
+            NodeKind::IdentifierReference
+                | NodeKind::ThisExpression
+                | NodeKind::Super
+                | NodeKind::MetaProperty
+                | NodeKind::StringLiteral
+                | NodeKind::NumericLiteral
+                | NodeKind::BigIntLiteral
+                | NodeKind::BooleanLiteral
+                | NodeKind::NullLiteral
+                | NodeKind::RegExpLiteral
+                | NodeKind::TemplateLiteral
+                | NodeKind::BinaryExpression
+                | NodeKind::LogicalExpression
+                | NodeKind::UnaryExpression
+                | NodeKind::UpdateExpression
+                | NodeKind::AssignmentExpression
+                | NodeKind::ConditionalExpression
+                | NodeKind::SequenceExpression
+                | NodeKind::MemberExpression
+                | NodeKind::CallExpression
+                | NodeKind::ChainExpression
+                | NodeKind::NewExpression
+                | NodeKind::TaggedTemplateExpression
+                | NodeKind::ArrowFunctionExpression
+                | NodeKind::ArrayExpression
+                | NodeKind::ObjectExpression
+                | NodeKind::ParenthesizedExpression
+                | NodeKind::Function
+                | NodeKind::Class
+                | NodeKind::ImportExpression
+                | NodeKind::AwaitExpression
+                | NodeKind::YieldExpression
+                | NodeKind::PrivateIdentifier
+                | NodeKind::TsAsExpression
+                | NodeKind::TsSatisfiesExpression
+                | NodeKind::TsTypeAssertion
+                | NodeKind::TsNonNullExpression
+                | NodeKind::TsInstantiationExpression
+                | NodeKind::JsxElement
+                | NodeKind::JsxFragment
+        )
     }
-}
-impl<'a> SetSpan for JSXAttrOrSpread<'a> {
+    #[inline]
+    pub fn is_jsx_empty_expression(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxEmptyExpression
+    }
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::JSXAttr(it) => it.set_span(span),
-            Self::SpreadElement(it) => it.set_span(span),
+    pub fn as_expr(self, ast: &Ast<'_>) -> Option<Expr> {
+        match ast.jsx_expression_data(self) {
+            JsxExpressionData::Expr(it) => Some(it),
+            _ => None,
         }
     }
-}
-impl<'a> GetSpan for JSXClosingElement<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn as_jsx_empty_expression(self, ast: &Ast<'_>) -> Option<JsxEmptyExpression> {
+        match ast.jsx_expression_data(self) {
+            JsxExpressionData::JsxEmptyExpression(it) => Some(it),
+            _ => None,
+        }
     }
 }
-impl<'a> SetSpan for JSXClosingElement<'a> {
+impl JsxChild {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_jsx_text(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxText
     }
-}
-impl<'a> GetSpan for JSXAttr<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn is_jsx_expression_container(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxExpressionContainer
     }
-}
-impl<'a> SetSpan for JSXAttr<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn is_jsx_spread_child(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxSpreadChild
     }
-}
-impl<'a> JSXAttrName<'a> {
     #[inline]
-    pub const fn is_ident(&self) -> bool {
-        matches!(self, Self::Ident { .. })
+    pub fn is_jsx_element(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxElement
     }
     #[inline]
-    pub const fn is_jsx_namespaced_name(&self) -> bool {
-        matches!(self, Self::JSXNamespacedName { .. })
+    pub fn is_jsx_fragment(self, ast: &Ast<'_>) -> bool {
+        ast.node_kind(self.0) == NodeKind::JsxFragment
     }
     #[inline]
-    pub fn as_ident(&self) -> Option<&IdentName<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
+    pub fn as_jsx_text(self, ast: &Ast<'_>) -> Option<JsxText> {
+        match ast.jsx_child_data(self) {
+            JsxChildData::JsxText(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_jsx_namespaced_name(&self) -> Option<&JSXNamespacedName<'a>> {
-        match self {
-            Self::JSXNamespacedName(it) => Some(it),
+    pub fn as_jsx_expression_container(self, ast: &Ast<'_>) -> Option<JsxExpressionContainer> {
+        match ast.jsx_child_data(self) {
+            JsxChildData::JsxExpressionContainer(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_ident(&mut self) -> Option<&mut IdentName<'a>> {
-        match self {
-            Self::Ident(it) => Some(it),
+    pub fn as_jsx_spread_child(self, ast: &Ast<'_>) -> Option<JsxSpreadChild> {
+        match ast.jsx_child_data(self) {
+            JsxChildData::JsxSpreadChild(it) => Some(it),
             _ => None,
         }
     }
     #[inline]
-    pub fn as_mut_jsx_namespaced_name(&mut self) -> Option<&mut JSXNamespacedName<'a>> {
-        match self {
-            Self::JSXNamespacedName(it) => Some(it),
+    pub fn as_jsx_element(self, ast: &Ast<'_>) -> Option<JsxElement> {
+        match ast.jsx_child_data(self) {
+            JsxChildData::JsxElement(it) => Some(it),
             _ => None,
         }
     }
-}
-impl<'a> GetSpan for JSXAttrName<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Ident(it) => it.span(),
-            Self::JSXNamespacedName(it) => it.span(),
+    pub fn as_jsx_fragment(self, ast: &Ast<'_>) -> Option<JsxFragment> {
+        match ast.jsx_child_data(self) {
+            JsxChildData::JsxFragment(it) => Some(it),
+            _ => None,
         }
     }
 }
-impl<'a> SetSpan for JSXAttrName<'a> {
+impl JsxElement {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Ident(it) => it.set_span(span),
-            Self::JSXNamespacedName(it) => it.set_span(span),
-        }
+    pub fn opening_element<'a>(self, ast: &crate::Ast<'a>) -> JsxOpeningElement {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        JsxOpeningElement(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> JSXAttrValue<'a> {
     #[inline]
-    pub const fn is_str(&self) -> bool {
-        matches!(self, Self::Str { .. })
+    pub fn children<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<JsxChild> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub const fn is_jsx_expr_container(&self) -> bool {
-        matches!(self, Self::JSXExprContainer { .. })
+    pub fn closing_element<'a>(self, ast: &crate::Ast<'a>) -> Option<JsxClosingElement> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| JsxClosingElement(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub const fn is_jsx_element(&self) -> bool {
-        matches!(self, Self::JSXElement { .. })
+    pub fn set_opening_element<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        opening_element: JsxOpeningElement,
+    ) {
+        let field_val: u32 = opening_element.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
     }
     #[inline]
-    pub const fn is_jsx_fragment(&self) -> bool {
-        matches!(self, Self::JSXFragment { .. })
+    pub fn set_children<'a>(self, ast: &mut crate::Ast<'a>, children: TypedSubRange<JsxChild>) {
+        let field_val: u64 = unsafe { children.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
     #[inline]
-    pub fn as_str(&self) -> Option<&Str<'a>> {
-        match self {
-            Self::Str(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_closing_element<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        closing_element: Option<JsxClosingElement>,
+    ) {
+        let field_val: u32 = closing_element.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 79228162514264337593543950335u128)
+            | (((field_val as u128) & 4294967295u128) << 96usize);
     }
+}
+impl JsxOpeningElement {
     #[inline]
-    pub fn as_jsx_expr_container(&self) -> Option<&JSXExprContainer<'a>> {
-        match self {
-            Self::JSXExprContainer(it) => Some(it),
-            _ => None,
-        }
+    pub fn name<'a>(self, ast: &crate::Ast<'a>) -> JsxElementName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 8usize) as u32) & 4294967295u32;
+        JsxElementName(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_jsx_element(&self) -> Option<&JSXElement<'a>> {
-        match self {
-            Self::JSXElement(it) => Some(it),
-            _ => None,
-        }
+    pub fn self_closing<'a>(self, ast: &crate::Ast<'a>) -> bool {
+        let raw = ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 255u32;
+        raw != 0
     }
     #[inline]
-    pub fn as_jsx_fragment(&self) -> Option<&JSXFragment<'a>> {
-        match self {
-            Self::JSXFragment(it) => Some(it),
-            _ => None,
-        }
+    pub fn type_arguments<'a>(self, ast: &crate::Ast<'a>) -> Option<TsTypeParameterInstantiation> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 40usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| TsTypeParameterInstantiation(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_mut_str(&mut self) -> Option<&mut Str<'a>> {
-        match self {
-            Self::Str(it) => Some(it),
-            _ => None,
+    pub fn attributes<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<JsxAttributeItem> {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            ExtraDataCompact::from_extra_data(
+                *ast.extra_data.as_slice().get_unchecked(offset.index()),
+                ast,
+            )
         }
     }
     #[inline]
-    pub fn as_mut_jsx_expr_container(&mut self) -> Option<&mut JSXExprContainer<'a>> {
-        match self {
-            Self::JSXExprContainer(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_name<'a>(self, ast: &mut crate::Ast<'a>, name: JsxElementName) {
+        let field_val: u32 = name.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374606332256583935u128)
+            | (((field_val as u128) & 4294967295u128) << 8usize);
     }
     #[inline]
-    pub fn as_mut_jsx_element(&mut self) -> Option<&mut JSXElement<'a>> {
-        match self {
-            Self::JSXElement(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_self_closing<'a>(self, ast: &mut crate::Ast<'a>, self_closing: bool) {
+        let field_val: u32 = self_closing as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607431768211200u128)
+            | (((field_val as u128) & 255u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_jsx_fragment(&mut self) -> Option<&mut JSXFragment<'a>> {
-        match self {
-            Self::JSXFragment(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_type_arguments<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        type_arguments: Option<TsTypeParameterInstantiation>,
+    ) {
+        let field_val: u32 = type_arguments.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938458741008125661634625535u128)
+            | (((field_val as u128) & 4294967295u128) << 40usize);
     }
-}
-impl<'a> GetSpan for JSXAttrValue<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::Str(it) => it.span(),
-            Self::JSXExprContainer(it) => it.span(),
-            Self::JSXElement(it) => it.span(),
-            Self::JSXFragment(it) => it.span(),
-        }
+    pub fn set_attributes<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        attributes: TypedSubRange<JsxAttributeItem>,
+    ) {
+        let offset = unsafe {
+            ExtraDataId::from_usize_unchecked(
+                ((ast.nodes.data_unchecked(self.0).0 >> 96usize) as u32 as usize)
+                    .wrapping_add(0usize),
+            )
+        };
+        debug_assert!(offset.index() < ast.extra_data.len());
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(offset.index()) = attributes.to_extra_data(ast);
+        };
     }
 }
-impl<'a> SetSpan for JSXAttrValue<'a> {
+impl JsxClosingElement {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::Str(it) => it.set_span(span),
-            Self::JSXExprContainer(it) => it.set_span(span),
-            Self::JSXElement(it) => it.set_span(span),
-            Self::JSXFragment(it) => it.set_span(span),
-        }
+    pub fn name<'a>(self, ast: &crate::Ast<'a>) -> JsxElementName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        JsxElementName(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for JSXText<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_name<'a>(self, ast: &mut crate::Ast<'a>, name: JsxElementName) {
+        let field_val: u32 = name.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }
-impl<'a> SetSpan for JSXText<'a> {
+impl JsxFragment {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn opening_fragment<'a>(self, ast: &crate::Ast<'a>) -> JsxOpeningFragment {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 64usize) as u32) & 4294967295u32;
+        JsxOpeningFragment(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for JSXElement<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn children<'a>(self, ast: &crate::Ast<'a>) -> TypedSubRange<JsxChild> {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
-}
-impl<'a> SetSpan for JSXElement<'a> {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn closing_fragment<'a>(self, ast: &crate::Ast<'a>) -> JsxClosingFragment {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 96usize) as u32) & 4294967295u32;
+        JsxClosingFragment(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> JSXElementChild<'a> {
+    #[inline]
+    pub fn set_opening_fragment<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        opening_fragment: JsxOpeningFragment,
+    ) {
+        let field_val: u32 = opening_fragment.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366841710300967557013911933812735u128)
+            | (((field_val as u128) & 4294967295u128) << 64usize);
+    }
     #[inline]
-    pub const fn is_jsx_text(&self) -> bool {
-        matches!(self, Self::JSXText { .. })
+    pub fn set_children<'a>(self, ast: &mut crate::Ast<'a>, children: TypedSubRange<JsxChild>) {
+        let field_val: u64 = unsafe { children.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
     #[inline]
-    pub const fn is_jsx_expr_container(&self) -> bool {
-        matches!(self, Self::JSXExprContainer { .. })
+    pub fn set_closing_fragment<'a>(
+        self,
+        ast: &mut crate::Ast<'a>,
+        closing_fragment: JsxClosingFragment,
+    ) {
+        let field_val: u32 = closing_fragment.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 79228162514264337593543950335u128)
+            | (((field_val as u128) & 4294967295u128) << 96usize);
     }
+}
+impl JsxOpeningFragment {}
+impl JsxClosingFragment {}
+impl JsxIdentifier {
     #[inline]
-    pub const fn is_jsx_spread_child(&self) -> bool {
-        matches!(self, Self::JSXSpreadChild { .. })
+    pub fn name<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
     #[inline]
-    pub const fn is_jsx_element(&self) -> bool {
-        matches!(self, Self::JSXElement { .. })
+    pub fn set_name<'a>(self, ast: &mut crate::Ast<'a>, name: String) {
+        let field_val: u64 = unsafe { name.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
+}
+impl JsxNamespacedName {
     #[inline]
-    pub const fn is_jsx_fragment(&self) -> bool {
-        matches!(self, Self::JSXFragment { .. })
+    pub fn namespace<'a>(self, ast: &crate::Ast<'a>) -> JsxIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        JsxIdentifier(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_jsx_text(&self) -> Option<&JSXText<'a>> {
-        match self {
-            Self::JSXText(it) => Some(it),
-            _ => None,
-        }
+    pub fn name<'a>(self, ast: &crate::Ast<'a>) -> JsxIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        JsxIdentifier(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_jsx_expr_container(&self) -> Option<&JSXExprContainer<'a>> {
-        match self {
-            Self::JSXExprContainer(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_namespace<'a>(self, ast: &mut crate::Ast<'a>, namespace: JsxIdentifier) {
+        let field_val: u32 = namespace.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub fn as_jsx_spread_child(&self) -> Option<&JSXSpreadChild<'a>> {
-        match self {
-            Self::JSXSpreadChild(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_name<'a>(self, ast: &mut crate::Ast<'a>, name: JsxIdentifier) {
+        let field_val: u32 = name.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
+}
+impl JsxMemberExpression {
     #[inline]
-    pub fn as_jsx_element(&self) -> Option<&JSXElement<'a>> {
-        match self {
-            Self::JSXElement(it) => Some(it),
-            _ => None,
-        }
+    pub fn object<'a>(self, ast: &crate::Ast<'a>) -> JsxMemberExpressionObject {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        JsxMemberExpressionObject(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_jsx_fragment(&self) -> Option<&JSXFragment<'a>> {
-        match self {
-            Self::JSXFragment(it) => Some(it),
-            _ => None,
-        }
+    pub fn property<'a>(self, ast: &crate::Ast<'a>) -> JsxIdentifier {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        JsxIdentifier(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_jsx_text(&mut self) -> Option<&mut JSXText<'a>> {
-        match self {
-            Self::JSXText(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_object<'a>(self, ast: &mut crate::Ast<'a>, object: JsxMemberExpressionObject) {
+        let field_val: u32 = object.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
     #[inline]
-    pub fn as_mut_jsx_expr_container(&mut self) -> Option<&mut JSXExprContainer<'a>> {
-        match self {
-            Self::JSXExprContainer(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_property<'a>(self, ast: &mut crate::Ast<'a>, property: JsxIdentifier) {
+        let field_val: u32 = property.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
+}
+impl JsxAttribute {
     #[inline]
-    pub fn as_mut_jsx_spread_child(&mut self) -> Option<&mut JSXSpreadChild<'a>> {
-        match self {
-            Self::JSXSpreadChild(it) => Some(it),
-            _ => None,
-        }
+    pub fn name<'a>(self, ast: &crate::Ast<'a>) -> JsxAttributeName {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        JsxAttributeName(NodeId::from_raw_unchecked(raw))
     }
     #[inline]
-    pub fn as_mut_jsx_element(&mut self) -> Option<&mut JSXElement<'a>> {
-        match self {
-            Self::JSXElement(it) => Some(it),
-            _ => None,
-        }
+    pub fn value<'a>(self, ast: &crate::Ast<'a>) -> Option<JsxAttributeValue> {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 32usize) as u32) & 4294967295u32;
+        (raw != u32::MAX).then(|| JsxAttributeValue(NodeId::from_raw_unchecked(raw)))
     }
     #[inline]
-    pub fn as_mut_jsx_fragment(&mut self) -> Option<&mut JSXFragment<'a>> {
-        match self {
-            Self::JSXFragment(it) => Some(it),
-            _ => None,
-        }
+    pub fn set_name<'a>(self, ast: &mut crate::Ast<'a>, name: JsxAttributeName) {
+        let field_val: u32 = name.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
-}
-impl<'a> GetSpan for JSXElementChild<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        match self {
-            Self::JSXText(it) => it.span(),
-            Self::JSXExprContainer(it) => it.span(),
-            Self::JSXSpreadChild(it) => it.span(),
-            Self::JSXElement(it) => it.span(),
-            Self::JSXFragment(it) => it.span(),
-        }
+    pub fn set_value<'a>(self, ast: &mut crate::Ast<'a>, value: Option<JsxAttributeValue>) {
+        let field_val: u32 = value.map_or(u32::MAX, |node| node.node_id().index() as u32);
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863362353627135u128)
+            | (((field_val as u128) & 4294967295u128) << 32usize);
     }
 }
-impl<'a> SetSpan for JSXElementChild<'a> {
+impl JsxSpreadAttribute {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        match self {
-            Self::JSXText(it) => it.set_span(span),
-            Self::JSXExprContainer(it) => it.set_span(span),
-            Self::JSXSpreadChild(it) => it.set_span(span),
-            Self::JSXElement(it) => it.set_span(span),
-            Self::JSXFragment(it) => it.set_span(span),
-        }
+    pub fn argument<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
     }
-}
-impl<'a> GetSpan for JSXFragment<'a> {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_argument<'a>(self, ast: &mut crate::Ast<'a>, argument: Expr) {
+        let field_val: u32 = argument.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }
-impl<'a> SetSpan for JSXFragment<'a> {
+impl JsxExpressionContainer {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> JsxExpression {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        JsxExpression(NodeId::from_raw_unchecked(raw))
     }
-}
-impl GetSpan for JSXOpeningFragment {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: JsxExpression) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }
-impl SetSpan for JSXOpeningFragment {
+impl JsxEmptyExpression {}
+impl JsxText {
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn value<'a>(self, ast: &crate::Ast<'a>) -> String {
+        let raw = (unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u64;
+        unsafe { ExtraDataCompact::from_extra_data(ExtraData { other: raw }, ast) }
     }
-}
-impl GetSpan for JSXClosingFragment {
     #[inline]
-    fn span(&self) -> Span {
-        self.span
+    pub fn set_value<'a>(self, ast: &mut crate::Ast<'a>, value: String) {
+        let field_val: u64 = unsafe { value.to_extra_data(ast).other };
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463444927863358058659840u128)
+            | (((field_val as u128) & 18446744073709551615u128) << 0usize);
     }
 }
-impl SetSpan for JSXClosingFragment {
+impl JsxSpreadChild {
+    #[inline]
+    pub fn expression<'a>(self, ast: &crate::Ast<'a>) -> Expr {
+        let raw =
+            ((unsafe { ast.nodes.data_unchecked(self.0).0 } >> 0usize) as u32) & 4294967295u32;
+        Expr(NodeId::from_raw_unchecked(raw))
+    }
     #[inline]
-    fn set_span(&mut self, span: Span) {
-        self.span = span;
+    pub fn set_expression<'a>(self, ast: &mut crate::Ast<'a>, expression: Expr) {
+        let field_val: u32 = expression.node_id().index() as u32;
+        let payload = unsafe { ast.nodes.data_mut_unchecked(self.0) };
+        payload.0 = (payload.0 & 340282366920938463463374607427473244160u128)
+            | (((field_val as u128) & 4294967295u128) << 0usize);
     }
 }

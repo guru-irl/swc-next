@@ -1,40 +1,185 @@
 use crate::{
-    AssignOp, BinaryOp, ImportPhase, MetaPropKind, MethodKind, Span, UnaryOp, UpdateOp, VarDeclKind,
+    Accessibility, AssignmentOperator, Ast, BinaryOperator, ClassType, FormalParameterKind,
+    FunctionType, ImportOrExportKind, ImportPhase, LogicalOperator, MethodDefinitionKind, NodeId,
+    NodeKind, NumericLiteralKind, PropertyKind, ScopeId, SourceType, Span, String as AstString,
+    SymbolId, TsMappedTypeModifier, TsMethodSignatureKind, TsModuleDeclarationKind,
+    TsTypeOperatorKind, UnaryOperator, UpdateOperator, VariableKind, Visit, VisitMut, VisitMutWith,
+    VisitWith,
 };
 
-use crate::{Visit, VisitMut, VisitMutWith, VisitWith};
-use swc_experimental_allocator::atom::{Atom, Wtf8Atom};
+/// Controls how traversal continues after an enter hook.
+#[must_use]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum TraverseAction {
+    /// Visit this node's children and invoke its exit hooks.
+    #[default]
+    Proceed,
+    /// Skip this node's children and exit hooks, then continue with its siblings.
+    Skip,
+    /// Stop the entire traversal immediately without invoking pending exit hooks.
+    Stop,
+}
 
-macro_rules! noop_visit_impl {
+/// Mutable AST state passed to every [`Traverse`] hook.
+pub struct TraverseCtx<'traverse, 'ast, State = ()> {
+    pub state: State,
+    pub ast: &'traverse mut Ast<'ast>,
+    path: Vec<NodeId>,
+}
+
+impl<'traverse, 'ast, State> TraverseCtx<'traverse, 'ast, State> {
+    #[inline]
+    pub fn new(ast: &'traverse mut Ast<'ast>, state: State) -> Self {
+        Self {
+            state,
+            ast,
+            path: Vec::new(),
+        }
+    }
+
+    /// Returns the concrete kind currently stored for `node_id`.
+    #[inline]
+    pub fn node_kind(&self, node_id: NodeId) -> NodeKind {
+        self.ast.node_kind(node_id)
+    }
+
+    /// Returns the path from the traversal root to the current node.
+    #[inline]
+    pub fn path(&self) -> &[NodeId] {
+        &self.path
+    }
+
+    /// Returns the current node, or `None` outside an enter/exit hook.
+    #[inline]
+    pub fn current_node(&self) -> Option<NodeId> {
+        self.ancestor(0)
+    }
+
+    /// Returns the current node's parent.
+    #[inline]
+    pub fn parent(&self) -> Option<NodeId> {
+        self.ancestor(1)
+    }
+
+    /// Returns an ancestor by distance, where zero is the current node.
+    #[inline]
+    pub fn ancestor(&self, distance: usize) -> Option<NodeId> {
+        distance
+            .checked_add(1)
+            .and_then(|offset| self.path.len().checked_sub(offset))
+            .map(|index| self.path[index])
+    }
+
+    /// Iterates from the current node toward the traversal root.
+    #[inline]
+    pub fn ancestors(&self) -> impl DoubleEndedIterator<Item = NodeId> + '_ {
+        self.path.iter().rev().copied()
+    }
+
+    /// Returns zero for the root node, one for its direct children, and so on.
+    #[inline]
+    pub fn depth(&self) -> usize {
+        self.path.len().saturating_sub(1)
+    }
+
+    #[inline]
+    pub(crate) fn push_node(&mut self, node_id: NodeId) {
+        self.path.push(node_id);
+    }
+
+    #[inline]
+    pub(crate) fn pop_node(&mut self, expected: NodeId) {
+        let actual = self.path.pop();
+        debug_assert_eq!(actual, Some(expected));
+    }
+}
+
+macro_rules! dummy_visit_mut_impl {
     ($ty:ty) => {
         impl<'a, V: ?Sized + Visit<'a>> VisitWith<'a, V> for $ty {
             #[inline]
-            fn visit_with(&self, _visitor: &mut V) {}
+            fn visit_with(self, _visitor: &mut V) {}
 
             #[inline]
-            fn visit_children_with(&self, _visitor: &mut V) {}
+            fn visit_children_with(self, _visitor: &mut V) {}
         }
 
         impl<'a, V: ?Sized + VisitMut<'a>> VisitMutWith<'a, V> for $ty {
             #[inline]
-            fn visit_mut_with(&mut self, _visitor: &mut V) {}
+            fn visit_mut_with(self, _visitor: &mut V) {}
 
             #[inline]
-            fn visit_mut_children_with(&mut self, _visitor: &mut V) {}
+            fn visit_mut_children_with(self, _visitor: &mut V) {}
         }
     };
 }
 
-noop_visit_impl!(bool);
-noop_visit_impl!(f64);
-noop_visit_impl!(Span);
-noop_visit_impl!(Atom<'_>);
-noop_visit_impl!(Wtf8Atom<'_>);
-noop_visit_impl!(ImportPhase);
-noop_visit_impl!(VarDeclKind);
-noop_visit_impl!(UnaryOp);
-noop_visit_impl!(UpdateOp);
-noop_visit_impl!(BinaryOp);
-noop_visit_impl!(AssignOp);
-noop_visit_impl!(MetaPropKind);
-noop_visit_impl!(MethodKind);
+dummy_visit_mut_impl!(bool);
+dummy_visit_mut_impl!(f64);
+dummy_visit_mut_impl!(Span);
+dummy_visit_mut_impl!(AstString);
+dummy_visit_mut_impl!(ScopeId);
+dummy_visit_mut_impl!(SymbolId);
+dummy_visit_mut_impl!(ImportPhase);
+dummy_visit_mut_impl!(SourceType);
+dummy_visit_mut_impl!(MethodDefinitionKind);
+dummy_visit_mut_impl!(Accessibility);
+dummy_visit_mut_impl!(ClassType);
+dummy_visit_mut_impl!(BinaryOperator);
+dummy_visit_mut_impl!(LogicalOperator);
+dummy_visit_mut_impl!(UnaryOperator);
+dummy_visit_mut_impl!(UpdateOperator);
+dummy_visit_mut_impl!(AssignmentOperator);
+dummy_visit_mut_impl!(VariableKind);
+dummy_visit_mut_impl!(FunctionType);
+dummy_visit_mut_impl!(FormalParameterKind);
+dummy_visit_mut_impl!(PropertyKind);
+dummy_visit_mut_impl!(NumericLiteralKind);
+dummy_visit_mut_impl!(ImportOrExportKind);
+dummy_visit_mut_impl!(TsTypeOperatorKind);
+dummy_visit_mut_impl!(TsMethodSignatureKind);
+dummy_visit_mut_impl!(TsModuleDeclarationKind);
+dummy_visit_mut_impl!(TsMappedTypeModifier);
+
+#[cfg(test)]
+mod tests {
+    use swc_experimental_allocator::Allocator;
+
+    use crate::{
+        Ast, NodeId, NodeKind, SourceType, Span, Traverse, TraverseAction, TraverseCtx,
+        TraverseWith, TypedSubRange,
+    };
+
+    struct NodeCounter;
+
+    impl<'a> Traverse<'a, usize> for NodeCounter {
+        fn enter_node(
+            &mut self,
+            _node_id: NodeId,
+            _kind: NodeKind,
+            ctx: &mut TraverseCtx<'_, 'a, usize>,
+        ) -> TraverseAction {
+            ctx.state += 1;
+            TraverseAction::Proceed
+        }
+    }
+
+    #[test]
+    fn traverse_carries_state() {
+        let allocator = Allocator::default();
+        let mut ast = Ast::new(b"", &allocator);
+        let program = ast.program(
+            Span::default(),
+            SourceType::default(),
+            TypedSubRange::empty(),
+            None,
+        );
+        let mut ctx = TraverseCtx::new(&mut ast, 0usize);
+
+        assert_eq!(
+            program.traverse_with(&mut NodeCounter, &mut ctx),
+            TraverseAction::Proceed
+        );
+        assert_eq!(ctx.state, 1);
+    }
+}

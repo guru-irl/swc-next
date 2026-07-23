@@ -6,6 +6,7 @@ use std::{
 
 use jwalk::WalkDir;
 use saphyr::{LoadableYamlNode, Yaml};
+use swc_experimental_ecma_ast::{Lang, SourceType};
 
 use crate::cases::{Case, fixtures};
 
@@ -13,12 +14,18 @@ use crate::cases::{Case, fixtures};
 pub struct Test262Case {
     path: PathBuf,
     code: String,
-    meta: Meta,
+    source_type: SourceType,
+    expects_error: bool,
+    name: &'static str,
 }
 
 #[derive(Debug, Default)]
 struct Meta {
     negative: Option<MetaNegative>,
+    module: bool,
+    only_strict: bool,
+    no_strict: bool,
+    raw: bool,
 }
 
 #[derive(Debug)]
@@ -47,7 +54,7 @@ impl From<&str> for Phase {
 }
 
 impl Test262Case {
-    pub fn read() -> Vec<Self> {
+    fn read_cases() -> Vec<Self> {
         let mut cases = Vec::new();
         for file in WalkDir::new(fixtures().join("test262").join("test")).parallelism(
             jwalk::Parallelism::RayonDefaultPool {
@@ -71,11 +78,40 @@ impl Test262Case {
             let Some(meta) = parse_meta(&code) else {
                 continue;
             };
-            cases.push(Self {
-                code,
-                path: file.path(),
-                meta,
-            });
+            let expects_error = meta
+                .negative
+                .as_ref()
+                .is_some_and(|negative| matches!(negative.phase, Phase::Parse | Phase::Early));
+            let path = file.path();
+            if meta.module {
+                cases.push(Self {
+                    path,
+                    code,
+                    source_type: SourceType::Module,
+                    expects_error,
+                    name: "module",
+                });
+                continue;
+            }
+
+            if !meta.only_strict {
+                cases.push(Self {
+                    path: path.clone(),
+                    code: code.clone(),
+                    source_type: SourceType::Script,
+                    expects_error,
+                    name: "sloppy",
+                });
+            }
+            if !meta.no_strict && !meta.raw {
+                cases.push(Self {
+                    path,
+                    code: format!("\"use strict\";\n{code}"),
+                    source_type: SourceType::Script,
+                    expects_error,
+                    name: "strict",
+                });
+            }
         }
 
         cases
@@ -91,6 +127,13 @@ fn parse_meta(source: &str) -> Option<Meta> {
     let Some(yaml) = yaml.first() else {
         return Some(Meta::default());
     };
+
+    let flags = yaml
+        .as_mapping_get("flags")
+        .and_then(Yaml::as_sequence)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let has_flag = |expected| flags.iter().any(|flag| flag.as_str() == Some(expected));
 
     Some(Meta {
         negative: yaml
@@ -110,39 +153,41 @@ fn parse_meta(source: &str) -> Option<Meta> {
                         .unwrap_or(Phase::Parse),
                 }
             }),
+        module: has_flag("module"),
+        only_strict: has_flag("onlyStrict"),
+        no_strict: has_flag("noStrict"),
+        raw: has_flag("raw"),
     })
 }
 
 impl Case for Test262Case {
+    const NAME: &'static str = "test262";
+
+    fn read() -> Vec<Self> {
+        Self::read_cases()
+    }
+
     fn path(&self) -> &Path {
         &self.path
+    }
+
+    fn name(&self) -> &str {
+        self.name
     }
 
     fn code(&self) -> &str {
         &self.code
     }
 
-    fn should_ignore(&self) -> bool {
-        IGNORED_TESTS.iter().any(|ignore| {
-            self.path
-                .to_string_lossy()
-                .replace('\\', "/")
-                .contains(ignore)
-        })
+    fn source_type(&self) -> SourceType {
+        self.source_type
     }
 
-    fn should_fail(&self) -> bool {
-        self.meta
-            .negative
-            .as_ref()
-            .map(|neg| neg.phase == Phase::Parse)
-            .unwrap_or(false)
+    fn lang(&self) -> Lang {
+        Lang::Js
+    }
+
+    fn expects_error(&self) -> bool {
+        self.expects_error
     }
 }
-
-const IGNORED_TESTS: &[&str] = &[
-    // Should be fixed
-    "fixtures/test262/test/language/literals/bigint/numeric-separators/numeric-separator-literal-hil-hd-nsl-hd-err.js",
-    "fixtures/test262/test/language/literals/bigint/numeric-separators/numeric-separator-literal-oil-od-nsl-od-err.js",
-    "fixtures/test262/test/language/literals/bigint/numeric-separators/numeric-separator-literal-bil-bd-nsl-bd-err.js",
-];

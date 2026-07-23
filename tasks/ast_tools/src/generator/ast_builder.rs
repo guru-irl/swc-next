@@ -5,8 +5,11 @@ use quote::{ToTokens, format_ident, quote};
 use crate::{
     AST_CRATE_PATH,
     output::{RawOutput, RustOutput, output_path},
-    schema::{AstEnum, AstStruct, AstType, Schema, TypeId},
-    util::safe_ident,
+    schema::{AstEnum, AstStruct, AstType, Schema},
+    util::{
+        EXTRA_DATA_ID_BIT_OFFSET, InlineStorageMode, calculate_inline_layout,
+        generate_field_to_u32, generate_field_to_u64, safe_ident,
+    },
 };
 
 pub fn ast_builder(schema: &Schema) -> RawOutput {
@@ -14,14 +17,14 @@ pub fn ast_builder(schema: &Schema) -> RawOutput {
     for ty in schema.types.iter() {
         match ty {
             AstType::Struct(ast_struct) => {
-                build_functions.extend(generate_build_functions_for_struct(ast_struct, schema))
+                build_functions.extend(generate_build_function_for_struct(ast_struct, schema))
             }
             AstType::Enum(ast_enum) => {
                 let mut context = RecursiveEnumContext {
-                    ret_ty: type_ref(ast_enum.type_id, schema),
+                    ret_ty: format_ident!("{}", ast_enum.name).to_token_stream(),
                     ..Default::default()
                 };
-                build_functions.extend(generate_build_functions_for_enum(
+                build_functions.extend(generate_build_function_for_enum(
                     ast_enum,
                     schema,
                     &mut context,
@@ -32,15 +35,18 @@ pub fn ast_builder(schema: &Schema) -> RawOutput {
     }
 
     let output = quote! {
-        #![allow(unused, clippy::useless_conversion, clippy::identity_op)]
-        use swc_experimental_allocator::atom::{Atom, Wtf8Atom};
-        use swc_experimental_allocator::boxed::Box;
-        use swc_experimental_allocator::vec::Vec;
-        use crate::*;
+            #![allow(
+                unused,
+                clippy::useless_conversion,
+                clippy::identity_op,
+                clippy::too_many_arguments
+            )]
+            use crate::*;
+            use oxc_index::Idx;
 
-        impl<'a> AstBuilder<'a> {
-            #build_functions
-        }
+            impl<'a> Ast<'a> {
+                #build_functions
+            }
     };
 
     RustOutput {
@@ -50,30 +56,192 @@ pub fn ast_builder(schema: &Schema) -> RawOutput {
     .into()
 }
 
-fn generate_build_functions_for_struct(ast: &AstStruct, schema: &Schema) -> TokenStream {
+fn generate_build_function_for_struct(ast: &AstStruct, schema: &Schema) -> TokenStream {
     let fn_name = safe_ident(&ast.name.to_case(Case::Snake));
-    let box_fn_name = safe_ident(&format!("box_{}", ast.name.to_case(Case::Snake)));
-    let ret_ty = type_ref(ast.type_id, schema);
-    let constructor = format_ident!("{}", ast.name);
+    let ret_ty = format_ident!("{}", ast.name);
     let fn_params = generate_fn_params_decl(ast, schema);
-    let fn_args = generate_fn_args(ast);
-    let fields = generate_struct_fields(ast);
 
-    quote! {
-        #[inline]
-        pub fn #fn_name(&self, #fn_params) -> #ret_ty {
-            #constructor {
-                #fields
+    // Check if this struct can use inline storage
+    if let Some(layout) = calculate_inline_layout(ast, schema) {
+        generate_build_function_inline(ast, schema, fn_name, ret_ty, fn_params, &layout)
+    } else {
+        generate_build_function_extra_data(ast, schema, fn_name, ret_ty, fn_params)
+    }
+}
+
+/// Generate a builder by packing fields into a u128 payload.
+fn generate_build_function_inline(
+    ast: &AstStruct,
+    schema: &Schema,
+    fn_name: syn::Ident,
+    ret_ty: syn::Ident,
+    fn_params: TokenStream,
+    layout: &crate::util::InlineLayout,
+) -> TokenStream {
+    if layout.fields.is_empty() {
+        return quote! {
+            #[inline]
+            pub fn #fn_name(&mut self, span: Span) -> #ret_ty {
+                #ret_ty(self.add_node(
+                    span,
+                    NodeKind::#ret_ty,
+                    NodePayload(0),
+                ))
             }
+        };
+    }
+
+    let mut inline_defaults = TokenStream::new();
+    let mut pack_u128 = TokenStream::new();
+
+    for &(field_idx, byte_offset, byte_size) in &layout.fields {
+        let field = &ast.fields[field_idx];
+        let mut field_name = format_ident!("{}", field.name);
+        let field_ty = &schema.types[field.type_id];
+
+        if should_default_in_builder(ast, &field.name) {
+            let default_name = format_ident!("_inline_default_{field_idx}");
+            let default_ty = field_ty.repr_ident(schema);
+            inline_defaults.extend(quote! {
+                let #default_name = <#default_ty>::default();
+            });
+            field_name = default_name;
         }
 
-        #[inline]
-        pub fn #box_fn_name(&self, #fn_params) -> Box<'a, #ret_ty> {
-            self.allocator.boxed(self.#fn_name(#fn_args))
+        let bit_offset = byte_offset * 8;
+        if byte_size == std::mem::size_of::<u64>() {
+            let field_u64 = generate_field_to_u64(field_ty, &field_name, quote!(self), schema);
+            pack_u128.extend(quote! { | ((#field_u64 as u128) << #bit_offset) });
+            continue;
+        }
+
+        let field_u32 = generate_field_to_u32(field_ty, &field_name, quote!(self), schema);
+        pack_u128.extend(quote! { | ((#field_u32 as u128) << #bit_offset) });
+    }
+
+    match layout.mode {
+        InlineStorageMode::Full => quote! {
+            #[inline]
+            pub fn #fn_name(&mut self, span: Span, #fn_params) -> #ret_ty {
+                #inline_defaults
+                #ret_ty(self.add_node(
+                    span,
+                    NodeKind::#ret_ty,
+                    NodePayload(0u128 #pack_u128),
+                ))
+            }
+        },
+        InlineStorageMode::Partial => {
+            let mut extra_data_values = Vec::new();
+
+            for (field_index, field) in ast.fields.iter().enumerate() {
+                if layout
+                    .fields
+                    .iter()
+                    .any(|(inline_index, _, _)| *inline_index == field_index)
+                {
+                    continue;
+                }
+
+                let field_name = format_ident!("{}", field.name);
+                let field_value = if should_default_in_builder(ast, &field.name) {
+                    let field_ty = schema.types[field.type_id].repr_ident(schema);
+                    quote!(<#field_ty>::default())
+                } else {
+                    quote!(#field_name)
+                };
+                extra_data_values.push(quote!(#field_value.to_extra_data(self)));
+            }
+
+            let (add_extra_data, start_id) = generate_add_extra_data(&extra_data_values);
+            let start_id = start_id.expect("partial layout must contain an extra-data field");
+
+            quote! {
+                #[inline]
+                pub fn #fn_name(&mut self, span: Span, #fn_params) -> #ret_ty {
+                    #inline_defaults
+                    #add_extra_data
+                    #ret_ty(self.add_node(
+                        span,
+                        NodeKind::#ret_ty,
+                        NodePayload(
+                            0u128
+                            #pack_u128
+                            | ((#start_id.index() as u128) << #EXTRA_DATA_ID_BIT_OFFSET)
+                        ),
+                    ))
+                }
+            }
         }
     }
 }
 
+/// Generate build function using extra_data storage (for large nodes)
+fn generate_build_function_extra_data(
+    ast: &AstStruct,
+    schema: &Schema,
+    fn_name: syn::Ident,
+    ret_ty: syn::Ident,
+    fn_params: TokenStream,
+) -> TokenStream {
+    let mut extra_data_values = Vec::new();
+    for field in &ast.fields {
+        let field_name = format_ident!("{}", field.name);
+        let field_value = if should_default_in_builder(ast, &field.name) {
+            let field_ty = schema.types[field.type_id].repr_ident(schema);
+            quote!(<#field_ty>::default())
+        } else {
+            quote!(#field_name)
+        };
+        extra_data_values.push(quote!(#field_value.to_extra_data(self)));
+    }
+
+    let (add_extra_data, start_id) = generate_add_extra_data(&extra_data_values);
+    let node_payload = match start_id {
+        Some(start_id) => {
+            quote!(NodePayload((#start_id.index() as u128) << #EXTRA_DATA_ID_BIT_OFFSET))
+        }
+        None => quote!(NodePayload(0)),
+    };
+
+    let tokens = quote! {
+        #[inline]
+        pub fn #fn_name(&mut self, span: Span, #fn_params) -> #ret_ty {
+            #add_extra_data
+
+            #ret_ty(
+                self.add_node(
+                    span,
+                    NodeKind::#ret_ty,
+                    #node_payload,
+                )
+            )
+        }
+    };
+
+    tokens
+}
+
+fn generate_add_extra_data(values: &[TokenStream]) -> (TokenStream, Option<TokenStream>) {
+    match values {
+        [] => (TokenStream::new(), None),
+        [value] => (
+            quote! {
+                let _f0 = self.add_extra(#value);
+            },
+            Some(quote!(_f0)),
+        ),
+        values => (
+            quote! {
+                let _extra_data = [#(#values),*];
+                let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+            },
+            Some(quote!(_extra_data_range.start)),
+        ),
+    }
+}
+
+// TODO: Use [crate::util::flat_enum_type]
 #[derive(Default)]
 struct RecursiveEnumContext {
     ret_ty: TokenStream,
@@ -81,7 +249,7 @@ struct RecursiveEnumContext {
     constructor: Vec<TokenStream>,
 }
 
-fn generate_build_functions_for_enum(
+fn generate_build_function_for_enum(
     ast: &AstEnum,
     schema: &Schema,
     recursive_context: &mut RecursiveEnumContext,
@@ -109,28 +277,37 @@ fn generate_build_functions_for_enum(
                     for name in recursive_context.name.iter() {
                         fn_name.push_str(name);
                     }
-                    fn_name.push_str(&ast_struct.name);
+                    let has_duplicate_payload = ast
+                        .variants
+                        .iter()
+                        .filter(|candidate| candidate.type_id == Some(payload_ty_id))
+                        .count()
+                        > 1;
+                    if has_duplicate_payload {
+                        fn_name.push_str(&variant.name);
+                    } else {
+                        fn_name.push_str(&ast_struct.name);
+                    }
                     safe_ident(&fn_name.to_case(Case::Snake))
                 };
 
                 let args = generate_fn_args(ast_struct);
-                let box_constructor =
-                    safe_ident(&format!("box_{}", ast_struct.name.to_case(Case::Snake)));
-                let body = wrap_enum_constructors(
-                    quote!( self.#box_constructor(#args) ),
-                    &recursive_context.constructor,
+                let constructor = safe_ident(&ast_struct.name.to_case(Case::Snake));
+                let body = recursive_context.constructor.iter().rev().fold(
+                    quote!( self.#constructor(span, #args).into() ),
+                    |acc, constructor| quote!(#constructor(#acc)),
                 );
 
                 let fn_params = generate_fn_params_decl(ast_struct, schema);
                 build_variants.extend(quote! {
                     #[inline]
-                    pub fn #fn_name(&self, #fn_params) -> #ret_ty {
+                    pub fn #fn_name(&mut self, span: Span, #fn_params) -> #ret_ty {
                         #body
                     }
                 });
             }
             AstType::Enum(inner_enum) => {
-                build_variants.extend(generate_build_functions_for_enum(
+                build_variants.extend(generate_build_function_for_enum(
                     inner_enum,
                     schema,
                     recursive_context,
@@ -146,58 +323,18 @@ fn generate_build_functions_for_enum(
     build_variants
 }
 
-fn wrap_enum_constructors(mut payload: TokenStream, constructors: &[TokenStream]) -> TokenStream {
-    for (index, constructor) in constructors.iter().rev().enumerate() {
-        payload = if index == 0 {
-            quote!(#constructor(#payload))
-        } else {
-            quote!(#constructor(self.allocator.boxed(#payload)))
-        };
-    }
-
-    payload
-}
-
 fn generate_fn_params_decl(ast: &AstStruct, schema: &Schema) -> TokenStream {
     let mut fields = Vec::default();
     for field in ast.fields.iter() {
         if should_default_in_builder(ast, &field.name) {
             continue;
         }
-
         let field_name = format_ident!("{}", field.name);
-        let field_ty = field_type_ref(field.type_id, schema);
+        let field_ty = schema.types[field.type_id].repr_ident(schema);
         fields.push(quote!(#field_name: #field_ty));
     }
 
     quote!( #(#fields),* )
-}
-
-fn generate_fn_args(ast: &AstStruct) -> TokenStream {
-    let mut fields = Vec::default();
-    for field in ast.fields.iter() {
-        if should_default_in_builder(ast, &field.name) {
-            continue;
-        }
-
-        let field_name = format_ident!("{}", field.name);
-        fields.push(quote!(#field_name));
-    }
-
-    quote!( #(#fields),* )
-}
-
-fn generate_struct_fields(ast: &AstStruct) -> TokenStream {
-    let fields = ast.fields.iter().map(|field| {
-        let field_name = format_ident!("{}", field.name);
-        if should_default_in_builder(ast, &field.name) {
-            quote!(#field_name: Default::default())
-        } else {
-            quote!(#field_name)
-        }
-    });
-
-    quote!(#(#fields),*)
 }
 
 fn should_default_in_builder(ast: &AstStruct, field_name: &str) -> bool {
@@ -207,105 +344,15 @@ fn should_default_in_builder(ast: &AstStruct, field_name: &str) -> bool {
     )
 }
 
-fn type_ref(type_id: TypeId, schema: &Schema) -> TokenStream {
-    match &schema.types[type_id] {
-        AstType::Struct(ast) => named_type_ref(&ast.name, type_has_lifetime(type_id, schema)),
-        AstType::Enum(ast) => named_type_ref(&ast.name, type_has_lifetime(type_id, schema)),
-        AstType::Box(ast) => {
-            let inner_ty = type_ref(ast.inner_type_id, schema);
-            quote!(Box<'a, #inner_ty>)
+fn generate_fn_args(ast: &AstStruct) -> TokenStream {
+    let mut fields = Vec::default();
+    for field in ast.fields.iter() {
+        if should_default_in_builder(ast, &field.name) {
+            continue;
         }
-        AstType::Vec(ast) => {
-            let inner_ty = type_ref(ast.inner_type_id, schema);
-            quote!(Vec<'a, #inner_ty>)
-        }
-        AstType::Option(ast) => {
-            let inner_ty = field_type_ref(ast.inner_type_id, schema);
-            quote!(Option<#inner_ty>)
-        }
-        AstType::Primitive(ast) => primitive_type_ref(ast.name),
+        let field_name = format_ident!("{}", field.name);
+        fields.push(quote!(#field_name));
     }
-}
 
-fn field_type_ref(type_id: TypeId, schema: &Schema) -> TokenStream {
-    match &schema.types[type_id] {
-        AstType::Struct(_) => {
-            let inner_ty = type_ref(type_id, schema);
-            quote!(Box<'a, #inner_ty>)
-        }
-        AstType::Enum(_) => type_ref(type_id, schema),
-        AstType::Box(ast) => {
-            let inner_ty = type_ref(ast.inner_type_id, schema);
-            quote!(Box<'a, #inner_ty>)
-        }
-        AstType::Vec(ast) => {
-            let inner_ty = type_ref(ast.inner_type_id, schema);
-            quote!(Vec<'a, #inner_ty>)
-        }
-        AstType::Option(ast) => {
-            let inner_ty = field_type_ref(ast.inner_type_id, schema);
-            quote!(Option<#inner_ty>)
-        }
-        AstType::Primitive(ast) => primitive_type_ref(ast.name),
-    }
-}
-
-fn named_type_ref(name: &str, has_lifetime: bool) -> TokenStream {
-    let ident = format_ident!("{}", name);
-    if has_lifetime {
-        quote!(#ident<'a>)
-    } else {
-        ident.into_token_stream()
-    }
-}
-
-fn primitive_type_ref(name: &str) -> TokenStream {
-    match name {
-        "Utf8Ref" | "Atom" => quote!(Atom<'a>),
-        "Wtf8Ref" | "Wtf8Atom" => quote!(Wtf8Atom<'a>),
-        "OptionalUtf8Ref" => quote!(Option<Atom<'a>>),
-        "OptionalWtf8Ref" => quote!(Option<Wtf8Atom<'a>>),
-        "swc_experimental_num_bigint::BigInt" => quote!(swc_experimental_num_bigint::BigInt<'a>),
-        "ScopeId" => quote!(ScopeId),
-        "SymbolId" => quote!(SymbolId),
-        _ => format_ident!("{}", name).into_token_stream(),
-    }
-}
-
-fn type_has_lifetime(type_id: TypeId, schema: &Schema) -> bool {
-    match &schema.types[type_id] {
-        AstType::Struct(ast) => ast
-            .fields
-            .iter()
-            .any(|field| field_type_needs_lifetime(field.type_id, schema)),
-        AstType::Enum(ast) => ast.variants.iter().any(|variant| variant.type_id.is_some()),
-        AstType::Box(_) => true,
-        AstType::Vec(_) => true,
-        AstType::Option(ast) => field_type_needs_lifetime(ast.inner_type_id, schema),
-        AstType::Primitive(ast) => primitive_type_needs_lifetime(ast.name),
-    }
-}
-
-fn field_type_needs_lifetime(type_id: TypeId, schema: &Schema) -> bool {
-    match &schema.types[type_id] {
-        AstType::Struct(_) => true,
-        AstType::Enum(_) => type_has_lifetime(type_id, schema),
-        AstType::Box(_) => true,
-        AstType::Vec(_) => true,
-        AstType::Option(ast) => field_type_needs_lifetime(ast.inner_type_id, schema),
-        AstType::Primitive(ast) => primitive_type_needs_lifetime(ast.name),
-    }
-}
-
-fn primitive_type_needs_lifetime(name: &str) -> bool {
-    matches!(
-        name,
-        "Utf8Ref"
-            | "Atom"
-            | "Wtf8Ref"
-            | "Wtf8Atom"
-            | "OptionalUtf8Ref"
-            | "OptionalWtf8Ref"
-            | "swc_experimental_num_bigint::BigInt"
-    )
+    quote!( #(#fields),* )
 }
