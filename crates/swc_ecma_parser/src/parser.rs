@@ -16,29 +16,12 @@ use crate::{
     util::{decode_identifier_escapes, decode_string_escapes},
 };
 
-/// How comments are collected: not at all, as a flat list, attached to host
-/// nodes, or both.
+/// Whether comments are attached to AST nodes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum CommentMode {
     None,
     #[default]
-    Flat,
     Attached,
-    Both,
-}
-
-impl CommentMode {
-    pub fn collects(self) -> bool {
-        self != Self::None
-    }
-
-    pub fn attaches(self) -> bool {
-        matches!(self, Self::Attached | Self::Both)
-    }
-
-    pub fn is_flat(self) -> bool {
-        matches!(self, Self::Flat | Self::Both)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -58,8 +41,7 @@ pub struct Options {
     pub allow_return_outside_function: bool,
     /// Reports semantic early errors during parsing when true.
     pub semantic_errors: bool,
-    /// Determines whether comments are collected as a flat list, attached to
-    /// AST nodes, both, or not collected.
+    /// Determines whether comments are attached to AST nodes.
     pub comments: CommentMode,
 }
 
@@ -71,7 +53,7 @@ impl Default for Options {
             preserve_parens: true,
             allow_return_outside_function: false,
             semantic_errors: false,
-            comments: CommentMode::Flat,
+            comments: CommentMode::Attached,
         }
     }
 }
@@ -524,7 +506,7 @@ pub struct Parser<'parser, 'allocator, 'source> {
     pub preserve_parens: bool,
     pub allow_return_outside_function: bool,
     pub comment_mode: CommentMode,
-    pub lexer: Lexer<'source>,
+    pub lexer: Lexer<'allocator, 'source>,
     pub diagnostics: Vec<Diagnostic<'static>>,
     pub current_token: Token,
     /// End offset of the most recently consumed token.
@@ -620,7 +602,12 @@ impl<'parser, 'allocator, 'source> Parser<'parser, 'allocator, 'source> {
             "Ast and Parser must be initialized with the same source"
         );
         ast.set_source_metadata(options.source_type, options.lang);
-        let lexer = Lexer::init(source, options.source_type, options.comments.collects());
+        let lexer = Lexer::init(
+            ast.allocator(),
+            source,
+            options.source_type,
+            options.comments == CommentMode::Attached,
+        );
         Self {
             ast,
             source,
@@ -656,9 +643,6 @@ impl<'parser, 'allocator, 'source> Parser<'parser, 'allocator, 'source> {
         self.ensure_capacity();
         let ParsedBody { directives, body } = self.parse_body(None, BodyKind::Program);
         let end = self.current_token.span.end;
-        if !self.preserve_parens {
-            strip_parenthesized_nodes(self.ast);
-        }
         let hashbang = self.lexer.hashbang.map(|hashbang| {
             let start = hashbang.start;
             let end = start + u32::from(hashbang.len);
@@ -673,6 +657,15 @@ impl<'parser, 'allocator, 'source> Parser<'parser, 'allocator, 'source> {
             hashbang,
         );
         build_line_starts(self.ast, self.source);
+        if self.comment_mode == CommentMode::Attached {
+            self.ast.set_attached_comments(&self.lexer.comments);
+        } else {
+            self.ast.set_attached_comments(&[]);
+        }
+
+        if !self.preserve_parens {
+            strip_parenthesized_nodes(self.ast);
+        }
         Some(program)
     }
 
@@ -5571,8 +5564,7 @@ impl<'parser, 'allocator, 'source> Parser<'parser, 'allocator, 'source> {
                 let element = self.add_template_element(continuation, tail, false);
                 self.scratch_a.append(element);
                 let end = continuation.span.end;
-                self.current_token = continuation;
-                self.advance()?;
+                self.advance_with_rescanned_token(continuation)?;
                 if tail {
                     break end;
                 }
@@ -7302,8 +7294,7 @@ impl<'parser, 'allocator, 'source> Parser<'parser, 'allocator, 'source> {
                 let element = self.add_template_element(continuation, tail, tagged);
                 self.scratch_a.append(element);
                 let end = continuation.span.end;
-                self.current_token = continuation;
-                self.advance()?;
+                self.advance_with_rescanned_token(continuation)?;
                 if tail {
                     break end;
                 }
@@ -9949,8 +9940,7 @@ impl<'parser, 'allocator, 'source> Parser<'parser, 'allocator, 'source> {
                     let text = self.ast.jsx_child_jsx_text(text.span, value);
                     self.scratch_b.append(text);
                 }
-                self.current_token = text;
-                self.advance()?;
+                self.advance_with_rescanned_token(text)?;
                 match self.current_token.tag {
                     TokenTag::LessThan => {
                         if self.peek_ahead()?.tag == TokenTag::Slash {
@@ -10970,6 +10960,7 @@ impl<'parser, 'allocator, 'source> Parser<'parser, 'allocator, 'source> {
     /// Use this after lexer rescan operations for JSX text, template
     /// continuations, and similar context-sensitive tokens.
     pub fn advance_with_rescanned_token(&mut self, token: Token) -> Option<()> {
+        self.lexer.handle_token(token);
         self.current_token = token;
         self.advance()
     }

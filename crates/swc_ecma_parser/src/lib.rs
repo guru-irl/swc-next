@@ -10,7 +10,7 @@ mod token;
 mod unicode_id;
 mod util;
 
-pub use lexer::{Hashbang, Lexer, LexerMode, LexicalError, RawComment, RegexResult};
+pub use lexer::{Hashbang, Lexer, LexerMode, LexicalError, RegexResult};
 pub use parser::{
     ArrayCover, BodyKind, Checkpoint, CommentMode, Context, ObjectCover, Options,
     ParenthesizedCover, Parser, ParserState, Peek, ReportOptions, ScratchBuffer, TsContext,

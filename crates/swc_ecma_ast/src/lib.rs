@@ -44,9 +44,7 @@ pub struct Ast<'a> {
 
     line_starts: Vec<u32>,
 
-    attached_comments: ArenaVec<'a, AttachedComment>,
-
-    attached_comment_offsets: ArenaVec<'a, u32>,
+    attached_comments: ArenaVec<'a, Comment>,
 
     /// Flattening AST nodes.
     pub(crate) nodes: NodeData<'a>,
@@ -55,7 +53,7 @@ pub struct Ast<'a> {
     extra_data: ArenaVec<'a, ExtraData>,
 
     /// Source-backed and decoded AST strings.
-    pub strings: StringPool<'a>,
+    strings: StringPool<'a>,
 }
 
 multi_index_vec! {
@@ -98,7 +96,6 @@ impl<'a> Ast<'a> {
             lang: Lang::Js,
             line_starts: vec![0],
             attached_comments: ArenaVec::new_in(allocator),
-            attached_comment_offsets: ArenaVec::new_in(allocator),
             nodes: NodeData::new_in(allocator),
             extra_data: ArenaVec::with_capacity_in(0, allocator),
             strings: StringPool::new(source),
@@ -210,26 +207,14 @@ impl<'a> Ast<'a> {
     }
 
     /// Replaces the attached-comment table used by source consumers.
-    pub fn set_attached_comments(&mut self, comments: &[AttachedComment], offsets: &[u32]) {
-        assert!(offsets.is_empty() || offsets.len() == self.node_count() + 1);
-        assert!(offsets.is_empty() || offsets[0] == 0);
-        assert!(offsets.is_empty() || offsets[offsets.len() - 1] as usize == comments.len());
+    pub fn set_attached_comments(&mut self, comments: &[Comment]) {
         self.attached_comments.clear();
         self.attached_comments.extend_from_slice_copy(comments);
-        self.attached_comment_offsets.clear();
-        self.attached_comment_offsets
-            .extend_from_slice_copy(offsets);
     }
 
-    /// Returns comments attached to `node_id` in source order.
-    pub fn comments_of(&self, node_id: NodeId) -> &[AttachedComment] {
-        if self.attached_comment_offsets.len() != self.node_count() + 1 {
-            return &[];
-        }
-        let index = node_id.index();
-        let start = self.attached_comment_offsets[index] as usize;
-        let end = self.attached_comment_offsets[index + 1] as usize;
-        &self.attached_comments[start..end]
+    /// Returns attached comments in source order.
+    pub fn comments(&self) -> &[Comment] {
+        &self.attached_comments
     }
 
     #[inline]
