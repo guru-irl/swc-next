@@ -5,10 +5,7 @@ use swc_next_ecma_ast::*;
 
 use crate::operator::{BinaryExprVisitor, Binaryish, BinaryishOperator, OperatorCode};
 use crate::util::{
-    AstAdapterState, decorator_expression_needs_parentheses, decorator_omit_newline_after,
-    import_declaration_has_empty_clause, is_legal_comment, module_name_bytes, next_code_point,
-    parse_numeric_literal, push_code_point_escape, push_u16_escape, quote_into,
-    token_offset_after_decorators,
+    next_code_point, parse_numeric_literal, push_code_point_escape, push_u16_escape, quote_into,
 };
 
 use crate::{
@@ -54,18 +51,11 @@ fn parse_small_int(bytes: &[u8]) -> i32 {
     if was_negative { -n } else { n }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PrintAfterDecorator {
-    Newline,
-    Space,
-}
-
 struct Printer<'a> {
     allocator: &'a Allocator,
     ast: &'a Ast<'a>,
     options: Options,
     js: ArenaVec<'a, u8>,
-    legal_comments: Vec<Comment>,
     comments: &'a [Comment],
     expr_visitor_stack: ArenaVec<'a, BinaryExprVisitor>,
     builder: ChunkBuilder<'a>,
@@ -89,7 +79,6 @@ struct Printer<'a> {
     with_nesting: usize,
     forbid_in: bool,
     int_to_bytes_buffer: [u8; 64],
-    adapter: AstAdapterState,
 }
 
 pub fn print<'a>(
@@ -105,17 +94,11 @@ pub fn print<'a>(
     } else {
         ArenaVec::new_in(allocator)
     };
-    let legal_comments = comments
-        .iter()
-        .filter(|comment| is_legal_comment(tree, **comment))
-        .copied()
-        .collect();
     let mut p = Printer {
         allocator,
         ast: tree,
         options,
         js: ArenaVec::new_in(allocator),
-        legal_comments,
         comments,
         expr_visitor_stack: ArenaVec::new_in(allocator),
         builder: make_chunk_builder(allocator, line_offset_tables),
@@ -134,14 +117,12 @@ pub fn print<'a>(
         with_nesting: 0,
         forbid_in: false,
         int_to_bytes_buffer: [0; 64],
-        adapter: AstAdapterState::new(),
     };
 
     p.print_program(root);
     let Printer {
         options,
         js,
-        legal_comments,
         builder,
         ..
     } = p;
@@ -149,16 +130,18 @@ pub fn print<'a>(
         let path = options.source_map_path.as_deref().unwrap();
         let path = path.as_os_str().as_encoded_bytes();
         let chunk = builder.generate_chunk(js.as_slice());
-        Some(crate::util::finalize_source_map(
-            allocator,
-            tree.source(),
-            path,
-            chunk,
-        ))
+        Some(chunk.finalize(allocator, tree.source(), path))
     } else {
         None
     };
+
     let code = js.into_bump_slice();
+    let legal_comments = comments
+        .iter()
+        .filter(|comment| is_legal_comment(tree, **comment))
+        .copied()
+        .collect();
+
     PrintResult {
         code,
         legal_comments,
@@ -1327,7 +1310,7 @@ impl<'a> Printer<'a> {
 
     fn print_binding_identifier(&mut self, id: BindingIdentifier, decorators: bool) {
         if decorators {
-            self.print_decorators(id.decorators(self.ast), PrintAfterDecorator::Space);
+            self.print_decorators(id.decorators(self.ast));
         }
         let name = self.ast.string(id.name(self.ast));
         self.add_source_mapping_for_name(id.span(self.ast).start, name);
@@ -1345,7 +1328,7 @@ impl<'a> Printer<'a> {
             BindingPatternData::BindingIdentifier(id) => self.print_binding_identifier(id, true),
             BindingPatternData::SimpleAssignmentTarget(t) => self.print_simple_assignment_target(t),
             BindingPatternData::AssignmentPattern(p) => {
-                self.print_decorators(p.decorators(self.ast), PrintAfterDecorator::Space);
+                self.print_decorators(p.decorators(self.ast));
                 self.print_binding(p.left(self.ast));
                 if p.optional(self.ast) {
                     self.print("?");
@@ -1359,7 +1342,7 @@ impl<'a> Printer<'a> {
                 self.print_expr(p.right(self.ast), Precedence::Assignment);
             }
             BindingPatternData::BindingRestElement(r) => {
-                self.print_decorators(r.decorators(self.ast), PrintAfterDecorator::Space);
+                self.print_decorators(r.decorators(self.ast));
                 self.add_source_mapping(r.span(self.ast).start);
                 self.print("...");
                 self.print_binding(r.argument(self.ast));
@@ -1376,7 +1359,7 @@ impl<'a> Printer<'a> {
     }
 
     fn print_array_pattern(&mut self, a: ArrayPattern) {
-        self.print_decorators(a.decorators(self.ast), PrintAfterDecorator::Space);
+        self.print_decorators(a.decorators(self.ast));
         self.add_source_mapping(a.span(self.ast).start);
         self.print("[");
         let elements = a.elements(self.ast);
@@ -1411,7 +1394,7 @@ impl<'a> Printer<'a> {
     }
 
     fn print_object_pattern(&mut self, o: ObjectPattern) {
-        self.print_decorators(o.decorators(self.ast), PrintAfterDecorator::Space);
+        self.print_decorators(o.decorators(self.ast));
         self.add_source_mapping(o.span(self.ast).start);
         self.print("{");
         let props = o.properties(self.ast);
@@ -2456,27 +2439,11 @@ impl<'a> Printer<'a> {
         if wrap {
             self.print("(");
         }
-        let omit_indent = if self.adapter.take_class_decorators_were_printed() {
-            true
-        } else {
-            self.print_decorators(
-                c.decorators(self.ast),
-                if declaration {
-                    PrintAfterDecorator::Newline
-                } else {
-                    PrintAfterDecorator::Space
-                },
-            )
-        };
-        if declaration && !omit_indent {
+        if declaration {
             self.print_indent();
         }
-        self.add_source_mapping(token_offset_after_decorators(
-            self.ast,
-            c.span(self.ast).start,
-            c.decorators(self.ast),
-            c.span(self.ast).end,
-        ));
+        self.print_decorators(c.decorators(self.ast));
+        self.add_source_mapping(c.span(self.ast).start);
         if c.declare(self.ast) {
             self.print("declare ");
         }
@@ -2544,17 +2511,9 @@ impl<'a> Printer<'a> {
     fn print_class_element(&mut self, element: ClassElement) {
         match self.ast.class_element_data(element) {
             ClassElementData::MethodDefinition(m) => {
-                let omit_indent =
-                    self.print_decorators(m.decorators(self.ast), PrintAfterDecorator::Newline);
-                if !omit_indent {
-                    self.print_indent();
-                }
-                self.add_source_mapping(token_offset_after_decorators(
-                    self.ast,
-                    element.span(self.ast).start,
-                    m.decorators(self.ast),
-                    element.span(self.ast).end,
-                ));
+                self.print_indent();
+                self.add_source_mapping(element.span(self.ast).start);
+                self.print_decorators(m.decorators(self.ast));
                 self.print_accessibility(m.accessibility(self.ast));
                 if m.r#static(self.ast) {
                     self.print("static ");
@@ -2593,17 +2552,9 @@ impl<'a> Printer<'a> {
                 self.print_newline();
             }
             ClassElementData::TsMethodDefinition(m) => {
-                let omit_indent =
-                    self.print_decorators(m.decorators(self.ast), PrintAfterDecorator::Newline);
-                if !omit_indent {
-                    self.print_indent();
-                }
-                self.add_source_mapping(token_offset_after_decorators(
-                    self.ast,
-                    element.span(self.ast).start,
-                    m.decorators(self.ast),
-                    element.span(self.ast).end,
-                ));
+                self.print_indent();
+                self.add_source_mapping(element.span(self.ast).start);
+                self.print_decorators(m.decorators(self.ast));
                 self.print_accessibility(m.accessibility(self.ast));
                 if m.r#static(self.ast) {
                     self.print("static ");
@@ -2640,17 +2591,9 @@ impl<'a> Printer<'a> {
                 self.print_semicolon_after_statement();
             }
             ClassElementData::PropertyDefinition(p) => {
-                let omit_indent =
-                    self.print_decorators(p.decorators(self.ast), PrintAfterDecorator::Newline);
-                if !omit_indent {
-                    self.print_indent();
-                }
-                self.add_source_mapping(token_offset_after_decorators(
-                    self.ast,
-                    element.span(self.ast).start,
-                    p.decorators(self.ast),
-                    element.span(self.ast).end,
-                ));
+                self.print_indent();
+                self.add_source_mapping(element.span(self.ast).start);
+                self.print_decorators(p.decorators(self.ast));
                 self.print_accessibility(p.accessibility(self.ast));
                 if p.r#static(self.ast) {
                     self.print("static ");
@@ -2723,30 +2666,38 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn print_decorators(
-        &mut self,
-        decorators: TypedSubRange<Decorator>,
-        default_mode: PrintAfterDecorator,
-    ) -> bool {
-        let mut old_mode = default_mode;
+    fn print_decorators(&mut self, decorators: TypedSubRange<Decorator>) {
+        fn need_wrap(ast: &Ast<'_>, mut expression: Expr) -> bool {
+            loop {
+                match ast.expr_data(expression) {
+                    ExprData::IdentifierReference(_) => return false,
+                    ExprData::CallExpression(call) => expression = call.callee(ast),
+                    ExprData::MemberExpression(member) if !member.computed(ast) => {
+                        let name = match ast.property_key_data(member.property(ast)) {
+                            PropertyKeyData::IdentifierName(identifier) => {
+                                ast.string(identifier.name(ast))
+                            }
+                            PropertyKeyData::PrivateIdentifier(identifier) => {
+                                ast.string(identifier.name(ast))
+                            }
+                            _ => return true,
+                        };
+                        if !is_identifier_es5_and_esnext(name) {
+                            return true;
+                        }
+                        expression = member.object(ast);
+                    }
+                    _ => return true,
+                }
+            }
+        }
+
         for id in decorators.iter() {
             let decorator = self.ast.get_node_in_sub_range(id);
-            let mode = if decorator_omit_newline_after(self.ast, decorator) {
-                PrintAfterDecorator::Space
-            } else {
-                default_mode
-            };
             self.add_source_mapping(decorator.span(self.ast).start);
-            if old_mode == PrintAfterDecorator::Newline {
-                self.print_indent();
-            }
             self.print("@");
             let expression = decorator.expression(self.ast);
-            let wrap = decorator_expression_needs_parentheses(self.ast, expression)
-                && !matches!(
-                    self.ast.expr_data(expression),
-                    ExprData::ArrowFunctionExpression(_)
-                );
+            let wrap = need_wrap(self.ast, expression);
             if wrap {
                 self.print("(");
             }
@@ -2754,13 +2705,9 @@ impl<'a> Printer<'a> {
             if wrap {
                 self.print(")");
             }
-            match mode {
-                PrintAfterDecorator::Newline => self.print_newline(),
-                PrintAfterDecorator::Space => self.print_space(),
-            }
-            old_mode = mode;
+            self.print_space();
+            self.print_space_before_identifier();
         }
-        old_mode == PrintAfterDecorator::Space
     }
 
     fn print_accessibility(&mut self, a: Accessibility) {
@@ -3029,12 +2976,11 @@ impl<'a> Printer<'a> {
         }
         let specs = d.specifiers(self.ast);
         if specs.is_empty() {
-            if import_declaration_has_empty_clause(self.ast, d) {
-                self.print(" {} ");
-                self.print_space_before_identifier();
-                self.print("from");
+            self.print_space();
+            if d.import_kind(self.ast) == ImportOrExportKind::Type {
+                self.print("{}");
                 self.print_space();
-            } else {
+                self.print("from");
                 self.print_space();
             }
             self.add_source_mapping(d.source(self.ast).span(self.ast).start);
@@ -3082,7 +3028,7 @@ impl<'a> Printer<'a> {
                         self.print("type ");
                     }
                     self.print_module_name(s.imported(self.ast));
-                    let imported = module_name_bytes(self.ast, s.imported(self.ast));
+                    let imported = self.module_name(s.imported(self.ast));
                     let local = self.ast.string(s.local(self.ast).name(self.ast));
                     if imported != local {
                         self.print_space();
@@ -3160,23 +3106,21 @@ impl<'a> Printer<'a> {
     }
 
     fn print_export_named(&mut self, d: ExportNamedDeclaration) {
-        if let Some(DeclData::Class(class)) = d.declaration(self.ast).map(|d| self.ast.decl_data(d))
-        {
-            let omit_indent =
-                self.print_decorators(class.decorators(self.ast), PrintAfterDecorator::Newline);
-            if !omit_indent {
-                self.print_indent();
-            }
-            self.adapter.mark_class_decorators_as_printed();
-        } else {
-            self.print_indent();
-        }
+        self.print_indent();
         self.add_source_mapping(d.span(self.ast).start);
         self.print("export");
         if d.export_kind(self.ast) == ImportOrExportKind::Type {
             self.print(" type ");
         } else if d.declaration(self.ast).is_some() {
-            self.print(" ");
+            let decorated_class = matches!(
+                d.declaration(self.ast).map(|d| self.ast.decl_data(d)),
+                Some(DeclData::Class(class)) if !class.decorators(self.ast).is_empty()
+            );
+            if decorated_class {
+                self.print_space();
+            } else {
+                self.print(" ");
+            }
         } else {
             self.print_space();
         }
@@ -3188,7 +3132,11 @@ impl<'a> Printer<'a> {
                     | DeclData::TsInterfaceDeclaration(_)
                     | DeclData::TsModuleDeclaration(_)
             );
-            self.print_decl(decl);
+            if let DeclData::Class(class) = self.ast.decl_data(decl) {
+                self.print_class(class, false);
+            } else {
+                self.print_decl(decl);
+            }
             if block {
                 self.print_newline();
             } else {
@@ -3211,9 +3159,7 @@ impl<'a> Printer<'a> {
                 self.print("type ");
             }
             self.print_module_name(s.local(self.ast));
-            if module_name_bytes(self.ast, s.local(self.ast))
-                != module_name_bytes(self.ast, s.exported(self.ast))
-            {
+            if self.module_name(s.local(self.ast)) != self.module_name(s.exported(self.ast)) {
                 self.print_space();
                 self.print_space_before_identifier();
                 self.print("as");
@@ -3245,25 +3191,20 @@ impl<'a> Printer<'a> {
     }
 
     fn print_export_default(&mut self, d: ExportDefaultDeclaration) {
-        let class = match self
-            .ast
-            .export_default_declaration_kind_data(d.declaration(self.ast))
-        {
-            ExportDefaultDeclarationKindData::Class(class) => Some(class),
-            _ => None,
-        };
-        if let Some(class) = class {
-            let omit_indent =
-                self.print_decorators(class.decorators(self.ast), PrintAfterDecorator::Newline);
-            if !omit_indent {
-                self.print_indent();
-            }
-            self.adapter.mark_class_decorators_as_printed();
-        } else {
-            self.print_indent();
-        }
+        self.print_indent();
         self.add_source_mapping(d.span(self.ast).start);
-        self.print("export default ");
+        self.print("export default");
+        let decorated_class = matches!(
+            self.ast
+                .export_default_declaration_kind_data(d.declaration(self.ast)),
+            ExportDefaultDeclarationKindData::Class(class)
+                if !class.decorators(self.ast).is_empty()
+        );
+        if decorated_class {
+            self.print_space();
+        } else {
+            self.print(" ");
+        }
         self.export_default_start = self.js.len();
         match self
             .ast
@@ -3278,7 +3219,7 @@ impl<'a> Printer<'a> {
                 self.print_semicolon_after_statement();
             }
             ExportDefaultDeclarationKindData::Class(c) => {
-                self.print_class(c, true);
+                self.print_class(c, false);
                 self.print_newline();
             }
             ExportDefaultDeclarationKindData::TsInterfaceDeclaration(i) => {
@@ -3997,7 +3938,7 @@ impl<'a> Printer<'a> {
         self.print("}");
     }
     fn print_ts_parameter_property(&mut self, p: TsParameterProperty) {
-        self.print_decorators(p.decorators(self.ast), PrintAfterDecorator::Space);
+        self.print_decorators(p.decorators(self.ast));
         self.print_accessibility(p.accessibility(self.ast));
         if p.r#override(self.ast) {
             self.print("override ");
@@ -4231,4 +4172,21 @@ impl Printer<'_> {
     fn can_print_identifier(&self, name: &[u8]) -> bool {
         is_identifier_es5_and_esnext(name)
     }
+
+    fn module_name(&self, n: ModuleExportName) -> &[u8] {
+        let ast = self.ast;
+        match ast.module_export_name_data(n) {
+            ModuleExportNameData::IdentifierName(i) => ast.string(i.name(ast)),
+            ModuleExportNameData::StringLiteral(s) => ast.string(s.value(ast)),
+        }
+    }
+}
+
+fn is_legal_comment(ast: &Ast, comment: Comment) -> bool {
+    let value = ast.string(comment.value(ast.source()));
+    ast.source()
+        .get(comment.span.start as usize..comment.span.start as usize + 3)
+        .is_some_and(|prefix| prefix == b"/*!" || prefix == b"//!")
+        || value.windows(8).any(|window| window == b"@license")
+        || value.windows(9).any(|window| window == b"@preserve")
 }

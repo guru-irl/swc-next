@@ -1,80 +1,6 @@
-use swc_next_allocator::{Allocator, vec::Vec as ArenaVec};
-
-use swc_next_ecma_ast::*;
+use swc_next_allocator::vec::Vec as ArenaVec;
 
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
-
-pub(crate) struct AstAdapterState {
-    class_decorators_were_printed: bool,
-}
-
-impl AstAdapterState {
-    pub(crate) fn new() -> Self {
-        Self {
-            class_decorators_were_printed: false,
-        }
-    }
-
-    pub(crate) fn mark_class_decorators_as_printed(&mut self) {
-        self.class_decorators_were_printed = true;
-    }
-
-    pub(crate) fn take_class_decorators_were_printed(&mut self) -> bool {
-        std::mem::take(&mut self.class_decorators_were_printed)
-    }
-}
-
-use crate::{
-    SourceMap,
-    sourcemap::{Chunk, MappingsBuffer},
-};
-
-pub(crate) fn finalize_source_map<'a>(
-    allocator: &'a Allocator,
-    source: &'a [u8],
-    source_path: &[u8],
-    chunk: Chunk<'a>,
-) -> SourceMap<'a> {
-    let mut path = ArenaVec::with_capacity_in(source_path.len(), allocator);
-    path.extend_from_slice_copy(source_path);
-    let path = path.into_bump_slice() as &'a [u8];
-
-    let mut sources = ArenaVec::with_capacity_in(1, allocator);
-    sources.push(path);
-    let sources = sources.into_bump_slice() as &'a [&'a [u8]];
-
-    let mut sources_content = ArenaVec::with_capacity_in(1, allocator);
-    sources_content.push(Some(source));
-    let sources_content = sources_content.into_bump_slice() as &'a [Option<&'a [u8]>];
-
-    // Chunk joining and JSON assembly are intentionally outside sourcemap.rs:
-    // they adapt esbuild's chunk-oriented API to this crate's arena-backed,
-    // single-source public result type.
-    let Chunk {
-        buffer: MappingsBuffer { data: mappings, .. },
-        quoted_names: names,
-        ..
-    } = chunk;
-    SourceMap {
-        version: 3,
-        file: None,
-        source_root: None,
-        sources,
-        sources_content: Some(sources_content),
-        names,
-        mappings,
-    }
-}
-
-pub(crate) fn import_declaration_has_empty_clause(
-    ast: &Ast<'_>,
-    declaration: ImportDeclaration,
-) -> bool {
-    let source = ast.source();
-    let start = declaration.span(ast).start as usize;
-    let end = declaration.source(ast).span(ast).start as usize;
-    source[start..end].windows(2).any(|window| window == b"{}")
-}
 
 pub(crate) fn push_code_point_escape(out: &mut ArenaVec<'_, u8>, code_point: u32) {
     out.extend_from_slice(b"\\u{");
@@ -90,85 +16,6 @@ pub(crate) fn push_code_point_escape(out: &mut ArenaVec<'_, u8>, code_point: u32
         shift -= 4;
     }
     out.push(b'}');
-}
-
-pub(crate) fn module_name_bytes<'a>(ast: &'a Ast<'a>, n: ModuleExportName) -> &'a [u8] {
-    match ast.module_export_name_data(n) {
-        ModuleExportNameData::IdentifierName(i) => ast.string(i.name(ast)),
-        ModuleExportNameData::StringLiteral(s) => ast.string(s.value(ast)),
-    }
-}
-
-pub(crate) fn token_offset_after_decorators(
-    ast: &Ast<'_>,
-    fallback: u32,
-    decorators: TypedSubRange<Decorator>,
-    end: u32,
-) -> u32 {
-    let mut offset = decorators
-        .last()
-        .map(|id| ast.get_node_in_sub_range(id).span(ast).end)
-        .unwrap_or(fallback) as usize;
-    let end = end as usize;
-    let source = ast.source();
-    while offset < end {
-        match source[offset] {
-            byte if byte.is_ascii_whitespace() => offset += 1,
-            b'/' if source.get(offset + 1) == Some(&b'/') => {
-                offset += 2;
-                while offset < end && !matches!(source[offset], b'\r' | b'\n') {
-                    offset += 1;
-                }
-            }
-            b'/' if source.get(offset + 1) == Some(&b'*') => {
-                offset += 2;
-                while offset + 1 < end && !(source[offset] == b'*' && source[offset + 1] == b'/') {
-                    offset += 1;
-                }
-                offset = (offset + 2).min(end);
-            }
-            _ => break,
-        }
-    }
-    offset as u32
-}
-
-pub(crate) fn decorator_omit_newline_after(ast: &Ast<'_>, decorator: Decorator) -> bool {
-    let source = ast.source();
-    let mut index = decorator.span(ast).end as usize;
-    while let Some(&byte) = source.get(index) {
-        if byte == b'\n' || byte == b'\r' {
-            return false;
-        }
-        if !byte.is_ascii_whitespace() {
-            return true;
-        }
-        index += 1;
-    }
-    false
-}
-
-pub(crate) fn decorator_expression_needs_parentheses(ast: &Ast<'_>, mut expression: Expr) -> bool {
-    loop {
-        match ast.expr_data(expression) {
-            ExprData::IdentifierReference(_) => return false,
-            ExprData::CallExpression(call) => expression = call.callee(ast),
-            ExprData::MemberExpression(member) if !member.computed(ast) => {
-                let name = match ast.property_key_data(member.property(ast)) {
-                    PropertyKeyData::IdentifierName(identifier) => ast.string(identifier.name(ast)),
-                    PropertyKeyData::PrivateIdentifier(identifier) => {
-                        ast.string(identifier.name(ast))
-                    }
-                    _ => return true,
-                };
-                if !is_identifier_es5_and_esnext(name) {
-                    return true;
-                }
-                expression = member.object(ast);
-            }
-            _ => return true,
-        }
-    }
 }
 
 pub(crate) fn remove_underscores(raw: &[u8]) -> Vec<u8> {
@@ -356,13 +203,4 @@ pub(crate) fn next_code_point(bytes: &[u8], i: usize) -> (u32, usize) {
         }
         _ => (0xfffd, 1),
     }
-}
-
-pub(crate) fn is_legal_comment(ast: &Ast<'_>, comment: Comment) -> bool {
-    let value = ast.string(comment.value(ast.source()));
-    ast.source()
-        .get(comment.span.start as usize..comment.span.start as usize + 3)
-        .is_some_and(|prefix| prefix == b"/*!" || prefix == b"//!")
-        || value.windows(8).any(|window| window == b"@license")
-        || value.windows(9).any(|window| window == b"@preserve")
 }

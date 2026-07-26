@@ -1,14 +1,13 @@
 codegen * babel
 ========================
-Passed: 3234/3350 (96.54%)
-Failed: 116/3350 (3.46%)
+Passed: 3235/3350 (96.57%)
+Failed: 115/3350 (3.43%)
 Panicked: 0/3350 (0.00%)
-Failed: fixtures/babel/packages/babel-generator/test/fixtures/comments/decorators-after-export-to-after/input.js - babel-generator/test/fixtures/comments/decorators-after-export-to-after: codegen output changed after reparse at byte 8 (first: 206 bytes, second: 202 bytes)
 Failed: fixtures/babel/packages/babel-generator/test/fixtures/comments/source-phase-import-inner-comment/input.mjs - babel-generator/test/fixtures/comments/source-phase-import-inner-comment: first parse: Expected module specifier, but found 'from' at 47..51
 Failed: fixtures/babel/packages/babel-generator/test/fixtures/comments/yield-star-inner-comment/input.js - babel-generator/test/fixtures/comments/yield-star-inner-comment: codegen output changed after reparse at byte 29 (first: 72 bytes, second: 57 bytes)
-Failed: fixtures/babel/packages/babel-generator/test/fixtures/decorators/decorator-call-expression/input.js - babel-generator/test/fixtures/decorators/decorator-call-expression: codegen output changed after reparse at byte 47 (first: 78 bytes, second: 80 bytes)
-Failed: fixtures/babel/packages/babel-generator/test/fixtures/decorators/decorator-parenthesized-expression-createParenthesizedExpression/input.js - babel-generator/test/fixtures/decorators/decorator-parenthesized-expression-createParenthesizedExpression: codegen output changed after reparse at byte 94 (first: 449 bytes, second: 469 bytes)
-Failed: fixtures/babel/packages/babel-generator/test/fixtures/decorators/decorator-parenthesized-expression/input.js - babel-generator/test/fixtures/decorators/decorator-parenthesized-expression: codegen output changed after reparse at byte 94 (first: 449 bytes, second: 469 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/decorators/decorator-call-expression/input.js - babel-generator/test/fixtures/decorators/decorator-call-expression: codegen output changed after reparse at byte 43 (first: 72 bytes, second: 74 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/decorators/decorator-parenthesized-expression-createParenthesizedExpression/input.js - babel-generator/test/fixtures/decorators/decorator-parenthesized-expression-createParenthesizedExpression: codegen output changed after reparse at byte 94 (first: 371 bytes, second: 391 bytes)
+Failed: fixtures/babel/packages/babel-generator/test/fixtures/decorators/decorator-parenthesized-expression/input.js - babel-generator/test/fixtures/decorators/decorator-parenthesized-expression: codegen output changed after reparse at byte 94 (first: 371 bytes, second: 391 bytes)
 Failed: fixtures/babel/packages/babel-generator/test/fixtures/edgecase/for-async-of/input.js - babel-generator/test/fixtures/edgecase/for-async-of: second parse: 'for (async of ...)' is not allowed, it is ambiguous with 'for await' at 5..10
 Failed: fixtures/babel/packages/babel-generator/test/fixtures/edgecase/for-in-no-in/input.js - babel-generator/test/fixtures/edgecase/for-in-no-in: codegen output changed after reparse at byte 233 (first: 402 bytes, second: 414 bytes)
 Failed: fixtures/babel/packages/babel-generator/test/fixtures/edgecase/for-loop-in/input.js - babel-generator/test/fixtures/edgecase/for-loop-in: codegen output changed after reparse at byte 7 (first: 88 bytes, second: 92 bytes)
