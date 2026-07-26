@@ -1,8 +1,7 @@
 use swc_next_ecma_ast::{
-    Ast, BinaryExpression, BinaryOperator, Expr, LogicalExpression, LogicalOperator,
+    Ast, BinaryExpression, BinaryOperator, Expr, LogicalExpression, LogicalOperator, Precedence,
+    UnaryOperator, UpdateOperator,
 };
-
-use crate::util::Level;
 
 #[derive(Clone, Copy)]
 pub(crate) enum Binaryish {
@@ -40,66 +39,17 @@ pub(crate) enum BinaryishOperator {
 }
 
 impl BinaryishOperator {
-    pub(crate) fn text(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::Binary(op) => match op {
-                BinaryOperator::Equal => "==",
-                BinaryOperator::NotEqual => "!=",
-                BinaryOperator::StrictEqual => "===",
-                BinaryOperator::StrictNotEqual => "!==",
-                BinaryOperator::LessThan => "<",
-                BinaryOperator::LessThanOrEqual => "<=",
-                BinaryOperator::GreaterThan => ">",
-                BinaryOperator::GreaterThanOrEqual => ">=",
-                BinaryOperator::Add => "+",
-                BinaryOperator::Subtract => "-",
-                BinaryOperator::Multiply => "*",
-                BinaryOperator::Divide => "/",
-                BinaryOperator::Modulo => "%",
-                BinaryOperator::Exponent => "**",
-                BinaryOperator::BitwiseOr => "|",
-                BinaryOperator::BitwiseXor => "^",
-                BinaryOperator::BitwiseAnd => "&",
-                BinaryOperator::LeftShift => "<<",
-                BinaryOperator::RightShift => ">>",
-                BinaryOperator::UnsignedRightShift => ">>>",
-                BinaryOperator::In => "in",
-                BinaryOperator::Instanceof => "instanceof",
-            },
-            Self::Logical(LogicalOperator::And) => "&&",
-            Self::Logical(LogicalOperator::Or) => "||",
-            Self::Logical(LogicalOperator::NullishCoalescing) => "??",
+            Self::Binary(op) => op.as_str(),
+            Self::Logical(op) => op.as_str(),
         }
     }
 
-    pub(crate) fn precedence(self) -> Level {
+    pub(crate) fn precedence(self) -> Precedence {
         match self {
-            Self::Binary(op) => match op {
-                BinaryOperator::Equal
-                | BinaryOperator::NotEqual
-                | BinaryOperator::StrictEqual
-                | BinaryOperator::StrictNotEqual => Level::Equality,
-                BinaryOperator::LessThan
-                | BinaryOperator::LessThanOrEqual
-                | BinaryOperator::GreaterThan
-                | BinaryOperator::GreaterThanOrEqual
-                | BinaryOperator::In
-                | BinaryOperator::Instanceof => Level::Compare,
-                BinaryOperator::Add | BinaryOperator::Subtract => Level::Add,
-                BinaryOperator::Multiply | BinaryOperator::Divide | BinaryOperator::Modulo => {
-                    Level::Multiply
-                }
-                BinaryOperator::Exponent => Level::Exponent,
-                BinaryOperator::BitwiseOr => Level::BitwiseOr,
-                BinaryOperator::BitwiseXor => Level::BitwiseXor,
-                BinaryOperator::BitwiseAnd => Level::BitwiseAnd,
-                BinaryOperator::LeftShift
-                | BinaryOperator::RightShift
-                | BinaryOperator::UnsignedRightShift => Level::Shift,
-            },
-            Self::Logical(LogicalOperator::And) => Level::LogicalAnd,
-            Self::Logical(LogicalOperator::Or) => Level::LogicalOr,
-            Self::Logical(LogicalOperator::NullishCoalescing) => Level::Nullish,
+            Self::Binary(op) => op.precedence(),
+            Self::Logical(op) => op.precedence(),
         }
     }
 
@@ -115,6 +65,13 @@ impl BinaryishOperator {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperatorCode {
+    Binary(BinaryOperator),
+    Unary(UnaryOperator),
+    Update(UpdateOperator, bool),
+}
+
 // Binary and logical expressions share this visitor because either kind can
 // appear on the left spine of the other. Keeping the state on one reusable
 // arena-backed stack avoids overflowing the native stack for deeply nested ASTs.
@@ -122,16 +79,16 @@ impl BinaryishOperator {
 pub(crate) struct BinaryExprVisitor {
     // Inputs
     pub(crate) e: Binaryish,
-    pub(crate) level: Level,
+    pub(crate) level: Precedence,
     pub(crate) flags: bool,
 
     // Input for visiting the left child
-    pub(crate) left_level: Level,
+    pub(crate) left_level: Precedence,
     pub(crate) left_flags: bool,
 
     // Local variables passed from `check_and_prepare` to
     // `visit_right_and_finish`
     pub(crate) operator: BinaryishOperator,
     pub(crate) wrap: bool,
-    pub(crate) right_level: Level,
+    pub(crate) right_level: Precedence,
 }

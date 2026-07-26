@@ -5,35 +5,6 @@ use unicode_id_start::{is_id_continue, is_id_start};
 
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(u8)]
-#[allow(dead_code)] // Keep esbuild's complete precedence lattice.
-pub(crate) enum Level {
-    Lowest,
-    Comma,
-    Yield,
-    Assignment,
-    Conditional,
-    Nullish,
-    LogicalOr,
-    LogicalAnd,
-    BitwiseOr,
-    BitwiseXor,
-    BitwiseAnd,
-    Equality,
-    Compare,
-    Shift,
-    Add,
-    Multiply,
-    Exponent,
-    Prefix,
-    Postfix,
-    New,
-    Call,
-    Member,
-    Primary,
-}
-
 pub(crate) struct AstAdapterState {
     class_decorators_were_printed: bool,
 }
@@ -96,83 +67,6 @@ pub(crate) fn finalize_source_map<'a>(
     }
 }
 
-pub(crate) fn unary_operator(op: UnaryOperator) -> &'static str {
-    match op {
-        UnaryOperator::Negate => "-",
-        UnaryOperator::Positive => "+",
-        UnaryOperator::LogicalNot => "!",
-        UnaryOperator::BitwiseNot => "~",
-        UnaryOperator::Typeof => "typeof",
-        UnaryOperator::Void => "void",
-        UnaryOperator::Delete => "delete",
-    }
-}
-
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum OperatorCode {
-    Add,
-    Subtract,
-    Positive,
-    Negative,
-    PreIncrement,
-    PreDecrement,
-    PostDecrement,
-    GreaterThan,
-    Not,
-    #[default]
-    Other,
-}
-
-pub(crate) fn binary_operator_code(operator: BinaryOperator) -> OperatorCode {
-    match operator {
-        BinaryOperator::Add => OperatorCode::Add,
-        BinaryOperator::Subtract => OperatorCode::Subtract,
-        BinaryOperator::GreaterThan => OperatorCode::GreaterThan,
-        _ => OperatorCode::Other,
-    }
-}
-
-pub(crate) fn unary_operator_code(operator: UnaryOperator) -> OperatorCode {
-    match operator {
-        UnaryOperator::Positive => OperatorCode::Positive,
-        UnaryOperator::Negate => OperatorCode::Negative,
-        UnaryOperator::LogicalNot => OperatorCode::Not,
-        _ => OperatorCode::Other,
-    }
-}
-
-pub(crate) fn update_operator_code(operator: UpdateOperator, prefix: bool) -> OperatorCode {
-    match (operator, prefix) {
-        (UpdateOperator::Increment, true) => OperatorCode::PreIncrement,
-        (UpdateOperator::Decrement, true) => OperatorCode::PreDecrement,
-        (UpdateOperator::Decrement, false) => OperatorCode::PostDecrement,
-        _ => OperatorCode::Other,
-    }
-}
-pub(crate) fn assignment_operator(op: AssignmentOperator) -> &'static str {
-    use AssignmentOperator::*;
-    match op {
-        Assign => "=",
-        AddAssign => "+=",
-        SubtractAssign => "-=",
-        MultiplyAssign => "*=",
-        DivideAssign => "/=",
-        ModuloAssign => "%=",
-        ExponentAssign => "**=",
-        LeftShiftAssign => "<<=",
-        RightShiftAssign => ">>=",
-        UnsignedRightShiftAssign => ">>>=",
-        BitwiseOrAssign => "|=",
-        BitwiseXorAssign => "^=",
-        BitwiseAndAssign => "&=",
-        LogicalOrAssign => "||=",
-        LogicalAndAssign => "&&=",
-        NullishAssign => "??=",
-    }
-}
-pub(crate) fn next_level(level: Level) -> Level {
-    unsafe { std::mem::transmute((level as u8 + 1).min(Level::Primary as u8)) }
-}
 pub(crate) fn is_identifier_continue_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80
 }
@@ -304,21 +198,6 @@ pub(crate) fn decorator_expression_needs_parentheses(ast: &Ast<'_>, mut expressi
             _ => return true,
         }
     }
-}
-
-pub(crate) fn conditional_in_was_reassociated(
-    ast: &Ast<'_>,
-    binary: BinaryExpression,
-) -> Option<ConditionalExpression> {
-    if binary.operator(ast) != BinaryOperator::In {
-        return None;
-    }
-    let ExprData::ConditionalExpression(conditional) = ast.expr_data(binary.left(ast)) else {
-        return None;
-    };
-    let between = &ast.source()
-        [conditional.span(ast).end as usize..binary.right(ast).span(ast).start as usize];
-    (!between.contains(&b')')).then_some(conditional)
 }
 
 pub(crate) fn remove_underscores(raw: &[u8]) -> Vec<u8> {
