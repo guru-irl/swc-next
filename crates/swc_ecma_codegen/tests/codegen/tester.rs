@@ -3,9 +3,6 @@ use swc_next_ecma_ast::{Ast, Lang, SourceType};
 use swc_next_ecma_codegen::{Options as PrintOptions, print};
 use swc_next_ecma_parser::{CommentMode, Options as ParseOptions, Parser};
 
-mod js_parser_test;
-mod js_printer_test;
-
 #[track_caller]
 pub fn expect_printed(source: &[u8], expected: &[u8]) {
     expect_printed_common(source, expected, Lang::Js, SourceType::Module, false, false);
@@ -73,8 +70,6 @@ fn expect_printed_common(
         source_type,
         lang,
         preserve_parens: false,
-        allow_return_outside_function: true,
-        semantic_errors: false,
         comments: CommentMode::Attached,
     };
     let mut parser = Parser::init(&mut ast, source, parse_options);

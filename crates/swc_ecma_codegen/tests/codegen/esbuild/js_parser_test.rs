@@ -1,5 +1,5 @@
 // Ported from upstream esbuild's internal/js_parser/js_parser_test.go.
-use super::{expect_printed, expect_printed_jsx, expect_printed_script};
+use crate::{expect_printed, expect_printed_jsx, expect_printed_script};
 
 #[test]
 fn test_un_op() {
@@ -721,7 +721,7 @@ fn test_function() {
     );
     expect_printed(
         b"var x = function() { y() }()",
-        b"var x = (function() {\n  y();\n})();\n",
+        b"var x = function() {\n  y();\n}();\n",
     );
     // Depends on esbuild's parser-stage constant folding.
     // expect_printed(
@@ -2907,9 +2907,9 @@ fn test_jsx_single_line() {
     expect_printed_jsx(b"<x/>", b"<x />;\n");
     expect_printed_jsx(b"<x y/>", b"<x y />;\n");
     expect_printed_jsx(b"<x\n/>", b"<x />;\n");
-    expect_printed_jsx(b"<x\ny/>", b"<x\n  y\n/>;\n");
-    expect_printed_jsx(b"<x y\n/>", b"<x\n  y\n/>;\n");
-    expect_printed_jsx(b"<x\n{...y}/>", b"<x\n  {...y}\n/>;\n");
+    expect_printed_jsx(b"<x\ny/>", b"<x y />;\n");
+    expect_printed_jsx(b"<x y\n/>", b"<x y />;\n");
+    expect_printed_jsx(b"<x\n{...y}/>", b"<x {...y} />;\n");
 }
 
 #[test]

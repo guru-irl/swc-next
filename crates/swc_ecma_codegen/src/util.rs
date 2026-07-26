@@ -35,29 +35,14 @@ pub(crate) enum Level {
 }
 
 pub(crate) struct AstAdapterState {
-    pub(crate) lowered_template_count: usize,
-    pub(crate) next_lowered_template: usize,
     class_decorators_were_printed: bool,
 }
 
-#[inline]
-pub(crate) fn ast_text<'a>(ast: &'a Ast<'a>, value: String) -> &'a [u8] {
-    ast.string(value)
-}
-
 impl AstAdapterState {
-    pub(crate) fn new(ast: &Ast<'_>, root: Program) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            lowered_template_count: count_templates_with_closing_script(ast, root),
-            next_lowered_template: 0,
             class_decorators_were_printed: false,
         }
-    }
-
-    pub(crate) fn take_lowered_template_index(&mut self) -> usize {
-        let index = self.next_lowered_template;
-        self.next_lowered_template += 1;
-        index
     }
 
     pub(crate) fn mark_class_decorators_as_printed(&mut self) {
@@ -216,30 +201,6 @@ pub(crate) fn is_identifier_es5_and_esnext(name: &[u8]) -> bool {
         })
 }
 
-pub(crate) fn expr_was_parenthesized(ast: &Ast<'_>, span: Span) -> bool {
-    let source = ast.source();
-    let mut start = span.start as usize;
-    let mut end = span.end as usize;
-    while start > 0 && source[start - 1].is_ascii_whitespace() {
-        start -= 1;
-    }
-    while source.get(end).is_some_and(u8::is_ascii_whitespace) {
-        end += 1;
-    }
-    if start == 0 || source[start - 1] != b'(' || source.get(end) != Some(&b')') {
-        return false;
-    }
-    let mut before_open = start - 1;
-    while before_open > 0 && source[before_open - 1].is_ascii_whitespace() {
-        before_open -= 1;
-    }
-    before_open == 0
-        || !matches!(
-            source[before_open - 1],
-            b')' | b']' | b'_' | b'$' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z'
-        )
-}
-
 pub(crate) fn import_declaration_has_empty_clause(
     ast: &Ast<'_>,
     declaration: ImportDeclaration,
@@ -307,167 +268,6 @@ pub(crate) fn token_offset_after_decorators(
     offset as u32
 }
 
-pub(crate) fn import_attribute_offsets(
-    ast: &Ast<'_>,
-    attrs: TypedSubRange<ImportAttribute>,
-) -> Option<(u32, u32, u32, bool)> {
-    let first = ast.get_node_in_sub_range(attrs.first()?);
-    let last = ast.get_node_in_sub_range(attrs.last()?);
-    let source = ast.source();
-    let first_start = first.span(ast).start as usize;
-    let open = source[..first_start]
-        .iter()
-        .rposition(|&byte| byte == b'{')?;
-    let with = source[..open]
-        .windows(b"with".len())
-        .rposition(|window| window == b"with");
-    let assert = source[..open]
-        .windows(b"assert".len())
-        .rposition(|window| window == b"assert");
-    let (keyword, is_assert) = match (with, assert) {
-        (Some(with), Some(assert)) if assert > with => (assert, true),
-        (Some(with), _) => (with, false),
-        (_, Some(assert)) => (assert, true),
-        _ => return None,
-    };
-    let close = source[last.span(ast).end as usize..]
-        .iter()
-        .position(|&byte| byte == b'}')?
-        + last.span(ast).end as usize;
-    Some((keyword as u32, open as u32, close as u32, is_assert))
-}
-
-pub(crate) fn empty_import_attribute_offsets(
-    ast: &Ast<'_>,
-    owner: Span,
-    search_start: u32,
-) -> Option<(u32, u32, u32, bool)> {
-    let source = ast.source();
-    let start = search_start as usize;
-    let end = owner.end as usize;
-    let tail = &source[start..end];
-    let with = tail
-        .windows(b"with".len())
-        .position(|window| window == b"with")
-        .map(|offset| start + offset);
-    let assert = tail
-        .windows(b"assert".len())
-        .position(|window| window == b"assert")
-        .map(|offset| start + offset);
-    let (keyword, is_assert) = match (with, assert) {
-        (Some(with), Some(assert)) if assert < with => (assert, true),
-        (Some(with), _) => (with, false),
-        (_, Some(assert)) => (assert, true),
-        _ => return None,
-    };
-    if is_assert
-        && source[start..keyword]
-            .iter()
-            .any(|&byte| matches!(byte, b'\r' | b'\n'))
-    {
-        return None;
-    }
-    let open = source[keyword..end].iter().position(|&byte| byte == b'{')? + keyword;
-    let close = source[open..end].iter().position(|&byte| byte == b'}')? + open;
-    Some((keyword as u32, open as u32, close as u32, is_assert))
-}
-
-pub(crate) fn can_omit_arrow_parens(ast: &Ast<'_>, params: FormalParameters) -> bool {
-    if params.items(ast).len() != 1 || params.rest(ast).is_some() {
-        return false;
-    }
-    let item = params.items(ast).get_node(ast, 0).unwrap();
-    let FormalParameterItemData::FormalParameter(param) = ast.formal_parameter_item_data(item)
-    else {
-        return false;
-    };
-    let FormalParameterPatternData::BindingPattern(pattern) =
-        ast.formal_parameter_pattern_data(param.pattern(ast))
-    else {
-        return false;
-    };
-    let BindingPatternData::BindingIdentifier(identifier) = ast.binding_pattern_data(pattern)
-    else {
-        return false;
-    };
-    identifier.decorators(ast).is_empty()
-        && identifier.type_annotation(ast).is_none()
-        && !identifier.optional(ast)
-}
-
-pub(crate) fn is_jsx_tag_single_line(ast: &Ast<'_>, opening: JsxOpeningElement) -> bool {
-    let span = opening.span(ast);
-    let source = &ast.source()[span.start as usize..span.end as usize];
-    let mut quote = 0;
-    let mut brace_depth: u32 = 0;
-    let mut index = 0;
-    while index < source.len() {
-        let byte = source[index];
-        if quote != 0 {
-            if byte == b'\\' {
-                index += 2;
-                continue;
-            }
-            if byte == quote {
-                quote = 0;
-            }
-        } else {
-            match byte {
-                b'\'' | b'"' => quote = byte,
-                b'{' => brace_depth += 1,
-                b'}' => brace_depth = brace_depth.saturating_sub(1),
-                b'\n' | b'\r' if brace_depth == 0 => return false,
-                _ => {}
-            }
-        }
-        index += 1;
-    }
-    true
-}
-
-pub(crate) fn export_default_expr_was_parenthesized(
-    ast: &Ast<'_>,
-    declaration: ExportDefaultDeclaration,
-    expression: Expr,
-) -> bool {
-    let source = ast.source();
-    let start = declaration.span(ast).start as usize;
-    let end = expression.span(ast).start as usize;
-    if start > end {
-        return false;
-    }
-    let prefix = &source[start..end];
-    let Some(default_end) = prefix
-        .windows(b"default".len())
-        .position(|window| window == b"default")
-        .map(|index| index + b"default".len())
-    else {
-        return false;
-    };
-    prefix[default_end..]
-        .iter()
-        .find(|byte| !byte.is_ascii_whitespace())
-        == Some(&b'(')
-}
-
-pub(crate) fn binding_pattern_identifier_name<'a>(
-    ast: &'a Ast<'a>,
-    binding: BindingPattern,
-) -> Option<&'a [u8]> {
-    match ast.binding_pattern_data(binding) {
-        BindingPatternData::BindingIdentifier(identifier) => Some(ast.string(identifier.name(ast))),
-        BindingPatternData::SimpleAssignmentTarget(target) => {
-            match ast.simple_assignment_target_data(target) {
-                SimpleAssignmentTargetData::IdentifierReference(identifier) => {
-                    Some(ast.string(identifier.name(ast)))
-                }
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
 pub(crate) fn decorator_omit_newline_after(ast: &Ast<'_>, decorator: Decorator) -> bool {
     let source = ast.source();
     let mut index = decorator.span(ast).end as usize;
@@ -506,27 +306,6 @@ pub(crate) fn decorator_expression_needs_parentheses(ast: &Ast<'_>, mut expressi
     }
 }
 
-pub(crate) fn member_object_was_parenthesized(ast: &Ast<'_>, member: MemberExpression) -> bool {
-    let source = ast.source();
-    let mut index = member.object(ast).span(ast).start as usize;
-    loop {
-        while index > 0 && source[index - 1].is_ascii_whitespace() {
-            index -= 1;
-        }
-        if index >= 2 && &source[index - 2..index] == b"*/" {
-            let Some(start) = source[..index - 2]
-                .windows(2)
-                .rposition(|window| window == b"/*")
-            else {
-                return false;
-            };
-            index = start;
-            continue;
-        }
-        return index > 0 && source[index - 1] == b'(';
-    }
-}
-
 pub(crate) fn conditional_in_was_reassociated(
     ast: &Ast<'_>,
     binary: BinaryExpression,
@@ -540,83 +319,6 @@ pub(crate) fn conditional_in_was_reassociated(
     let between = &ast.source()
         [conditional.span(ast).end as usize..binary.right(ast).span(ast).start as usize];
     (!between.contains(&b')')).then_some(conditional)
-}
-
-pub(crate) fn template_contains_closing_script(ast: &Ast<'_>, template: TemplateLiteral) -> bool {
-    template.quasis(ast).iter().any(|id| {
-        let quasi = ast.get_node_in_sub_range(id);
-        ast.string(quasi.raw(ast))
-            .windows(8)
-            .any(|window| window.eq_ignore_ascii_case(b"</script"))
-    })
-}
-
-pub(crate) fn count_templates_with_closing_script(ast: &Ast<'_>, root: Program) -> usize {
-    // Avoid walking the AST at all in the overwhelmingly common case. This is
-    // also important for the printer's stack-safety contract: a source file
-    // containing a deeply nested binary expression must not be recursively
-    // traversed just to discover that there are no templates to lower.
-    if !ast
-        .source()
-        .windows(8)
-        .any(|window| window.eq_ignore_ascii_case(b"</script"))
-    {
-        return 0;
-    }
-
-    struct Counter<'ast, 'allocator> {
-        ast: &'ast Ast<'allocator>,
-        count: usize,
-    }
-
-    impl<'ast, 'allocator> Visit<'allocator> for Counter<'ast, 'allocator> {
-        fn ast(&self) -> &Ast<'allocator> {
-            self.ast
-        }
-
-        fn visit_tagged_template_expression(&mut self, node: TaggedTemplateExpression) {
-            if template_contains_closing_script(self.ast, node.quasi(self.ast)) {
-                self.count += 1;
-            }
-            <TaggedTemplateExpression as VisitWith<'allocator, Self>>::visit_children_with(
-                node, self,
-            );
-        }
-    }
-
-    let mut counter = Counter { ast, count: 0 };
-    root.visit_with(&mut counter);
-    counter.count
-}
-
-pub(crate) fn append_lowered_template_name(output: &mut ArenaVec<'_, u8>, index: usize) {
-    const IDENTIFIER_CHARS: &[u8; 52] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    output.extend_from_slice(&[b'_', IDENTIFIER_CHARS[index % IDENTIFIER_CHARS.len()]]);
-    if index >= IDENTIFIER_CHARS.len() {
-        let mut digits = [0u8; 20];
-        let mut value = index / IDENTIFIER_CHARS.len() + 1;
-        let mut start = digits.len();
-        while value != 0 {
-            start -= 1;
-            digits[start] = b'0' + (value % 10) as u8;
-            value /= 10;
-        }
-        output.extend_from_slice(&digits[start..]);
-    }
-}
-
-pub(crate) fn append_lowered_template_prefix(output: &mut ArenaVec<'_, u8>, template_count: usize) {
-    if template_count == 0 {
-        return;
-    }
-    output.extend_from_slice(b"import { __template } from \"<runtime>\";\nvar ");
-    for index in 0..template_count {
-        if index != 0 {
-            output.extend_from_slice(b", ");
-        }
-        append_lowered_template_name(output, index);
-    }
-    output.extend_from_slice(b";\n");
 }
 
 pub(crate) fn remove_underscores(raw: &[u8]) -> Vec<u8> {
@@ -643,10 +345,6 @@ pub(crate) fn parse_numeric_literal(raw: &[u8]) -> Option<f64> {
             .map(|value| value as f64);
     }
     text.parse().ok()
-}
-
-pub(crate) fn format_float(value: f64) -> Vec<u8> {
-    value.to_string().into_bytes()
 }
 
 pub(crate) fn quote_into(out: &mut ArenaVec<'_, u8>, value: &[u8], quote: u8, ascii_only: bool) {
