@@ -1,3 +1,4 @@
+use memchr::{memchr, memchr3};
 use swc_next_allocator::Allocator;
 use swc_next_allocator::vec::Vec as ArenaVec;
 use swc_next_ecma_ast::{
@@ -313,27 +314,50 @@ impl<'a> Lexer<'a> {
         let start = self.cursor;
         self.cursor += 1;
 
-        while (self.cursor as usize) < self.source.len() {
-            let c = self.source[self.cursor as usize];
-            if c == b'\\' {
-                self.consume_escape(EscapeContext::Template)?;
-                continue;
-            }
-            if c == b'`' {
-                self.cursor += 1;
-                return Ok(self.create_token(TokenTag::NoSubstitutionTemplate, start, self.cursor));
-            }
-            if c == b'$' && self.peek(1) == b'{' {
-                self.cursor += 2;
-                return Ok(self.create_token(TokenTag::TemplateHead, start, self.cursor));
-            }
-            if c == b'\r' {
+        self.scan_template_segment(
+            start,
+            TokenTag::NoSubstitutionTemplate,
+            TokenTag::TemplateHead,
+        )
+    }
+
+    fn scan_template_segment(
+        &mut self,
+        start: u32,
+        tail_tag: TokenTag,
+        middle_tag: TokenTag,
+    ) -> Result<Token, LexicalError> {
+        loop {
+            let cursor = self.cursor as usize;
+            let source = &self.source[cursor..];
+            let special = memchr3(b'\\', b'`', b'$', source);
+            let plain_len = special.unwrap_or(source.len());
+            let has_carriage_return = !self.has_token_flag(TokenFlag::Escaped)
+                && memchr(b'\r', &source[..plain_len]).is_some();
+
+            self.cursor += plain_len as u32;
+            if has_carriage_return {
                 self.set_token_flag(TokenFlag::Escaped);
             }
-            self.cursor += 1;
-        }
 
-        Err(LexicalError::NonTerminatedTemplateLiteral)
+            let Some(_) = special else {
+                return Err(LexicalError::NonTerminatedTemplateLiteral);
+            };
+
+            match self.source[self.cursor as usize] {
+                b'\\' => self.consume_escape(EscapeContext::Template)?,
+                b'`' => {
+                    self.cursor += 1;
+                    return Ok(self.create_token(tail_tag, start, self.cursor));
+                }
+                b'$' if self.peek(1) == b'{' => {
+                    self.cursor += 2;
+                    return Ok(self.create_token(middle_tag, start, self.cursor));
+                }
+                b'$' => self.cursor += 1,
+                _ => unreachable!(),
+            }
+        }
     }
 
     fn consume_escape(&mut self, context: EscapeContext) -> Result<(), LexicalError> {
@@ -922,26 +946,7 @@ impl<'a> Lexer<'a> {
         let start = self.cursor;
         self.cursor += 1;
 
-        while (self.cursor as usize) < self.source.len() {
-            let c = self.source[self.cursor as usize];
-            if c == b'\\' {
-                self.consume_escape(EscapeContext::Template)?;
-                continue;
-            }
-            if c == b'`' {
-                self.cursor += 1;
-                return Ok(self.create_token(TokenTag::TemplateTail, start, self.cursor));
-            }
-            if c == b'$' && self.peek(1) == b'{' {
-                self.cursor += 2;
-                return Ok(self.create_token(TokenTag::TemplateMiddle, start, self.cursor));
-            }
-            if c == b'\r' {
-                self.set_token_flag(TokenFlag::Escaped);
-            }
-            self.cursor += 1;
-        }
-        Err(LexicalError::NonTerminatedTemplateLiteral)
+        self.scan_template_segment(start, TokenTag::TemplateTail, TokenTag::TemplateMiddle)
     }
 
     pub fn re_scan_greater_than(&mut self, token_start: u32) -> Token {
@@ -1068,87 +1073,96 @@ impl<'a> Lexer<'a> {
             || (c == 0xE2 && unicode_separator_len(self.source, self.cursor as usize) > 0)
     }
 
+    #[inline]
     fn skip_ws_and_comments(&mut self) -> Result<(), LexicalError> {
         debug_assert!((self.cursor as usize) <= self.source.len());
-        let mut can_be_html_close_comment =
-            self.cursor == 0 || self.has_token_flag(TokenFlag::LineTerminatorBefore);
-        let src = self.source;
-        let mut pos = self.cursor as usize;
-        let entry_pos = pos;
+        let at_start_of_source = self.cursor == 0;
 
-        while pos < src.len() {
-            match ws_class(src[pos]) {
-                1 => pos += 1,
-                2 => {
-                    self.set_token_flag(TokenFlag::LineTerminatorBefore);
-                    self.handle_newline();
-                    can_be_html_close_comment = true;
-                    pos += 1;
-                }
-                3 => {
-                    self.cursor = pos as u32;
-                    match self.peek(1) {
-                        b'/' => self.scan_line_comment()?,
-                        b'*' => {
-                            self.scan_block_comment()?;
-                            if self.has_token_flag(TokenFlag::LineTerminatorBefore) {
-                                can_be_html_close_comment = true;
-                            }
-                        }
-                        _ => break,
-                    }
-                    pos = self.cursor as usize;
-                }
-                4 => {
-                    if !self.allow_html_like_comments
-                        || pos + 3 >= src.len()
-                        || src[pos + 1] != b'!'
-                        || src[pos + 2] != b'-'
-                        || src[pos + 3] != b'-'
-                    {
-                        break;
-                    }
-                    self.cursor = pos as u32;
-                    self.scan_html_comment()?;
-                    pos = self.cursor as usize;
-                }
-                5 => {
-                    if !self.allow_html_like_comments
-                        || !can_be_html_close_comment
-                        || pos + 2 >= src.len()
-                        || src[pos + 1] != b'-'
-                        || src[pos + 2] != b'>'
-                    {
-                        break;
-                    }
-                    self.cursor = pos as u32;
-                    self.scan_html_close_comment()?;
-                    pos = self.cursor as usize;
-                }
-                6 => {
-                    let us_len = unicode_separator_len(src, pos) as usize;
-                    if us_len > 0 {
+        loop {
+            let src = self.source;
+            let mut pos = self.cursor as usize;
+
+            while pos < src.len() {
+                match src[pos] {
+                    b' ' | b'\t' | 0x0B | 0x0C => pos += 1,
+                    b'\n' | b'\r' => {
                         self.set_token_flag(TokenFlag::LineTerminatorBefore);
                         self.handle_newline();
-                        can_be_html_close_comment = true;
-                        pos += us_len;
-                        continue;
+                        pos += 1;
                     }
-                    self.cursor = pos as u32;
-                    let cp = code_point_at(src, pos).map_err(|_| LexicalError::InvalidUtf8)?;
-                    if !is_multi_byte_space(cp.value) {
-                        break;
-                    }
-                    pos += cp.len as usize;
+                    _ => break,
                 }
-                _ => break,
+            }
+
+            self.cursor = pos as u32;
+            if pos == src.len()
+                || !matches!(src[pos], b'/' | b'<' | b'-' | 0x80..=0xFF)
+                || !self.skip_ws_and_comments_slow(at_start_of_source)?
+            {
+                return Ok(());
             }
         }
+    }
 
-        debug_assert!(pos >= entry_pos);
-        debug_assert!(pos <= src.len());
-        self.cursor = pos as u32;
-        Ok(())
+    #[cold]
+    #[inline(never)]
+    fn skip_ws_and_comments_slow(
+        &mut self,
+        at_start_of_source: bool,
+    ) -> Result<bool, LexicalError> {
+        let src = self.source;
+        let pos = self.cursor as usize;
+        debug_assert!(pos < src.len());
+
+        match src[pos] {
+            b'/' => match src.get(pos + 1).copied() {
+                Some(b'/') => self.scan_line_comment()?,
+                Some(b'*') => self.scan_block_comment()?,
+                _ => return Ok(false),
+            },
+            b'<' => {
+                if !self.allow_html_like_comments
+                    || pos + 3 >= src.len()
+                    || src[pos + 1] != b'!'
+                    || src[pos + 2] != b'-'
+                    || src[pos + 3] != b'-'
+                {
+                    return Ok(false);
+                }
+                self.scan_html_comment()?;
+            }
+            b'-' => {
+                let can_be_html_close_comment =
+                    at_start_of_source || self.has_token_flag(TokenFlag::LineTerminatorBefore);
+                if !self.allow_html_like_comments
+                    || !can_be_html_close_comment
+                    || pos + 2 >= src.len()
+                    || src[pos + 1] != b'-'
+                    || src[pos + 2] != b'>'
+                {
+                    return Ok(false);
+                }
+                self.scan_html_close_comment()?;
+            }
+            0x80..=0xFF => {
+                let separator_len = unicode_separator_len(src, pos) as usize;
+                if separator_len > 0 {
+                    self.set_token_flag(TokenFlag::LineTerminatorBefore);
+                    self.handle_newline();
+                    self.cursor += separator_len as u32;
+                    return Ok(true);
+                }
+
+                let code_point = code_point_at(src, pos).map_err(|_| LexicalError::InvalidUtf8)?;
+                if !is_multi_byte_space(code_point.value) {
+                    return Ok(false);
+                }
+                self.cursor += u32::from(code_point.len);
+            }
+            _ => return Ok(false),
+        }
+
+        Ok(true)
     }
 
     fn handle_newline(&mut self) {
@@ -1348,18 +1362,6 @@ fn scan_ascii_identifier_continue(source: &[u8], start: u32) -> u32 {
     debug_assert!(position >= start as usize);
     debug_assert!(position <= source.len());
     position as u32
-}
-
-fn ws_class(byte: u8) -> u8 {
-    match byte {
-        b' ' | b'\t' | 0x0B | 0x0C => 1,
-        b'\n' | b'\r' => 2,
-        b'/' => 3,
-        b'<' => 4,
-        b'-' => 5,
-        0x80..=0xFF => 6,
-        _ => 0,
-    }
 }
 
 fn is_surrogate_codepoint(cp: u32) -> bool {
@@ -1633,5 +1635,111 @@ fn get_keyword_type(lexeme: &[u8]) -> TokenTag {
         b"implements" => TokenTag::Implements,
         b"instanceof" => TokenTag::Instanceof,
         _ => TokenTag::Identifier,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn next_template(source: &[u8]) -> Result<Token, LexicalError> {
+        let allocator = Allocator::new();
+        let mut lexer = Lexer::init(&allocator, source, false, false);
+        let mut token = Token::eof(0);
+        lexer.next_token(&mut token)?;
+        Ok(token)
+    }
+
+    fn next_after_trivia(source: &[u8], allow_html_like_comments: bool) -> Token {
+        let allocator = Allocator::new();
+        let mut lexer = Lexer::init(&allocator, source, allow_html_like_comments, false);
+        let mut token = Token::eof(0);
+        lexer.next_token(&mut token).unwrap();
+        token
+    }
+
+    #[test]
+    fn skips_ascii_and_slow_path_trivia() {
+        let token = next_after_trivia(b" \t\x0B\x0Cname", false);
+        assert_eq!(token.span, Span::new(4, 8));
+        assert!(!token.has_line_terminator_before());
+
+        for source in [
+            b"\r\nname".as_slice(),
+            b"// line\nname",
+            b"/* block\ncomment */name",
+            b"\xe2\x80\xa8name",
+        ] {
+            let token = next_after_trivia(source, false);
+            let start = source
+                .windows(4)
+                .position(|window| window == b"name")
+                .unwrap() as u32;
+            assert_eq!(token.span, Span::new(start, start + 4));
+            assert!(token.has_line_terminator_before());
+        }
+
+        let token = next_after_trivia(b"\xc2\xa0name", false);
+        assert_eq!(token.span, Span::new(2, 6));
+        assert!(!token.has_line_terminator_before());
+
+        let token = next_after_trivia(b"<!-- comment\nname", true);
+        assert_eq!(token.span, Span::new(13, 17));
+        assert!(token.has_line_terminator_before());
+
+        for source in [b"--> comment\nname".as_slice(), b" \t--> comment\nname"] {
+            let token = next_after_trivia(source, true);
+            let start = source
+                .windows(4)
+                .position(|window| window == b"name")
+                .unwrap() as u32;
+            assert_eq!(token.span, Span::new(start, start + 4));
+            assert!(token.has_line_terminator_before());
+        }
+    }
+
+    #[test]
+    fn scans_template_sentinels() {
+        let token = next_template(b"`plain $ value`").unwrap();
+        assert_eq!(token.tag, TokenTag::NoSubstitutionTemplate);
+        assert_eq!(token.span, Span::new(0, 15));
+
+        let token = next_template(b"`head ${value}`").unwrap();
+        assert_eq!(token.tag, TokenTag::TemplateHead);
+        assert_eq!(token.span, Span::new(0, 8));
+
+        let token = next_template(b"`escaped \\` value`").unwrap();
+        assert_eq!(token.tag, TokenTag::NoSubstitutionTemplate);
+        assert!(token.is_escaped());
+    }
+
+    #[test]
+    fn marks_carriage_returns_for_template_normalization() {
+        let token = next_template(b"`first\r\nsecond`").unwrap();
+        assert_eq!(token.tag, TokenTag::NoSubstitutionTemplate);
+        assert!(token.is_escaped());
+    }
+
+    #[test]
+    fn scans_template_continuations() {
+        let allocator = Allocator::new();
+
+        let mut lexer = Lexer::init(&allocator, b"}middle ${value}", false, false);
+        let token = lexer.re_scan_template_continuation(0).unwrap();
+        assert_eq!(token.tag, TokenTag::TemplateMiddle);
+        assert_eq!(token.span, Span::new(0, 10));
+
+        let mut lexer = Lexer::init(&allocator, b"}tail`", false, false);
+        let token = lexer.re_scan_template_continuation(0).unwrap();
+        assert_eq!(token.tag, TokenTag::TemplateTail);
+        assert_eq!(token.span, Span::new(0, 6));
+    }
+
+    #[test]
+    fn reports_unterminated_templates() {
+        assert_eq!(
+            next_template(b"`unterminated"),
+            Err(LexicalError::NonTerminatedTemplateLiteral)
+        );
     }
 }

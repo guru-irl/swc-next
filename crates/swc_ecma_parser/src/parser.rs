@@ -760,12 +760,23 @@ impl<'parser, 'a> Parser<'parser, 'a> {
     /// Returns the resolved name for an identifier-like token.
     ///
     /// This strips `#` from private identifiers and decodes Unicode escapes.
+    #[inline]
     pub fn identifier_name(&mut self, token: Token) -> AstString {
-        let is_private = token.tag == TokenTag::PrivateIdentifier;
-        let start = token.span.start + u32::from(is_private);
+        if token.tag != TokenTag::PrivateIdentifier && !token.is_escaped() {
+            return self.ast.source_slice(token.span.start, token.span.end);
+        }
+
+        self.identifier_name_slow(token)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn identifier_name_slow(&mut self, token: Token) -> AstString {
+        let start = token.span.start + u32::from(token.tag == TokenTag::PrivateIdentifier);
         if token.is_escaped() {
             return self.decode_escaped_identifier(start, token.span.end);
         }
+
         self.ast.source_slice(start, token.span.end)
     }
 
@@ -10997,6 +11008,10 @@ impl<'parser, 'a> Parser<'parser, 'a> {
     }
 
     fn validate_identifier(&mut self, token: Token, as_what: &str) {
+        if token.tag == TokenTag::Identifier {
+            return;
+        }
+
         if !token.tag.is_identifier_like() {
             self.report_expected(
                 token.span,
