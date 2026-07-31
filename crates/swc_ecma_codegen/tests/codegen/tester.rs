@@ -1,7 +1,7 @@
 use swc_next_allocator::Allocator;
 use swc_next_ecma_ast::{Ast, Lang, SourceType};
 use swc_next_ecma_codegen::{Options as PrintOptions, print};
-use swc_next_ecma_parser::{CommentMode, Options as ParseOptions, Parser};
+use swc_next_ecma_parser::{CommentMode, NoTokenParserConfig, Options as ParseOptions, Parser};
 
 #[track_caller]
 pub fn expect_printed(source: &[u8], expected: &[u8]) {
@@ -72,16 +72,15 @@ fn expect_printed_common(
         preserve_parens: false,
         comments: CommentMode::Attached,
     };
-    let mut parser = Parser::init(&mut ast, parse_options);
-    let program = parser.parse();
-    let has_errors = parser
+    let result = Parser::init(&mut ast, parse_options, NoTokenParserConfig).parse();
+    let has_errors = result
         .diagnostics
         .iter()
         .any(|diagnostic| diagnostic.severity == swc_next_ecma_ast::Severity::Error);
-    drop(parser);
     if has_errors {
         return;
     }
+    let program = result.program;
 
     let print_options = PrintOptions {
         minify,

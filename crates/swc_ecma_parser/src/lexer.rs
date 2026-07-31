@@ -5,6 +5,7 @@ use swc_next_ecma_ast::{
     Comment, CommentKind, CommentPosition, Span, is_ident_continue_ascii, is_ident_start_ascii,
 };
 
+use super::config::{NoTokenParserConfig, ParserConfig};
 use super::token::{Token, TokenFlag, TokenTag, flag_mask};
 use super::unicode_id::{can_continue_id, can_start_id};
 use super::util::{
@@ -49,6 +50,12 @@ pub enum LexerMode {
     #[default]
     Normal,
     JsxTag,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HandleTokenMode {
+    Append,
+    Replace,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,8 +104,10 @@ enum ConsumeUnicodeContext {
 }
 
 #[derive(Clone, Debug)]
-pub struct Lexer<'a> {
+pub struct Lexer<'a, C: ParserConfig = NoTokenParserConfig> {
+    pub config: C,
     pub comments: ArenaVec<'a, Comment>,
+    pub tokens: ArenaVec<'a, Token>,
     pub collect_comments: bool,
     pub source: &'a [u8],
     pub cursor: u32,
@@ -109,12 +118,13 @@ pub struct Lexer<'a> {
     pub mode: LexerMode,
 }
 
-impl<'a> Lexer<'a> {
+impl<'a, C: ParserConfig> Lexer<'a, C> {
     pub fn init(
         allocator: &'a Allocator,
         source: &'a [u8],
         allow_html_like_comments: bool,
         collect_comments: bool,
+        config: C,
     ) -> Self {
         debug_assert!(u32::try_from(source.len()).is_ok());
         // Large generated files commonly contain enough comments for repeated
@@ -127,8 +137,17 @@ impl<'a> Lexer<'a> {
         } else {
             0
         };
+
+        let tokens = if config.tokens() {
+            ArenaVec::with_capacity_in(source.len() + 1, allocator)
+        } else {
+            ArenaVec::new_in(allocator)
+        };
+
         let mut lexer = Self {
+            config,
             comments: ArenaVec::with_capacity_in(comment_capacity, allocator),
+            tokens,
             collect_comments,
             source,
             cursor: 0,
@@ -167,7 +186,7 @@ impl<'a> Lexer<'a> {
 
     pub fn next_token(&mut self, target: &mut Token) -> Result<(), LexicalError> {
         self.read_next_token(target)?;
-        self.handle_token(*target);
+        self.handle_token(*target, HandleTokenMode::Append);
         Ok(())
     }
 
@@ -217,13 +236,37 @@ impl<'a> Lexer<'a> {
     }
 
     #[inline]
-    pub(crate) fn handle_token(&mut self, token: Token) {
+    pub(crate) fn handle_token(&mut self, token: Token, mode: HandleTokenMode) {
+        if self.config.tokens() {
+            match mode {
+                HandleTokenMode::Append => self.tokens.push(token),
+                HandleTokenMode::Replace => {
+                    if let Some(last_token) = self.tokens.last_mut() {
+                        *last_token = token;
+                    }
+                }
+            }
+        }
+
         let len = self.comments.len();
         if self.state.processed_comments < len {
             self.attach_pending_leading_comments(token.span.start, len);
         }
         self.state.previous_token_tag = Some(token.tag);
         self.state.saw_newline = false;
+    }
+
+    /// Restores a compound token removed by a failed speculative rescan.
+    #[inline]
+    pub(crate) fn rewrite_last_collected_token(&mut self, token: Token) {
+        if self.config.tokens() {
+            if let Some(last) = self.tokens.last_mut() {
+                debug_assert_eq!(last.span.start, token.span.start);
+                *last = token;
+            } else {
+                debug_assert!(!self.config.tokens());
+            }
+        }
     }
 
     #[cold]
@@ -973,21 +1016,32 @@ impl<'a> Lexer<'a> {
         self.create_token(TokenTag::LessThan, token_start, token_start + 1)
     }
 
-    pub fn re_scan_jsx_text(&mut self, initial_cursor: u32) -> Token {
-        debug_assert!((initial_cursor as usize) <= self.source.len());
-        self.rewind_to(initial_cursor);
-
+    pub fn scan_jsx_text(&mut self) -> Token {
         let start = self.cursor;
-
-        while (self.cursor as usize) < self.source.len() {
-            match self.source[self.cursor as usize] {
-                b'<' | b'{' => break,
-                _ => self.cursor += 1,
+        let token = match self.source.get(self.cursor as usize).copied() {
+            Some(b'<') => {
+                self.cursor += 1;
+                self.create_token(TokenTag::LessThan, start, self.cursor)
             }
-        }
-
+            Some(b'{') => {
+                self.cursor += 1;
+                self.create_token(TokenTag::LeftBrace, start, self.cursor)
+            }
+            Some(_) => {
+                self.cursor += 1;
+                while (self.cursor as usize) < self.source.len() {
+                    match self.source[self.cursor as usize] {
+                        b'<' | b'{' => break,
+                        _ => self.cursor += 1,
+                    }
+                }
+                self.create_token(TokenTag::JsxText, start, self.cursor)
+            }
+            _ => self.create_token(TokenTag::Eof, start, start),
+        };
         debug_assert!(self.cursor >= start);
-        self.create_token(TokenTag::JsxText, start, self.cursor)
+        self.handle_token(token, HandleTokenMode::Append);
+        token
     }
 
     pub fn re_scan_as_regex(
@@ -1654,7 +1708,7 @@ mod tests {
 
     fn next_template(source: &[u8]) -> Result<Token, LexicalError> {
         let allocator = Allocator::new();
-        let mut lexer = Lexer::init(&allocator, source, false, false);
+        let mut lexer = Lexer::init(&allocator, source, false, false, NoTokenParserConfig);
         let mut token = Token::eof(0);
         lexer.next_token(&mut token)?;
         Ok(token)
@@ -1662,7 +1716,13 @@ mod tests {
 
     fn next_after_trivia(source: &[u8], allow_html_like_comments: bool) -> Token {
         let allocator = Allocator::new();
-        let mut lexer = Lexer::init(&allocator, source, allow_html_like_comments, false);
+        let mut lexer = Lexer::init(
+            &allocator,
+            source,
+            allow_html_like_comments,
+            false,
+            NoTokenParserConfig,
+        );
         let mut token = Token::eof(0);
         lexer.next_token(&mut token).unwrap();
         token
@@ -1673,14 +1733,14 @@ mod tests {
         let allocator = Allocator::new();
         let small_source = [b' '; 512];
 
-        let small = Lexer::init(&allocator, &small_source, false, true);
+        let small = Lexer::init(&allocator, &small_source, false, true, NoTokenParserConfig);
         assert_eq!(small.comments.capacity(), 0);
 
         let large_source = vec![b' '; 2 * 1024 * 1024];
-        let collecting = Lexer::init(&allocator, &large_source, false, true);
+        let collecting = Lexer::init(&allocator, &large_source, false, true, NoTokenParserConfig);
         assert_eq!(collecting.comments.capacity(), large_source.len() / 256);
 
-        let ignoring = Lexer::init(&allocator, &large_source, false, false);
+        let ignoring = Lexer::init(&allocator, &large_source, false, false, NoTokenParserConfig);
         assert_eq!(ignoring.comments.capacity(), 0);
     }
 
@@ -1750,12 +1810,18 @@ mod tests {
     fn scans_template_continuations() {
         let allocator = Allocator::new();
 
-        let mut lexer = Lexer::init(&allocator, b"}middle ${value}", false, false);
+        let mut lexer = Lexer::init(
+            &allocator,
+            b"}middle ${value}",
+            false,
+            false,
+            NoTokenParserConfig,
+        );
         let token = lexer.re_scan_template_continuation(0).unwrap();
         assert_eq!(token.tag, TokenTag::TemplateMiddle);
         assert_eq!(token.span, Span::new(0, 10));
 
-        let mut lexer = Lexer::init(&allocator, b"}tail`", false, false);
+        let mut lexer = Lexer::init(&allocator, b"}tail`", false, false, NoTokenParserConfig);
         let token = lexer.re_scan_template_continuation(0).unwrap();
         assert_eq!(token.tag, TokenTag::TemplateTail);
         assert_eq!(token.span, Span::new(0, 6));

@@ -6,14 +6,18 @@
 use std::{borrow::Cow, mem, string::String};
 
 use rustc_hash::FxHashSet;
+use swc_next_allocator::vec::Vec as ArenaVec;
 use swc_next_ecma_ast::String as AstString;
 use swc_next_ecma_ast::*;
 
 use crate::{
+    TokenFlag,
+    config::{NoTokenParserConfig, ParserConfig},
     lexer::{
-        Lexer, LexerMode, LexerState, LexicalError, lexical_error_help, lexical_error_message,
+        HandleTokenMode, Lexer, LexerMode, LexerState, LexicalError, lexical_error_help,
+        lexical_error_message,
     },
-    token::{Token, TokenTag},
+    token::{Token, TokenTag, flag_mask},
     util::{decode_identifier_escapes, decode_string_escapes},
 };
 
@@ -594,14 +598,14 @@ impl From<MethodDefinitionKind> for PropertyOrMethodKind {
 }
 
 /// Parser state and typed AST writer.
-pub struct Parser<'parser, 'a> {
+pub struct Parser<'parser, 'a, C: ParserConfig = NoTokenParserConfig> {
     pub ast: &'parser mut Ast<'a>,
     pub source: &'a [u8],
     pub source_type: SourceType,
     pub lang: Lang,
     pub preserve_parens: bool,
     pub comment_mode: CommentMode,
-    pub lexer: Lexer<'a>,
+    pub lexer: Lexer<'a, C>,
     pub diagnostics: Vec<Diagnostic<'static>>,
     pub current_token: Token,
     /// End offset of the most recently consumed token.
@@ -629,6 +633,12 @@ pub struct Parser<'parser, 'a> {
     not_parenthesized_arrow: FxHashSet<u32>,
 }
 
+pub struct ParseReturn<'a> {
+    pub program: Program,
+    pub tokens: ArenaVec<'a, Token>,
+    pub diagnostics: Vec<Diagnostic<'static>>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Checkpoint {
     // Lexer state.
@@ -636,6 +646,7 @@ pub struct Checkpoint {
     pub lexer_state: LexerState,
     pub lexer_mode: LexerMode,
     pub lexer_comments_len: usize,
+    pub lexer_tokens_len: usize,
     // Parser token stream.
     pub current_token: Token,
     pub prev_token_end: u32,
@@ -650,15 +661,16 @@ pub struct Checkpoint {
     pub state: ParserState,
 }
 
-pub struct Peek<'peek, 'a> {
-    lexer: &'peek mut Lexer<'a>,
+pub struct Peek<'peek, 'a, C: ParserConfig = NoTokenParserConfig> {
+    lexer: &'peek mut Lexer<'a, C>,
     state: LexerState,
     cursor: u32,
     comments_len: usize,
+    tokens_len: usize,
     active: bool,
 }
 
-impl Peek<'_, '_> {
+impl<C: ParserConfig> Peek<'_, '_, C> {
     pub fn end(mut self) {
         self.restore();
     }
@@ -669,11 +681,12 @@ impl Peek<'_, '_> {
         self.lexer.state = self.state;
         self.lexer.cursor = self.cursor;
         self.lexer.comments.truncate(self.comments_len);
+        self.lexer.tokens.truncate(self.tokens_len);
         self.active = false;
     }
 }
 
-impl Iterator for Peek<'_, '_> {
+impl<C: ParserConfig> Iterator for Peek<'_, '_, C> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -684,7 +697,7 @@ impl Iterator for Peek<'_, '_> {
     }
 }
 
-impl Drop for Peek<'_, '_> {
+impl<C: ParserConfig> Drop for Peek<'_, '_, C> {
     fn drop(&mut self) {
         if self.active {
             self.restore();
@@ -715,8 +728,8 @@ fn estimate_ast_capacity(source_len: usize) -> (usize, usize) {
     (estimated_nodes, estimated_extra)
 }
 
-impl<'parser, 'a> Parser<'parser, 'a> {
-    pub fn init(ast: &'parser mut Ast<'a>, options: Options) -> Self {
+impl<'parser, 'a, C: ParserConfig> Parser<'parser, 'a, C> {
+    pub fn init(ast: &'parser mut Ast<'a>, options: Options, config: C) -> Self {
         let source = ast.source();
         assert!(source.len() <= u32::MAX as usize);
         ast.set_source_metadata(options.source_type, options.lang);
@@ -726,6 +739,7 @@ impl<'parser, 'a> Parser<'parser, 'a> {
             source,
             allow_html_like_comments,
             options.comments == CommentMode::Attached,
+            config,
         );
         Self {
             ast,
@@ -754,7 +768,7 @@ impl<'parser, 'a> Parser<'parser, 'a> {
         }
     }
 
-    pub fn parse(&mut self) -> Program {
+    pub fn parse(mut self) -> ParseReturn<'a> {
         self.context = self.source_type.into();
         if self.advance().is_none() {
             self.current_token = Token::eof(0);
@@ -785,7 +799,22 @@ impl<'parser, 'a> Parser<'parser, 'a> {
         if !self.preserve_parens {
             strip_parenthesized_nodes(self.ast);
         }
-        program
+
+        let diagnostics = self.diagnostics;
+        let mut tokens = self.lexer.tokens;
+        if self.lexer.config.tokens() && !diagnostics.iter().any(|d| d.severity == Severity::Error)
+        {
+            let last_token = tokens.pop();
+            debug_assert!(last_token.is_some_and(|token| token.tag == TokenTag::Eof));
+        } else {
+            tokens.clear();
+        }
+
+        ParseReturn {
+            program,
+            tokens,
+            diagnostics,
+        }
     }
 
     /// Returns the resolved name for an identifier-like token.
@@ -981,6 +1010,7 @@ impl<'parser, 'a> Parser<'parser, 'a> {
             lexer_state: self.lexer.state,
             lexer_mode: self.lexer.mode,
             lexer_comments_len: self.lexer.comments.len(),
+            lexer_tokens_len: self.lexer.tokens.len(),
             current_token: self.current_token,
             prev_token_end: self.prev_token_end,
             nodes_len: self.ast.node_count(),
@@ -999,6 +1029,7 @@ impl<'parser, 'a> Parser<'parser, 'a> {
         self.lexer.state = checkpoint.lexer_state;
         self.lexer.mode = checkpoint.lexer_mode;
         self.lexer.comments.truncate(checkpoint.lexer_comments_len);
+        self.lexer.tokens.truncate(checkpoint.lexer_tokens_len);
         self.current_token = checkpoint.current_token;
         self.prev_token_end = checkpoint.prev_token_end;
         self.ast
@@ -1010,11 +1041,12 @@ impl<'parser, 'a> Parser<'parser, 'a> {
         self.state = checkpoint.state;
     }
 
-    pub fn begin_peek(&mut self) -> Peek<'_, 'a> {
+    pub fn begin_peek(&mut self) -> Peek<'_, 'a, C> {
         Peek {
             state: self.lexer.state,
             cursor: self.lexer.cursor,
             comments_len: self.lexer.comments.len(),
+            tokens_len: self.lexer.tokens.len(),
             active: true,
             lexer: &mut self.lexer,
         }
@@ -9646,6 +9678,7 @@ impl<'parser, 'a> Parser<'parser, 'a> {
                 return self.parse_call_expression(object, optional, Some(type_arguments));
             }
             self.rewind(checkpoint);
+            self.lexer.rewrite_last_collected_token(self.current_token);
         }
 
         match tag {
@@ -9922,7 +9955,7 @@ impl<'parser, 'a> Parser<'parser, 'a> {
     fn parse_jsx_element(&mut self, context: JsxElementContext) -> Option<Expr> {
         let start = self.current_token.span.start;
         if self.peek_ahead()?.tag == TokenTag::GreaterThan {
-            return self.parse_jsx_fragment(start);
+            return self.parse_jsx_fragment(start, context);
         }
 
         let opening = self.parse_jsx_opening_element(context)?;
@@ -9935,7 +9968,7 @@ impl<'parser, 'a> Parser<'parser, 'a> {
                 None,
             )));
         }
-        let children = self.parse_jsx_children(opening.span(self.ast).end)?;
+        let children = self.parse_jsx_children()?;
         let closing = self.parse_jsx_closing_element(opening.name(self.ast), context)?;
         Some(Expr::JsxElement(self.ast.jsx_element(
             Span::new(start, closing.span(self.ast).end),
@@ -10086,7 +10119,7 @@ impl<'parser, 'a> Parser<'parser, 'a> {
         a.end - a.start == b.end - b.start && self.span_text(a) == self.span_text(b)
     }
 
-    fn parse_jsx_fragment(&mut self, start: u32) -> Option<Expr> {
+    fn parse_jsx_fragment(&mut self, start: u32, context: JsxElementContext) -> Option<Expr> {
         self.advance()?;
         if self.current_token.tag != TokenTag::GreaterThan {
             self.report_expected(
@@ -10103,7 +10136,7 @@ impl<'parser, 'a> Parser<'parser, 'a> {
         }
         let opening_end = self.current_token.span.end;
         let opening = self.ast.jsx_opening_fragment(Span::new(start, opening_end));
-        let children = self.parse_jsx_children(opening_end)?;
+        let children = self.parse_jsx_children()?;
         let closing_start = self.current_token.span.start;
         self.enter_jsx_tag();
         self.advance()?;
@@ -10114,14 +10147,30 @@ impl<'parser, 'a> Parser<'parser, 'a> {
         ) {
             return None;
         }
-        let closing_end = self.current_token.span.end;
-        self.exit_jsx_tag();
-        if !self.expect(
-            TokenTag::GreaterThan,
-            "Expected '>' to close JSX closing fragment",
-            Some("Add '>' to complete the fragment closing tag"),
-        ) {
+        if self.current_token.tag != TokenTag::GreaterThan {
+            self.report_expected(
+                self.current_token.span,
+                "Expected '>' to close JSX closing element",
+                ReportOptions {
+                    help: Some(Cow::Borrowed(
+                        "Add '>' to complete the fragment closing tag",
+                    )),
+                    ..ReportOptions::default()
+                },
+            );
             return None;
+        }
+        let closing_end = self.current_token.span.end;
+        match context {
+            JsxElementContext::Child => self.exit_jsx_tag(),
+            JsxElementContext::TopLevel => {
+                self.exit_jsx_tag();
+                self.advance()?;
+            }
+            JsxElementContext::Attribute => {
+                self.enter_jsx_tag();
+                self.advance()?;
+            }
         }
         let closing = self
             .ast
@@ -10132,25 +10181,24 @@ impl<'parser, 'a> Parser<'parser, 'a> {
         )
     }
 
-    fn parse_jsx_children(&mut self, mut scan_from: u32) -> Option<TypedSubRange<JsxChild>> {
+    fn parse_jsx_children(&mut self) -> Option<TypedSubRange<JsxChild>> {
         let checkpoint = self.scratch_b.begin();
         self.exit_jsx_tag();
         let result = (|| {
             loop {
-                let text = self.lexer.re_scan_jsx_text(scan_from);
-                if text.span.start < text.span.end {
-                    let value = self.ast.source_slice(text.span.start, text.span.end);
-                    let text = self.ast.jsx_child_jsx_text(text.span, value);
-                    self.scratch_b.append(text);
-                }
-                self.advance_with_rescanned_token(text)?;
-                match self.current_token.tag {
+                let token = self.lexer.scan_jsx_text();
+                self.current_token = token;
+                match token.tag {
+                    TokenTag::JsxText => {
+                        let value = self.ast.source_slice(token.span.start, token.span.end);
+                        let jsx_text = self.ast.jsx_child_jsx_text(token.span, value);
+                        self.scratch_b.append(jsx_text);
+                    }
                     TokenTag::LessThan => {
                         if self.peek_ahead()?.tag == TokenTag::Slash {
                             break;
                         }
                         let child = self.parse_jsx_element(JsxElementContext::Child)?;
-                        scan_from = child.span(self.ast).end;
                         match self.ast.expr_data(child) {
                             ExprData::JsxElement(element) => {
                                 self.scratch_b.append(JsxChild::JsxElement(element));
@@ -10163,7 +10211,6 @@ impl<'parser, 'a> Parser<'parser, 'a> {
                     }
                     TokenTag::LeftBrace => {
                         let child = self.parse_jsx_child_from_left_brace()?;
-                        scan_from = child.span(self.ast).end;
                         self.scratch_b.append(child);
                     }
                     _ => break,
@@ -10555,6 +10602,7 @@ impl<'parser, 'a> Parser<'parser, 'a> {
             }
             Some(_) | None => {
                 self.rewind(checkpoint);
+                self.lexer.rewrite_last_collected_token(self.current_token);
                 return Some(None);
             }
         };
@@ -11171,18 +11219,32 @@ impl<'parser, 'a> Parser<'parser, 'a> {
 
     /// Sets the current token to a rescanned token and advances.
     ///
-    /// Use this after lexer rescan operations for JSX text, template
-    /// continuations, and similar context-sensitive tokens.
-    pub fn advance_with_rescanned_token(&mut self, token: Token) -> Option<()> {
-        self.lexer.handle_token(token);
+    /// Use this when retokenizing the current source range, such as for
+    /// regular expressions and template continuations.
+    #[inline]
+    pub fn advance_with_rescanned_token(&mut self, mut token: Token) -> Option<()> {
+        if self.lexer.config.tokens() {
+            token.flags |= self.current_token.flags & flag_mask(TokenFlag::LineTerminatorBefore);
+        }
+        self.lexer.handle_token(token, HandleTokenMode::Replace);
         self.current_token = token;
         self.advance()
     }
 
     /// Retokenizes the current token in the current lexer mode.
     pub fn re_scan_current(&mut self) -> Option<()> {
+        let line_terminator_before =
+            self.current_token.flags & flag_mask(TokenFlag::LineTerminatorBefore);
         self.lexer.rewind_to(self.current_token.span.start);
-        self.next_token()
+        if self.lexer.config.tokens() {
+            self.lexer.tokens.pop();
+        }
+        self.next_token()?;
+        if self.lexer.config.tokens() {
+            self.current_token.flags |= line_terminator_before;
+            self.lexer.rewrite_last_collected_token(self.current_token);
+        }
+        Some(())
     }
 
     pub fn expect(
@@ -11728,6 +11790,8 @@ fn strip_parenthesized_nodes(ast: &mut Ast<'_>) {
 mod tests {
     use swc_next_allocator::Allocator;
 
+    use crate::TokenParserConfig;
+
     use super::*;
 
     #[test]
@@ -11748,7 +11812,7 @@ mod tests {
     fn validates_identifier_fast_and_diagnostic_paths() {
         let allocator = Allocator::new();
         let mut ast = Ast::new(b"name", &allocator);
-        let mut parser = Parser::init(&mut ast, Options::default());
+        let mut parser = Parser::init(&mut ast, Options::default(), NoTokenParserConfig);
         parser.validate_identifier(
             Token {
                 span: Span::new(0, 4),
@@ -11761,7 +11825,7 @@ mod tests {
 
         let allocator = Allocator::new();
         let mut ast = Ast::new(b"if", &allocator);
-        let mut parser = Parser::init(&mut ast, Options::default());
+        let mut parser = Parser::init(&mut ast, Options::default(), NoTokenParserConfig);
         parser.validate_identifier(
             Token {
                 span: Span::new(0, 2),
@@ -11775,5 +11839,26 @@ mod tests {
             parser.diagnostics[0].message,
             "'if' is reserved and cannot be used as an identifier"
         );
+    }
+
+    #[test]
+    fn preserves_line_terminator_when_rescanning_jsx_identifier() {
+        let allocator = Allocator::new();
+        let source = b"<Comp<T>\nfoo />";
+        let mut ast = Ast::new(source, &allocator);
+        let options = Options {
+            lang: Lang::Tsx,
+            ..Options::default()
+        };
+        let result = Parser::init(&mut ast, options, TokenParserConfig).parse();
+
+        assert!(result.diagnostics.is_empty());
+        let foo = result
+            .tokens
+            .iter()
+            .find(|token| token.span == Span::new(9, 12))
+            .expect("expected JSX identifier token");
+        assert_eq!(foo.tag, TokenTag::JsxIdentifier);
+        assert!(foo.has_line_terminator_before());
     }
 }

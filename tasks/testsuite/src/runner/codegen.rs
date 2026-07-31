@@ -5,7 +5,7 @@ use rayon::prelude::*;
 use swc_next_allocator::Allocator;
 use swc_next_ecma_ast::{Ast, Lang, Severity, SourceType};
 use swc_next_ecma_codegen::{Options as CodegenOptions, print};
-use swc_next_ecma_parser::{Options as ParserOptions, Parser};
+use swc_next_ecma_parser::{NoTokenParserConfig, Options as ParserOptions, Parser};
 
 use crate::{cases::Case, runner::Runner, suite::TestResult};
 
@@ -88,9 +88,8 @@ fn parse_and_codegen(
     };
 
     let (program, error) = {
-        let mut parser = Parser::init(&mut ast, options);
-        let program = parser.parse();
-        let error = parser
+        let result = Parser::init(&mut ast, options, NoTokenParserConfig).parse();
+        let error = result
             .diagnostics
             .iter()
             .find(|diagnostic| diagnostic.severity == Severity::Error)
@@ -100,7 +99,7 @@ fn parse_and_codegen(
                     diagnostic.message, diagnostic.span.start, diagnostic.span.end
                 )
             });
-        (program, error)
+        (result.program, error)
     };
 
     if let Some(error) = error {
