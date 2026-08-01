@@ -1,182 +1,29 @@
-use std::{
-    collections::BTreeMap,
-    fmt::Write as _,
-    fs,
-    panic::{AssertUnwindSafe, catch_unwind},
-    path::Path,
+use std::{collections::BTreeMap, fmt::Write as _, fs};
+
+use rayon::prelude::*;
+use testsuite::{
+    cases::babel::BabelTransformCase,
+    runner::{Runner, babel_transform::BabelTransformRunner},
+    suite::TestResult,
+    util::crate_root,
 };
 
-use colored::Colorize;
-use pico_args::Arguments;
-use rayon::prelude::*;
-use swc_next_allocator::Allocator;
-use swc_next_ecma_ast::{Ast, Lang, Program, Severity, SourceType};
-use swc_next_ecma_codegen::{Options as CodegenOptions, print};
-use swc_next_ecma_parser::{NoTokenParserConfig, Options as ParserOptions, Parser};
-use swc_next_ecma_semantic::analyze;
-use swc_next_ecma_transformer::{Transformer, TransformerOptions};
-use testsuite::{cases::babel::BabelCase, suite::TestResult, util::crate_root};
-
 const SNAPSHOT_FILE: &str = "babel_transform.snap";
-const DETAIL_SEPARATOR_WIDTH: usize = 80;
-
-struct AppArgs {
-    case_filter: Option<String>,
-}
-
-impl AppArgs {
-    fn parse() -> Self {
-        let mut args = Arguments::from_env();
-        let case_filter = args.opt_value_from_str("--case").unwrap();
-        assert!(
-            !args.contains("--case"),
-            "`--case` can only be specified once"
-        );
-        Self { case_filter }
-    }
-}
 
 fn main() {
-    let args = AppArgs::parse();
-    let cases = BabelCase::read();
-
-    match args.case_filter {
-        Some(filter) => print_selected_case(cases, &filter),
-        None => update_snapshot(cases),
-    }
-}
-
-fn update_snapshot(cases: Vec<BabelCase>) {
-    let (runnable, skipped): (Vec<_>, Vec<_>) = cases.into_iter().partition(is_runnable);
+    let cases = BabelTransformCase::read();
+    let (runnable, skipped): (Vec<_>, Vec<_>) = cases
+        .into_iter()
+        .partition(BabelTransformRunner::should_run);
     let results = runnable
         .par_iter()
-        .map(run_snapshot_case)
+        .map(|case| (case.package_name.clone(), BabelTransformRunner::run(case)))
         .collect::<Vec<_>>();
     let snapshot = SnapshotReport::new(&results, &skipped).render();
     let snapshot_path = crate_root().join("snapshots").join(SNAPSHOT_FILE);
 
     fs::write(&snapshot_path, snapshot).unwrap();
     println!("Updated {}", snapshot_path.display());
-}
-
-fn is_runnable(case: &BabelCase) -> bool {
-    case.options.plugins.errors.is_empty()
-        && case.options.plugins.unsupported.is_empty()
-        && case.options.presets.errors.is_empty()
-        && case.options.presets.unsupported.is_empty()
-}
-
-fn unsupported_reason(case: &BabelCase) -> String {
-    let entries = case
-        .options
-        .plugins
-        .errors
-        .iter()
-        .chain(&case.options.plugins.unsupported)
-        .chain(&case.options.presets.errors)
-        .chain(&case.options.presets.unsupported)
-        .cloned()
-        .collect::<Vec<_>>();
-    format!("unsupported options: {}", entries.join(", "))
-}
-
-// Snapshot execution
-
-struct CaseExecution {
-    package_name: String,
-    result: TestResult,
-}
-
-fn run_snapshot_case(case: &BabelCase) -> CaseExecution {
-    let path = case
-        .path
-        .strip_prefix(crate_root())
-        .unwrap_or(&case.path)
-        .to_path_buf();
-    let result = match catch_unwind(AssertUnwindSafe(|| validate_case(case))) {
-        Ok(Ok(())) => TestResult::Passed {
-            path,
-            negative: false,
-        },
-        Ok(Err(error)) => TestResult::Failed {
-            path,
-            error,
-            negative: false,
-        },
-        Err(_) => TestResult::Panic {
-            path,
-            negative: false,
-        },
-    };
-
-    CaseExecution {
-        package_name: case.package_name.clone(),
-        result,
-    }
-}
-
-// Detailed case output
-
-fn print_selected_case(cases: Vec<BabelCase>, filter: &str) {
-    let mut matches = cases.into_iter().filter(|case| case.name.contains(filter));
-    let Some(case) = matches.next() else {
-        println!("No Babel transform case matched `{filter}`.");
-        return;
-    };
-
-    if matches.next().is_some() {
-        println!("Multiple Babel transform cases matched `{filter}`; use a more specific value.");
-        return;
-    }
-
-    print_case_detail(&case);
-}
-
-fn print_case_detail(case: &BabelCase) {
-    println!("{}", "=".repeat(DETAIL_SEPARATOR_WIDTH));
-    println!("Case: {}", case.name);
-    println!("Package: {}", case.package_name);
-    println!("Input: {}", normalize_path(&case.path));
-
-    if !is_runnable(case) {
-        println!("Status: {}", "Unsupported".yellow());
-        println!("Reason: {}", unsupported_reason(case));
-        return;
-    }
-
-    match catch_unwind(AssertUnwindSafe(|| generate_artifacts(case))) {
-        Ok(Ok(artifacts)) => print_artifact_comparison(&artifacts),
-        Ok(Err(error)) => {
-            println!("Status: {}", "Failed".red());
-            println!("Message: {error}");
-        }
-        Err(_) => println!("Status: {}", "Panicked".red()),
-    }
-}
-
-fn print_artifact_comparison(artifacts: &Artifacts) {
-    if let Some(offset) = artifacts.first_difference() {
-        println!("Status: {}", "Failed".red());
-        println!(
-            "First difference: byte {offset} (actual: {} bytes, expected: {} bytes)",
-            artifacts.actual.len(),
-            artifacts.expected.len()
-        );
-    } else {
-        println!("Status: {}", "Passed".green());
-        println!("Outputs are identical ({} bytes).", artifacts.actual.len());
-    }
-
-    print_artifact("Actual (input.js → transform → codegen)", &artifacts.actual);
-    print_artifact("Expected (output.js → codegen)", &artifacts.expected);
-}
-
-fn print_artifact(label: &str, artifact: &[u8]) {
-    println!("--- {label} ---");
-    print!("{}", String::from_utf8_lossy(artifact));
-    if !artifact.ends_with(b"\n") {
-        println!();
-    }
 }
 
 // Snapshot rendering
@@ -261,10 +108,10 @@ impl PackageReport {
             TestResult::Passed { .. } => {}
             TestResult::Failed { path, error, .. } => self
                 .messages
-                .push(format!("Failed: {} - {error}", normalize_path(path))),
+                .push(format!("Failed: {} - {error}", path.to_string_lossy())),
             TestResult::Panic { path, .. } => self
                 .messages
-                .push(format!("Panic: {}", normalize_path(path))),
+                .push(format!("Panic: {}", path.to_string_lossy())),
         }
     }
 }
@@ -275,7 +122,7 @@ struct SnapshotReport {
 }
 
 impl SnapshotReport {
-    fn new(results: &[CaseExecution], skipped: &[BabelCase]) -> Self {
+    fn new(results: &[(String, TestResult)], skipped: &[BabelTransformCase]) -> Self {
         let mut report = Self {
             total: Summary::default(),
             packages: BTreeMap::new(),
@@ -290,13 +137,13 @@ impl SnapshotReport {
                 .summary
                 .skipped += 1;
         }
-        for execution in results {
-            report.total.record_result(&execution.result);
+        for (package_name, result) in results {
+            report.total.record_result(result);
             report
                 .packages
-                .entry(execution.package_name.clone())
+                .entry(package_name.clone())
                 .or_default()
-                .record_result(&execution.result);
+                .record_result(result);
         }
 
         report
@@ -322,113 +169,4 @@ impl SnapshotReport {
 
         output
     }
-}
-
-// Transform pipeline
-
-struct Artifacts {
-    actual: Vec<u8>,
-    expected: Vec<u8>,
-}
-
-impl Artifacts {
-    fn first_difference(&self) -> Option<usize> {
-        self.actual
-            .iter()
-            .zip(&self.expected)
-            .position(|(actual, expected)| actual != expected)
-            .or_else(|| {
-                (self.actual.len() != self.expected.len())
-                    .then(|| self.actual.len().min(self.expected.len()))
-            })
-    }
-}
-
-fn validate_case(case: &BabelCase) -> Result<(), String> {
-    let artifacts = generate_artifacts(case)?;
-    let Some(offset) = artifacts.first_difference() else {
-        return Ok(());
-    };
-
-    Err(format!(
-        "{}: transformed output differs from output.js at byte {offset} (actual: {} bytes, expected: {} bytes)",
-        case.name,
-        artifacts.actual.len(),
-        artifacts.expected.len(),
-    ))
-}
-
-fn generate_artifacts(case: &BabelCase) -> Result<Artifacts, String> {
-    let actual = transform_input(case)?;
-    let expected = normalize_expected_output(case)?;
-    Ok(Artifacts { actual, expected })
-}
-
-fn transform_input(case: &BabelCase) -> Result<Vec<u8>, String> {
-    let source = case.input.as_bytes();
-    let allocator = Allocator::new();
-    let mut ast = Ast::new(source, &allocator);
-    let program = parse_program(&mut ast, case.source_type(), case.lang(), "input.js parse")?;
-    let semantic = analyze(program, &mut ast);
-    if let Some(diagnostic) = semantic
-        .diagnostics()
-        .iter()
-        .find(|diagnostic| diagnostic.severity == Severity::Error)
-    {
-        return Err(format_diagnostic("input.js semantic", diagnostic));
-    }
-
-    let options: TransformerOptions = case.options.clone().into();
-    Transformer::transform(program, &mut ast, &semantic, options);
-    Ok(print(&allocator, &ast, program, CodegenOptions::default())
-        .code
-        .to_vec())
-}
-
-fn normalize_expected_output(case: &BabelCase) -> Result<Vec<u8>, String> {
-    let source = case.output.as_bytes();
-    let allocator = Allocator::new();
-    let mut ast = Ast::new(source, &allocator);
-    let program = parse_program(&mut ast, case.source_type(), case.lang(), "output.js parse")?;
-    Ok(print(&allocator, &ast, program, CodegenOptions::default())
-        .code
-        .to_vec())
-}
-
-fn parse_program(
-    ast: &mut Ast<'_>,
-    source_type: SourceType,
-    lang: Lang,
-    stage: &str,
-) -> Result<Program, String> {
-    let options = ParserOptions {
-        source_type,
-        lang,
-        ..ParserOptions::default()
-    };
-    let (program, error) = {
-        let result = Parser::init(ast, options, NoTokenParserConfig).parse();
-        let error = result
-            .diagnostics
-            .iter()
-            .find(|diagnostic| diagnostic.severity == Severity::Error)
-            .map(|diagnostic| format_diagnostic(stage, diagnostic));
-        (result.program, error)
-    };
-
-    if let Some(error) = error {
-        return Err(error);
-    }
-    Ok(program)
-}
-
-fn format_diagnostic(stage: &str, diagnostic: &swc_next_ecma_ast::Diagnostic<'_>) -> String {
-    format!(
-        "{stage}: {} at {}..{}",
-        diagnostic.message, diagnostic.span.start, diagnostic.span.end
-    )
-}
-
-fn normalize_path(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
 }
