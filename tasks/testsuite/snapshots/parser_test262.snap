@@ -1,8 +1,10 @@
 parser * test262
 ========================
-Positive Passed: 91035/91092 (99.94%)
+Positive Passed: 91040/91092 (99.94%)
 Negative Passed: 7936/8648 (91.77%)
 Panicked: 0/99740 (0.00%)
+Failed: fixtures/test262/test/annexB/language/function-code/function-redeclaration-block.js - sloppy: semantic: Identifier 'a' has already been declared at 832..833
+Failed: fixtures/test262/test/annexB/language/function-code/function-redeclaration-switch.js - sloppy: semantic: Identifier 'a' has already been declared at 1368..1369
 Failed: fixtures/test262/test/annexB/language/function-code/if-decl-else-decl-a-func-no-skip-try.js - sloppy: semantic: Identifier 'f' has already been declared at 1812..1813
 Failed: fixtures/test262/test/annexB/language/function-code/if-decl-else-decl-a-func-skip-early-err-block.js - sloppy: semantic: Identifier 'f' has already been declared at 1545..1546
 Failed: fixtures/test262/test/annexB/language/function-code/if-decl-else-decl-a-func-skip-early-err-switch.js - sloppy: semantic: Identifier 'f' has already been declared at 1569..1570
@@ -53,7 +55,6 @@ Failed: fixtures/test262/test/annexB/language/global-code/if-stmt-else-decl-glob
 Failed: fixtures/test262/test/annexB/language/global-code/if-stmt-else-decl-global-skip-early-err-switch.js - sloppy: semantic: Identifier 'f' has already been declared at 1489..1490
 Failed: fixtures/test262/test/annexB/language/global-code/if-stmt-else-decl-global-skip-early-err-try.js - sloppy: semantic: Identifier 'f' has already been declared at 1893..1894
 Failed: fixtures/test262/test/annexB/language/global-code/if-stmt-else-decl-global-skip-early-err.js - sloppy: semantic: Identifier 'f' has already been declared at 1286..1287
-Failed: fixtures/test262/test/annexB/language/statements/for-in/nonstrict-initializer.js - sloppy: semantic: A for-in/of variable declaration may not have an initializer at 317..330
 Failed: fixtures/test262/test/built-ins/RegExp/property-escapes/binary-property-with-value-ASCII_-_F-negated.js - sloppy: expected a parse or early error, but pipeline succeeded
 Failed: fixtures/test262/test/built-ins/RegExp/property-escapes/binary-property-with-value-ASCII_-_F-negated.js - strict: expected a parse or early error, but pipeline succeeded
 Failed: fixtures/test262/test/built-ins/RegExp/property-escapes/binary-property-with-value-ASCII_-_F.js - sloppy: expected a parse or early error, but pipeline succeeded
@@ -436,9 +437,6 @@ Failed: fixtures/test262/test/built-ins/RegExp/prototype/unicodeSets/breaking-ch
 Failed: fixtures/test262/test/built-ins/RegExp/prototype/unicodeSets/breaking-change-from-u-to-v-27.js - strict: expected a parse or early error, but pipeline succeeded
 Failed: fixtures/test262/test/built-ins/RegExp/prototype/unicodeSets/breaking-change-from-u-to-v-28.js - sloppy: expected a parse or early error, but pipeline succeeded
 Failed: fixtures/test262/test/built-ins/RegExp/prototype/unicodeSets/breaking-change-from-u-to-v-28.js - strict: expected a parse or early error, but pipeline succeeded
-Failed: fixtures/test262/test/language/expressions/class/decorator/syntax/valid/decorator-call-expr-identifier-reference-yield.js - sloppy: semantic: 'yield' is reserved in strict mode and cannot be used as an identifier reference at 1350..1355
-Failed: fixtures/test262/test/language/expressions/class/decorator/syntax/valid/decorator-member-expr-identifier-reference-yield.js - sloppy: semantic: 'yield' is reserved in strict mode and cannot be used as an identifier reference at 966..971
-Failed: fixtures/test262/test/language/expressions/class/decorator/syntax/valid/decorator-parenthesized-expr-identifier-reference-yield.js - sloppy: semantic: 'yield' is reserved in strict mode and cannot be used as an identifier reference at 1554..1559
 Failed: fixtures/test262/test/language/literals/regexp/early-err-arithmetic-modifiers-add-remove-i.js - sloppy: expected a parse or early error, but pipeline succeeded
 Failed: fixtures/test262/test/language/literals/regexp/early-err-arithmetic-modifiers-add-remove-i.js - strict: expected a parse or early error, but pipeline succeeded
 Failed: fixtures/test262/test/language/literals/regexp/early-err-arithmetic-modifiers-add-remove-m.js - sloppy: expected a parse or early error, but pipeline succeeded
@@ -769,6 +767,3 @@ Failed: fixtures/test262/test/language/literals/regexp/u-unicode-esc-non-hex.js 
 Failed: fixtures/test262/test/language/literals/regexp/u-unicode-esc-non-hex.js - strict: expected a parse or early error, but pipeline succeeded
 Failed: fixtures/test262/test/language/literals/regexp/unicode-escape-nls-err.js - sloppy: expected a parse or early error, but pipeline succeeded
 Failed: fixtures/test262/test/language/literals/regexp/unicode-escape-nls-err.js - strict: expected a parse or early error, but pipeline succeeded
-Failed: fixtures/test262/test/language/statements/class/decorator/syntax/valid/decorator-call-expr-identifier-reference-yield.js - sloppy: semantic: 'yield' is reserved in strict mode and cannot be used as an identifier reference at 1422..1427
-Failed: fixtures/test262/test/language/statements/class/decorator/syntax/valid/decorator-member-expr-identifier-reference-yield.js - sloppy: semantic: 'yield' is reserved in strict mode and cannot be used as an identifier reference at 1038..1043
-Failed: fixtures/test262/test/language/statements/class/decorator/syntax/valid/decorator-parenthesized-expr-identifier-reference-yield.js - sloppy: semantic: 'yield' is reserved in strict mode and cannot be used as an identifier reference at 1626..1631

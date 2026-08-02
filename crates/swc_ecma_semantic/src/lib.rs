@@ -6,227 +6,357 @@
 #![deny(clippy::all)]
 #![deny(unused)]
 
-mod analyzer;
-mod module_record;
-mod scope;
-mod symbol;
-
 use oxc_index::Idx;
-
-pub use module_record::{ExportRecord, ImportRecord, ModuleRecord, ModuleRecordNameKind};
-pub use scope::{Scope, ScopeFlags, ScopeKind, ScopeTree};
-pub use swc_next_ecma_ast::{Diagnostic, Label, ScopeId, Severity, SymbolId};
-pub use symbol::{
-    Reference, ReferenceFlags, ReferenceId, ReferenceKind, Symbol, SymbolFlags, SymbolTable,
+use swc_next_allocator::{
+    hash_map::{HashMap as ArenaHashMap, Values},
+    vec::Vec as ArenaVec,
 };
-
 use swc_next_ecma_ast::{
-    Ast, NodeId, NodeKind, Program, Traverse, TraverseAction, TraverseCtx, TraverseWith,
+    Ast, Diagnostic, NodeId, Program, ScopeId, SymbolId, TraverseCtx, TraverseWith,
 };
 
-/// Complete semantic information for one parsed source file.
+use crate::{binder::Range, checker::Checker, context::SemanticContext, scope::ScopeTree};
+
+mod binder;
+mod checker;
+mod context;
+mod ecmascript;
+pub mod scope;
+
+pub use binder::{Reference, ReferenceFlags, ReferenceSpace, Symbol, SymbolFlags};
+pub use swc_next_ecma_ast::ReferenceId;
+
+type ScopeMap<'a> = ArenaHashMap<'a, &'a [u8], SymbolId>;
+
+/// The complete semantic model of a tree, with every scope, symbol,
+/// and reference fully resolved and cross-indexed. Backed by the
+/// tree's arena and valid for the lifetime of the tree.
 ///
-/// The model contains every scope, symbol, and reference, fully resolved and
-/// cross-indexed. It is a snapshot of the AST at analysis time; run
-/// [`analyze`] again after mutating bindings or scopes.
+/// The query methods connect declaration nodes, reference nodes,
+/// containing scopes, parents, uses, and name lookup without rebuilding
+/// indexes outside the arena-backed model.
 #[derive(Debug)]
-pub struct SemanticModel {
-    /// Every lexical scope, indexed by [`ScopeId`].
-    pub scopes: ScopeTree,
-    /// Every symbol and reference, indexed by their dense IDs.
-    pub symbols: SymbolTable,
-    /// Innermost lexical scope containing each AST node.
-    pub node_scopes: Vec<ScopeId>,
-    /// Symbol declared by or resolved at each node.
-    pub node_symbols: Vec<Option<SymbolId>>,
-    /// Reference recorded at each node.
-    pub node_references: Vec<Option<ReferenceId>>,
-    /// Pre-order traversal index for each node.
-    pub node_order: Vec<u64>,
-    module_record: ModuleRecord,
-    diagnostics: Vec<Diagnostic<'static>>,
+pub struct Semantic<'a> {
+    /// Every scope, indexed by [`ScopeId`].
+    scopes: ScopeTree<'a>,
+    /// Every symbol, in declaration order, indexed by [`SymbolId`].
+    symbols: ArenaVec<'a, Symbol>,
+    /// Every reference, in source order, indexed by [`ReferenceId`].
+    references: ArenaVec<'a, Reference>,
+    decl_nodes: ArenaVec<'a, NodeId>,
+    use_ids: ArenaVec<'a, ReferenceId>,
+    use_ranges: ArenaVec<'a, Range>,
+    scope_maps: ArenaVec<'a, ScopeMap<'a>>,
+    hoisting_variables: ArenaVec<'a, ScopeMap<'a>>,
+    node_scopes: ArenaVec<'a, ScopeId>,
+    node_parents: ArenaVec<'a, Option<NodeId>>,
+    node_symbols: ArenaVec<'a, Option<SymbolId>>,
+    node_references: ArenaVec<'a, Option<ReferenceId>>,
 }
 
-pub type Semantic = SemanticModel;
-
-impl SemanticModel {
-    /// Returns the complete scope tree.
-    pub fn scope_tree(&self) -> &ScopeTree {
-        &self.scopes
+impl<'a> Semantic<'a> {
+    /// The symbol with the given id.
+    pub fn symbol(&self, id: SymbolId) -> Symbol {
+        assert!(id.index() < self.symbols.len());
+        self.symbols[id.index()]
     }
 
-    /// Returns the complete symbol and reference table.
-    pub fn symbol_table(&self) -> &SymbolTable {
-        &self.symbols
+    /// The reference with the given id.
+    pub fn reference(&self, id: ReferenceId) -> Reference {
+        assert!(id.index() < self.references.len());
+        self.references[id.index()]
     }
 
-    /// Returns the source file's import and export records.
-    pub fn module_record(&self) -> &ModuleRecord {
-        &self.module_record
-    }
-
-    /// Returns semantic early-error diagnostics.
-    pub fn diagnostics(&self) -> &[Diagnostic<'static>] {
-        &self.diagnostics
-    }
-
-    /// Returns the innermost lexical scope containing `node`.
-    ///
-    /// A scope-creating node maps to the scope it creates.
-    pub fn node_scope(&self, node: NodeId) -> ScopeId {
-        self.node_scopes[node.index()]
-    }
-
-    /// Returns the symbol declared by or resolved at `node`.
-    ///
-    /// Returns `None` when the node neither declares nor references a binding.
-    pub fn node_symbol(&self, node: NodeId) -> Option<SymbolId> {
-        self.node_symbols[node.index()]
-    }
-
-    /// Returns the reference recorded at `node`, if it is a reference site.
-    pub fn node_reference(&self, node: NodeId) -> Option<ReferenceId> {
-        self.node_references[node.index()]
-    }
-
-    pub fn node_order(&self, node: NodeId) -> u64 {
-        self.node_order[node.index()]
-    }
-
-    /// Iterates every scope ID in creation order.
-    pub fn scope_ids(&self) -> impl ExactSizeIterator<Item = ScopeId> + '_ {
-        (0..self.scopes.len()).map(ScopeId::from_usize)
-    }
-
-    /// Iterates every symbol ID in declaration order.
-    pub fn symbol_ids(&self) -> impl ExactSizeIterator<Item = SymbolId> + '_ {
-        (0..self.symbols.symbol_len()).map(SymbolId::from_usize)
-    }
-
-    /// Iterates every reference ID in source order.
-    pub fn reference_ids(&self) -> impl ExactSizeIterator<Item = ReferenceId> + '_ {
-        (0..self.symbols.reference_len()).map(ReferenceId::from_usize)
-    }
-
-    /// Returns the scope with the given ID.
-    pub fn scope(&self, id: ScopeId) -> &Scope {
+    /// The scope with the given id.
+    pub fn scope(&self, id: ScopeId) -> scope::Scope {
         self.scopes.get(id)
     }
 
-    /// Returns the symbol with the given ID.
-    pub fn symbol(&self, id: SymbolId) -> &Symbol {
-        self.symbols.symbol(id)
-    }
-
-    /// Returns the reference with the given ID.
-    pub fn reference(&self, id: ReferenceId) -> &Reference {
-        self.symbols.reference(id)
-    }
-
-    /// Returns every declaration node for `id`, in source order.
+    /// The symbol declared at `node`, or the symbol the reference at
+    /// `node` resolves to. `None` when the node neither declares nor
+    /// references a binding.
     ///
-    /// Symbols formed by legal declaration merging have more than one entry.
-    pub fn symbol_declarations(&self, id: SymbolId) -> &[NodeId] {
-        &self.symbol(id).declarations
+    /// ## Example
+    /// ```ts
+    /// let a = 1; a;
+    /// //  ^ the declared symbol
+    /// //         ^ the same symbol, through the reference
+    /// ```
+    pub fn symbol_of(&self, node: NodeId) -> Option<SymbolId> {
+        assert!(node.index() < self.node_symbols.len());
+        self.node_symbols[node.index()]
+            .or_else(|| self.node_references[node.index()].and_then(|id| self.reference(id).symbol))
     }
 
-    /// Returns every use of `id`, in source order.
-    pub fn references_of(&self, id: SymbolId) -> &[ReferenceId] {
-        &self.symbol(id).references
+    /// The reference recorded at `node`, or `None` when the node is
+    /// not a reference site.
+    pub fn reference_of(&self, node: NodeId) -> Option<ReferenceId> {
+        assert!(node.index() < self.node_references.len());
+        self.node_references[node.index()]
     }
 
-    /// Resolves `name` from `scope` by walking outward through lexical scopes.
-    pub fn resolve_name(&self, scope: ScopeId, name: &[u8]) -> Option<SymbolId> {
-        self.symbols.resolve(&self.scopes, scope, name)
+    /// The innermost lexical scope containing `node`. A scope-creating
+    /// node (function, block, class, ...) maps to the scope it creates;
+    /// that scope's parent is the enclosing scope.
+    pub fn scope_of(&self, node: NodeId) -> ScopeId {
+        assert!(node.index() < self.node_scopes.len());
+        self.node_scopes[node.index()]
     }
 
-    /// Returns whether renaming the symbol can be performed without dynamic
-    /// name-resolution hazards.
-    pub fn symbol_rename_safe(&self, id: SymbolId) -> bool {
-        let symbol = self.symbol(id);
-        !self.scope(symbol.scope).rename_unsafe
-            && !symbol.flags.intersects(SymbolFlags::ANNEX_B_FUNCTION)
+    /// The structural parent of `node`, or `None` at the root.
+    pub fn parent_of(&self, node: NodeId) -> Option<NodeId> {
+        assert!(node.index() < self.node_parents.len());
+        self.node_parents[node.index()]
     }
 
-    /// Returns whether `descendant` is nested inside `ancestor`.
-    pub fn is_descendant_scope(&self, descendant: ScopeId, ancestor: ScopeId) -> bool {
-        self.scopes
-            .ancestors(descendant)
-            .any(|scope| scope == ancestor)
+    /// Walks from `node` up to the root, yielding `node` first.
+    pub fn ancestors(&self, node: Option<NodeId>) -> SemanticAncestorIterator<'_> {
+        assert!(node.is_none_or(|node| node.index() < self.node_parents.len()));
+        SemanticAncestorIterator {
+            node_parents: &self.node_parents,
+            current: node,
+        }
     }
 
-    /// Returns whether a symbol is referenced inside the given scope subtree.
-    pub fn symbol_used_in_subtree(&self, symbol: SymbolId, scope: ScopeId) -> bool {
-        self.references_of(symbol)
-            .iter()
-            .any(|reference| self.is_descendant_scope(self.reference(*reference).scope, scope))
+    /// The `binding_identifier` node of every declaration of `id`, in
+    /// source order. Usually a single element. Symbols whose declarations
+    /// merge (`var` redeclarations, TS overloads, `class` + `interface`)
+    /// have one entry per declaration. [`Semantic::parent_of`] reaches
+    /// the enclosing declarator or declaration from there.
+    ///
+    /// ## Example
+    /// ```ts
+    /// var a = 1; var a = 2;
+    /// //  ^ decls[0]
+    /// //             ^ decls[1], same symbol
+    /// ```
+    ///
+    /// A conflicting redeclaration is recorded here too, aliased onto
+    /// the existing symbol so tooling on broken code still maps the node.
+    pub fn decls(&self, id: SymbolId) -> &[NodeId] {
+        let range = self.symbol(id).decls;
+        let start = range.start as usize;
+        let end = start + range.len as usize;
+        assert!(end <= self.decl_nodes.len());
+        &self.decl_nodes[start..end]
     }
 
-    /// Returns the source file's top-level scope.
-    pub fn top_level_scope_id(&self) -> ScopeId {
-        self.scopes.top_level_scope_id()
+    /// Every use site of `id`, in source order. Declaration sites are
+    /// not uses; those are returned by [`Semantic::decls`].
+    pub fn uses(&self, id: SymbolId) -> &[ReferenceId] {
+        assert!(id.index() < self.use_ranges.len());
+        let range = self.use_ranges[id.index()];
+        let start = range.start as usize;
+        &self.use_ids[start..start + range.len as usize]
+    }
+
+    /// The binding of `name` at `scope` alone, including a hoisting
+    /// `var` passing through on its way to its hoist target. This does
+    /// not walk the scope chain; see [`Semantic::lookup`].
+    ///
+    /// ## Example
+    /// ```ts
+    /// function f() { { var a; } }
+    /// //             ^ binding here finds `a`, whose symbol
+    /// //               lives in the function scope
+    /// ```
+    pub fn binding(&self, scope_id: ScopeId, name: &[u8]) -> Option<SymbolId> {
+        assert!(scope_id.index() < self.scope_maps.len());
+        self.scope_maps[scope_id.index()]
+            .get(name)
+            .copied()
+            .or_else(|| self.hoisting_variables[scope_id.index()].get(name).copied())
+    }
+
+    /// Every symbol declared directly in `scope`. A hoisting `var`
+    /// appears in its hoist target, not in blocks it passes through.
+    pub fn bindings(&self, scope_id: ScopeId) -> BindingIterator<'_> {
+        assert!(scope_id.index() < self.scope_maps.len());
+        BindingIterator {
+            inner: self.scope_maps[scope_id.index()].values(),
+        }
+    }
+
+    /// The nearest binding of `name` visible in `space` from `scope`,
+    /// walking the scope chain the way reference resolution does. A
+    /// binding outside the space does not shadow. [`ReferenceSpace::Any`]
+    /// matches by name alone.
+    ///
+    /// ## Example
+    /// ```ts
+    /// type T = string;
+    /// function f() {
+    ///   const T = 1;
+    ///   // type space finds the outer alias, value space the local const
+    /// }
+    /// ```
+    pub fn lookup(
+        &self,
+        scope_id: ScopeId,
+        name: &[u8],
+        space: ReferenceSpace,
+    ) -> Option<SymbolId> {
+        for ancestor in self.scopes.ancestors(Some(scope_id)) {
+            let Some(&id) = self.scope_maps[ancestor.index()].get(name) else {
+                continue;
+            };
+            if self.symbol(id).flags.visible_in(space) {
+                return Some(id);
+            }
+        }
+        None
+    }
+
+    /// Iterates every `(id, scope)` pair in creation order.
+    pub fn iter_scopes(&self) -> ScopeIterator<'_> {
+        ScopeIterator {
+            list: &self.scopes.list,
+            index: 0,
+        }
+    }
+
+    /// Iterates every `(id, symbol)` pair in declaration order.
+    pub fn iter_symbols(&self) -> SymbolIterator<'_> {
+        SymbolIterator {
+            symbols: &self.symbols,
+            index: 0,
+        }
+    }
+
+    /// Iterates every `(id, reference)` pair in source order.
+    pub fn iter_references(&self) -> ReferenceIterator<'_> {
+        ReferenceIterator {
+            references: &self.references,
+            index: 0,
+        }
     }
 }
 
-/// Analyze a typed flat AST and write resolved symbol IDs back to identifier nodes.
-pub fn analyze<'a>(program: Program, ast: &mut Ast<'a>) -> SemanticModel {
-    let mut parts = analyzer::analyze_program(program, ast);
-    let module_record = module_record::collect(
-        program,
-        ast,
-        &parts.scopes,
-        &parts.symbols,
-        &mut parts.diagnostics,
-    );
-    let mut node_symbols = vec![None; ast.node_count()];
-    let mut node_references = vec![None; ast.node_count()];
-    for (symbol_id, symbol) in parts.symbols.symbols() {
-        for declaration in &symbol.declarations {
-            node_symbols[declaration.index()] = Some(symbol_id);
-        }
-    }
-    for (reference_id, reference) in parts.symbols.references() {
-        node_references[reference.node.index()] = Some(reference_id);
-        if let Some(symbol_id) = reference.symbol_id {
-            node_symbols[reference.node.index()] = Some(symbol_id);
-        }
-    }
-    let node_order = build_traversal_order(program, ast);
-    SemanticModel {
-        scopes: parts.scopes,
-        symbols: parts.symbols,
-        node_scopes: parts.node_scopes,
-        node_symbols,
-        node_references,
-        node_order,
-        module_record,
-        diagnostics: parts.diagnostics,
+/// A `(id, scope)` pair yielded by [`Semantic::iter_scopes`].
+pub struct ScopeEntry {
+    pub id: ScopeId,
+    pub scope: scope::Scope,
+}
+
+/// A `(id, symbol)` pair yielded by [`Semantic::iter_symbols`].
+pub struct SymbolEntry {
+    pub id: SymbolId,
+    pub symbol: Symbol,
+}
+
+/// A `(id, reference)` pair yielded by [`Semantic::iter_references`].
+pub struct ReferenceEntry {
+    pub id: ReferenceId,
+    pub reference: Reference,
+}
+
+pub struct ScopeIterator<'a> {
+    list: &'a [scope::Scope],
+    index: u32,
+}
+
+impl Iterator for ScopeIterator<'_> {
+    type Item = ScopeEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let index = self.index as usize;
+        let scope = *self.list.get(index)?;
+        self.index += 1;
+        Some(ScopeEntry {
+            id: ScopeId::from_usize(index),
+            scope,
+        })
     }
 }
 
-fn build_traversal_order(program: Program, ast: &mut Ast<'_>) -> Vec<u64> {
-    struct Order {
-        node_order: Vec<u64>,
-        next: u64,
-    }
+pub struct SemanticAncestorIterator<'a> {
+    node_parents: &'a [Option<NodeId>],
+    current: Option<NodeId>,
+}
 
-    impl<'a> Traverse<'a> for Order {
-        fn enter_node(
-            &mut self,
-            node_id: NodeId,
-            _kind: NodeKind,
-            _ctx: &mut TraverseCtx<'_, 'a>,
-        ) -> TraverseAction {
-            self.node_order[node_id.index()] = self.next;
-            self.next += 1;
-            TraverseAction::Proceed
-        }
-    }
+impl Iterator for SemanticAncestorIterator<'_> {
+    type Item = NodeId;
 
-    let mut order = Order {
-        node_order: vec![u64::MAX; ast.node_count()],
-        next: 0,
-    };
-    let _ = program.traverse_with(&mut order, &mut TraverseCtx::new(ast, ()));
-    order.node_order
+    fn next(&mut self) -> Option<Self::Item> {
+        let node = self.current?;
+        assert!(node.index() < self.node_parents.len());
+        self.current = self.node_parents[node.index()];
+        Some(node)
+    }
+}
+
+pub struct BindingIterator<'a> {
+    inner: Values<'a, &'a [u8], SymbolId>,
+}
+
+impl Iterator for BindingIterator<'_> {
+    type Item = SymbolId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().copied()
+    }
+}
+
+pub struct SymbolIterator<'a> {
+    symbols: &'a [Symbol],
+    index: u32,
+}
+
+impl Iterator for SymbolIterator<'_> {
+    type Item = SymbolEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let index = self.index as usize;
+        let symbol = *self.symbols.get(index)?;
+        self.index += 1;
+        Some(SymbolEntry {
+            id: SymbolId::from_usize(index),
+            symbol,
+        })
+    }
+}
+
+pub struct ReferenceIterator<'a> {
+    references: &'a [Reference],
+    index: u32,
+}
+
+impl Iterator for ReferenceIterator<'_> {
+    type Item = ReferenceEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let index = self.index as usize;
+        let reference = *self.references.get(index)?;
+        self.index += 1;
+        Some(ReferenceEntry {
+            id: ReferenceId::from_usize(index),
+            reference,
+        })
+    }
+}
+
+/// Semantic analysis output and its scope-dependent early errors.
+pub struct SemanticReturn<'a> {
+    pub semantic: Semantic<'a>,
+    pub diagnostics: Vec<Diagnostic<'a>>,
+}
+
+/// Runs semantic analysis on a tree. Builds the complete `Semantic`
+/// model and reports the scope-dependent early errors.
+///
+/// Diagnostics are returned separately from parser diagnostics. Their
+/// messages use the tree's arena, so the result is valid as long as the
+/// tree is alive.
+pub fn analyze<'a>(root: Program, ast: &mut Ast<'a>) -> SemanticReturn<'a> {
+    let mut visitor = Checker::new(ast.allocator());
+    let state = SemanticContext::init(root, ast);
+    let mut context = TraverseCtx::new(ast, state);
+    let _ = root.traverse_with(&mut visitor, &mut context);
+    let sem = context.state.finalize(context.ast);
+
+    visitor.check_unresolved_exports(ast, &sem);
+    SemanticReturn {
+        semantic: sem,
+        diagnostics: visitor.into_diagnostics(),
+    }
 }

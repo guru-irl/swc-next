@@ -1,32 +1,75 @@
-use oxc_index::{Idx, IndexVec};
-use swc_next_ecma_ast::{NodeId, ScopeId, SourceType};
+use oxc_index::Idx;
+use swc_next_allocator::{Allocator, vec::Vec as ArenaVec};
+use swc_next_ecma_ast::{
+    Ast, Class, ClassType, Function, FunctionBody, FunctionType, NodeId, NodeKindData, Program,
+    ScopeId, SourceType,
+};
 
-/// Kind of JavaScript or TypeScript construct that created a scope.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+use crate::ecmascript;
+
+/// A single lexical scope in the scope tree.
+///
+/// ## Example
+/// ```ts
+/// function f() { { var a; let b; } }
+/// //       ^ creates a function scope, a hoist target
+/// //             ^ creates a block scope where `b` lives,
+/// //               while `a` hoists to the function scope
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct Scope {
+    /// The AST node that created this scope.
+    pub node: NodeId,
+    /// Parent scope, or `None` for the root.
+    pub parent: Option<ScopeId>,
+    /// Nearest ancestor (or self) where `var` declarations hoist to.
+    pub hoist_target: ScopeId,
+    pub kind: ScopeKind,
+    pub flags: ScopeFlags,
+}
+
+/// What kind of JavaScript construct created a scope.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ScopeKind {
-    /// ECMAScript GlobalDeclarationInstantiation.
+    /// Section 16.1.7 GlobalDeclarationInstantiation.
     Global,
-    /// Module declaration environment. Modules are always strict.
+    /// Section 16.2.1.6 ModuleDeclarationEnvironmentSetup.
+    /// Modules are always strict.
     Module,
-    /// Function declaration instantiation.
+    /// Section 10.2.11 FunctionDeclarationInstantiation.
+    /// Also used for the synthetic CommonJS top-level function wrapper.
     Function,
-    /// Block runtime semantics and BlockDeclarationInstantiation.
+    /// Section 14.2.2 Block runtime semantics, 14.2.3 BlockDeclarationInstantiation.
     Block,
-    /// Class definition evaluation.
+    /// Section 15.7.14 ClassDefinitionEvaluation.
     Class,
-    /// Class static block evaluation.
+    /// Section 15.7.11 ClassStaticBlockDefinitionEvaluation.
     StaticBlock,
-    /// Intermediate environment containing a named function or class
-    /// expression's name.
+    /// Intermediate scope holding a named function/class expression's
+    /// name (sections 15.2.5 and 15.7.14). The name binds in its own
+    /// environment between the outer scope and the body, so it never
+    /// conflicts with same-named bindings inside the body:
     ///
-    /// This sits between the outer scope and the body scope so the expression
-    /// name cannot conflict with a same-named binding inside the body.
+    /// ```text
+    /// outer scope (x lives here)
+    ///   expression-name scope (foo lives here)
+    ///     function scope (body bindings live here)
+    /// ```
     ExpressionName,
-    /// TypeScript namespace body.
-    ///
-    /// This is a `var` hoist target so variables do not escape into the
-    /// surrounding scope.
+    /// TS namespace body. Acts as a var-hoist target so vars
+    /// declared inside don't escape to the surrounding scope.
     TsModule,
+    /// Separate var environment of a function body whose parameter
+    /// list contains expressions (10.2.11 FunctionDeclarationInstantiation
+    /// step 28):
+    ///
+    /// ```ts
+    /// function f(a = () => x) { var x }
+    /// //       ^ function scope: a
+    /// //                        ^ function-body scope: x,
+    /// //                          invisible to the default's closure
+    /// ```
+    FunctionBody,
 }
 
 impl ScopeKind {
@@ -34,210 +77,382 @@ impl ScopeKind {
     pub fn is_hoist_target(self) -> bool {
         matches!(
             self,
-            Self::Global | Self::Module | Self::Function | Self::StaticBlock | Self::TsModule
+            Self::Global
+                | Self::Module
+                | Self::Function
+                | Self::StaticBlock
+                | Self::TsModule
+                | Self::FunctionBody
         )
     }
 }
 
 /// Scope-level flags.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct ScopeFlags {
     /// Whether this scope is in strict mode.
     pub strict: bool,
 }
 
-/// A single lexical scope in the scope tree.
-///
-/// ## Example
-///
-/// ```ts
-/// function f() { { var a; let b; } }
-/// //       ^ function scope and hoist target
-/// //             ^ block scope where `b` lives; `a` hoists outward
-/// ```
-#[derive(Clone, Debug)]
-pub struct Scope {
-    /// AST node that created this scope.
-    pub node: NodeId,
-    /// Parent scope, or `None` for the root.
-    pub parent: Option<ScopeId>,
-    /// Nearest ancestor, or this scope itself, where `var` declarations hoist.
-    pub hoist_target: ScopeId,
-    /// First directly nested scope, if any.
-    pub first_child: Option<ScopeId>,
-    /// Next scope with the same parent, if any.
-    pub next_sibling: Option<ScopeId>,
-    /// Construct that created this scope.
-    pub kind: ScopeKind,
-    /// Scope-level semantic flags.
-    pub flags: ScopeFlags,
-    /// Cached strict-mode state.
-    pub strict: bool,
-    /// Whether this scope contains a direct call to `eval`.
-    pub has_direct_eval: bool,
-    /// Whether this scope contains a `with` statement.
-    pub has_with: bool,
-    /// Whether dynamic name lookup makes lexical renaming unsafe.
-    pub rename_unsafe: bool,
+/// All scopes of a tree, indexed by [`ScopeId`].
+#[derive(Debug)]
+pub struct ScopeTree<'a> {
+    pub(crate) list: ArenaVec<'a, Scope>,
 }
 
-/// All scopes for one source file, indexed by [`ScopeId`].
-#[derive(Clone, Debug)]
-pub struct ScopeTree {
-    scopes: IndexVec<ScopeId, Scope>,
-    root: ScopeId,
-    top_level: ScopeId,
-}
+impl<'a> ScopeTree<'a> {
+    /// The scope with the given id.
+    #[inline]
+    pub fn get(&self, id: ScopeId) -> Scope {
+        assert!(id.index() < self.list.len());
+        self.list[id.index()]
+    }
 
-impl ScopeTree {
-    pub(crate) fn new(root_node: NodeId, source_type: SourceType, source_strict: bool) -> Self {
-        let mut scopes = IndexVec::new();
-        let global_strict = source_type == SourceType::Script && source_strict;
-        let root: ScopeId = scopes.push(Scope {
-            node: root_node,
-            parent: None,
-            hoist_target: ScopeId::from_usize(0),
-            first_child: None,
-            next_sibling: None,
-            kind: ScopeKind::Global,
-            flags: ScopeFlags {
-                strict: global_strict,
-            },
-            strict: global_strict,
-            has_direct_eval: false,
-            has_with: false,
-            rename_unsafe: false,
-        });
-        debug_assert_eq!(root.index(), 0);
-        let top_level = match source_type {
-            SourceType::Script => root,
-            SourceType::CommonJs | SourceType::Module => {
-                let top_level = ScopeId::from_usize(scopes.len());
-                let (kind, strict) = match source_type {
-                    SourceType::CommonJs => (ScopeKind::Function, source_strict),
-                    SourceType::Module => (ScopeKind::Module, true),
-                    SourceType::Script => unreachable!(),
-                };
-                let scope = scopes.push(Scope {
-                    node: root_node,
-                    parent: Some(root),
-                    hoist_target: top_level,
-                    first_child: None,
-                    next_sibling: None,
-                    kind,
-                    flags: ScopeFlags { strict },
-                    strict,
-                    has_direct_eval: false,
-                    has_with: false,
-                    rename_unsafe: false,
-                });
-                debug_assert_eq!(scope, top_level);
-                scopes[root].first_child = Some(scope);
-                scope
-            }
-        };
-        Self {
-            scopes,
-            root,
-            top_level,
+    /// Walks from `start` up to the root, yielding `start` first.
+    pub fn ancestors(&self, start: Option<ScopeId>) -> AncestorIterator<'_> {
+        assert!(start.is_none_or(|id| id.index() < self.list.len()));
+        AncestorIterator {
+            list: &self.list,
+            current: start,
         }
     }
-
-    /// Returns the global root scope.
-    pub fn root_scope_id(&self) -> ScopeId {
-        self.root
-    }
-
-    /// Returns the source file's top-level scope.
-    ///
-    /// This is the module scope for ES modules, the wrapper function scope for
-    /// CommonJS modules, and the global scope for scripts.
-    pub fn top_level_scope_id(&self) -> ScopeId {
-        self.top_level
-    }
-
-    /// Returns the number of scopes.
-    pub fn len(&self) -> usize {
-        self.scopes.len()
-    }
-
-    /// Returns whether the scope tree is empty.
-    pub fn is_empty(&self) -> bool {
-        self.scopes.is_empty()
-    }
-
-    /// Returns the scope with the given ID.
-    pub fn get(&self, id: ScopeId) -> &Scope {
-        &self.scopes[id]
-    }
-
-    pub(crate) fn get_mut(&mut self, id: ScopeId) -> &mut Scope {
-        &mut self.scopes[id]
-    }
-
-    /// Iterates scopes in creation order.
-    pub fn iter(&self) -> impl Iterator<Item = (ScopeId, &Scope)> {
-        self.scopes.iter_enumerated()
-    }
-
-    /// Walks from `start` to the root, yielding `start` first.
-    pub fn ancestors(&self, start: ScopeId) -> ScopeAncestors<'_> {
-        ScopeAncestors {
-            tree: self,
-            next: Some(start),
-        }
-    }
-
-    pub(crate) fn push(
-        &mut self,
-        parent: ScopeId,
-        node: NodeId,
-        kind: ScopeKind,
-        flags: ScopeFlags,
-    ) -> ScopeId {
-        let next_id = ScopeId::from_usize(self.scopes.len());
-        let hoist_target = if kind.is_hoist_target() {
-            next_id
-        } else {
-            self.scopes[parent].hoist_target
-        };
-        let child = self.scopes.push(Scope {
-            node,
-            parent: Some(parent),
-            hoist_target,
-            first_child: None,
-            next_sibling: None,
-            kind,
-            flags,
-            strict: flags.strict,
-            has_direct_eval: false,
-            has_with: false,
-            rename_unsafe: false,
-        });
-        if let Some(mut sibling) = self.scopes[parent].first_child {
-            while let Some(next) = self.scopes[sibling].next_sibling {
-                sibling = next;
-            }
-            self.scopes[sibling].next_sibling = Some(child);
-        } else {
-            self.scopes[parent].first_child = Some(child);
-        }
-        child
-    }
 }
 
-/// Iterator over a scope and its ancestors.
-pub struct ScopeAncestors<'tree> {
-    tree: &'tree ScopeTree,
-    next: Option<ScopeId>,
+/// Yields each scope id from a starting scope up to the root.
+pub struct AncestorIterator<'a> {
+    list: &'a [Scope],
+    current: Option<ScopeId>,
 }
 
-impl Iterator for ScopeAncestors<'_> {
+impl Iterator for AncestorIterator<'_> {
     type Item = ScopeId;
 
+    /// The next scope id, or `None` past the root.
     fn next(&mut self) -> Option<Self::Item> {
-        let current = self.next?;
-        self.next = self.tree.get(current).parent;
-        Some(current)
+        let id = self.current?;
+        assert!(id.index() < self.list.len());
+        self.current = self.list[id.index()].parent;
+        Some(id)
     }
+}
+
+pub(crate) struct ScopeTracker<'a> {
+    allocator: &'a Allocator,
+    pub(crate) scopes: ArenaVec<'a, Scope>,
+    // active scope. follow the parent chain to walk the path.
+    pub(crate) current: ScopeId,
+    // scopes saved while a decorator subtree retargets `current`,
+    // one entry per nested decorator. see `enter` on `Decorator`.
+    decorator_saved: ArenaVec<'a, ScopeId>,
+}
+
+impl<'a> ScopeTracker<'a> {
+    pub fn init(root: Program, tree: &Ast<'a>) -> Self {
+        assert!(tree.node_count() > 0);
+
+        let allocator = tree.allocator();
+        let estimated_scopes = 16usize.max(tree.node_count() / 16);
+        let mut tracker = Self {
+            allocator,
+            scopes: ArenaVec::with_capacity_in(estimated_scopes, allocator),
+            current: ScopeId::ROOT,
+            decorator_saved: ArenaVec::new_in(allocator),
+        };
+        tracker.push_root(root.node_id(), tree.source_type());
+        tracker
+    }
+
+    fn push_root(&mut self, root_node: NodeId, source_type: SourceType) {
+        assert!(self.scopes.is_empty());
+        self.scopes.push(Scope {
+            node: root_node,
+            parent: None,
+            hoist_target: ScopeId::ROOT,
+            kind: ScopeKind::Global,
+            flags: ScopeFlags::default(),
+        });
+        self.current = ScopeId::ROOT;
+
+        match source_type {
+            SourceType::Module => {
+                self.push_scope(ScopeKind::Module, root_node, ScopeFlags { strict: true });
+            }
+            SourceType::CommonJs => {
+                self.push_scope(ScopeKind::Function, root_node, ScopeFlags::default());
+            }
+            SourceType::Script => {}
+        }
+    }
+
+    pub fn push_scope(&mut self, kind: ScopeKind, node: NodeId, flags: ScopeFlags) {
+        let _allocator = self.allocator;
+        // The current length is the about-to-be-assigned id and must fit u32.
+        assert!(self.scopes.len() < u32::MAX as usize);
+        let id = ScopeId::from_usize(self.scopes.len());
+        let parent = self.current_scope();
+        self.scopes.push(Scope {
+            node,
+            parent: Some(self.current),
+            hoist_target: if kind.is_hoist_target() {
+                id
+            } else {
+                parent.hoist_target
+            },
+            kind,
+            flags,
+        });
+        self.current = id;
+    }
+
+    fn pop_scope(&mut self) {
+        // Root and its source-type wrapper are never popped directly by the ordinary walk.
+        assert_ne!(self.current.index(), 0);
+        self.current = self
+            .current_scope()
+            .parent
+            .expect("non-root scopes have a parent");
+    }
+
+    pub fn enter(&mut self, tree: &Ast, index: NodeId, parent: Option<NodeId>) {
+        match tree.kind_data(index) {
+            NodeKindData::Directive(directive) => {
+                if tree.string(directive.value(tree)) == b"use strict" {
+                    self.current_mut().flags.strict = true;
+                }
+            }
+            NodeKindData::Function(function) => {
+                let flags = if self.has_retroactive_use_strict(tree, function.body(tree)) {
+                    ScopeFlags { strict: true }
+                } else {
+                    self.inherit_strict_flag()
+                };
+                if is_named_function_expression(tree, function) {
+                    // The expression-name scope sits between outer and body.
+                    self.push_scope(ScopeKind::ExpressionName, index, flags);
+                }
+                self.push_scope(ScopeKind::Function, index, flags);
+            }
+            NodeKindData::TsFunction(_) => {
+                self.push_scope(ScopeKind::Function, index, self.inherit_strict_flag());
+            }
+            NodeKindData::ArrowFunctionExpression(arrow) => {
+                let body = arrow.body(tree).node_id();
+                let flags = match tree.kind_data(body) {
+                    NodeKindData::FunctionBody(body)
+                        if self.has_retroactive_use_strict(tree, body) =>
+                    {
+                        ScopeFlags { strict: true }
+                    }
+                    _ => self.inherit_strict_flag(),
+                };
+                self.push_scope(ScopeKind::Function, index, flags);
+            }
+            NodeKindData::FunctionBody(_) => {
+                // Pushed only when the parent function's parameter list
+                // contains expressions; see ScopeKind::FunctionBody.
+                let Some(parent) = parent else { return };
+                let params = match tree.kind_data(parent) {
+                    NodeKindData::Function(function) => function.params(tree),
+                    NodeKindData::ArrowFunctionExpression(arrow) => arrow.params(tree),
+                    _ => return,
+                };
+                if ecmascript::find_parameter_expression(tree, params).is_some() {
+                    self.push_scope(ScopeKind::FunctionBody, index, self.inherit_strict_flag());
+                }
+            }
+            NodeKindData::BlockStatement(_) => {
+                // 14.15.2 gives catch parameters and the block separate
+                // environments. Folding them is unobservable and makes the
+                // 14.15.1 conflict a single-scope lookup, except when a
+                // parameter expression runs before the block environment:
+                //
+                //   catch (e)       { let e }   // shared, conflict found
+                //   catch ([e = 1]) { let e }   // split; default cannot see let
+                let catch = match tree.kind_data(self.current_scope().node) {
+                    NodeKindData::CatchClause(catch) => Some(catch),
+                    _ => None,
+                };
+                let shares_catch_scope = self.current_scope().kind == ScopeKind::Block
+                    && catch.is_some_and(|catch| {
+                        catch.body(tree).node_id() == index
+                            && catch.param(tree).is_none_or(|param| {
+                                ecmascript::find_pattern_expression(tree, Some(param.node_id()))
+                                    .is_none()
+                            })
+                    });
+                if !shares_catch_scope {
+                    self.push_scope(ScopeKind::Block, index, self.inherit_strict_flag());
+                }
+            }
+            NodeKindData::SwitchCase(_) => {
+                // One case-block scope per switch, shared by every case and
+                // created at the first case. Per 14.12.4, the discriminant
+                // evaluates before this environment exists:
+                //
+                //   switch (x) { case 1: let x }
+                //   //      ^ outer scope    ^ case-block scope
+                if self.current_scope().node != parent.expect("a switch case has a parent") {
+                    self.push_scope(
+                        ScopeKind::Block,
+                        parent.expect("a switch case has a parent"),
+                        self.inherit_strict_flag(),
+                    );
+                }
+            }
+            NodeKindData::TsEnumBody(_) => {
+                // TSC resolves unqualified member references inside the body.
+                self.push_scope(ScopeKind::Block, index, self.inherit_strict_flag());
+            }
+            NodeKindData::ForStatement(_)
+            | NodeKindData::ForInStatement(_)
+            | NodeKindData::ForOfStatement(_)
+            | NodeKindData::CatchClause(_)
+            | NodeKindData::TsInterfaceDeclaration(_)
+            | NodeKindData::TsTypeAliasDeclaration(_)
+            | NodeKindData::TsFunctionType(_)
+            | NodeKindData::TsConstructorType(_)
+            | NodeKindData::TsMethodSignature(_)
+            | NodeKindData::TsCallSignatureDeclaration(_)
+            | NodeKindData::TsConstructSignatureDeclaration(_)
+            | NodeKindData::TsIndexSignature(_)
+            | NodeKindData::TsMappedType(_)
+            | NodeKindData::TsConditionalType(_) => {
+                self.push_scope(ScopeKind::Block, index, self.inherit_strict_flag());
+            }
+            NodeKindData::TsModuleBlock(_) => {
+                self.push_scope(ScopeKind::TsModule, index, self.inherit_strict_flag());
+            }
+            NodeKindData::Class(class) => {
+                // Classes are always strict mode (section 15.7.14).
+                let flags = ScopeFlags { strict: true };
+                if is_named_class_expression(tree, class) {
+                    self.push_scope(ScopeKind::ExpressionName, index, flags);
+                }
+                self.push_scope(ScopeKind::Class, index, flags);
+            }
+            NodeKindData::StaticBlock(_) => {
+                self.push_scope(ScopeKind::StaticBlock, index, self.inherit_strict_flag());
+            }
+            NodeKindData::Decorator(_) => {
+                // Decorators evaluate in the scope enclosing the class:
+                // neither its type parameters nor an expression's own name is
+                // visible, so retarget `current` for the decorator subtree.
+                self.decorator_saved.push(self.current);
+                self.current = self.decorator_eval_scope();
+            }
+            _ => {}
+        }
+    }
+
+    // the parent of the nearest class scope, past a named class
+    // expression's name scope
+    fn decorator_eval_scope(&self) -> ScopeId {
+        for id in self.ancestors(Some(self.current)) {
+            if self.get(id).kind != ScopeKind::Class {
+                continue;
+            }
+            let Some(parent) = self.get(id).parent else {
+                break;
+            };
+            if self.get(parent).kind == ScopeKind::ExpressionName {
+                return self.get(parent).parent.unwrap_or(parent);
+            }
+            return parent;
+        }
+        self.current
+    }
+
+    // "use strict" applies retroactively to the whole function including
+    // its parameter list, so peek into the body and set the flag at
+    // scope-creation time, before any parameter is visited
+    fn has_retroactive_use_strict(&self, tree: &Ast, body: FunctionBody) -> bool {
+        for directive in body.directives(tree).iter() {
+            let directive = tree.get_node_in_sub_range(directive);
+            if tree.string(directive.value(tree)) == b"use strict" {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[inline]
+    fn inherit_strict_flag(&self) -> ScopeFlags {
+        ScopeFlags {
+            strict: self.current_scope().flags.strict,
+        }
+    }
+
+    // A node pops exactly the scopes recording it as creator. Two for a
+    // named function or class expression, zero for a shared or never-created
+    // scope. Cannot drift from `enter`.
+    pub fn exit(&mut self, index: NodeId, data: NodeKindData) {
+        match data {
+            NodeKindData::Program(_) => {}
+            NodeKindData::Decorator(_) => {
+                // Every decorator enter saved exactly one scope.
+                self.current = self
+                    .decorator_saved
+                    .pop()
+                    .expect("every decorator enter saved exactly one scope");
+            }
+            _ => {
+                while self.current.index() != 0 && self.current_scope().node == index {
+                    self.pop_scope();
+                }
+            }
+        }
+    }
+
+    /// The current scope.
+    #[inline]
+    pub fn current_scope(&self) -> Scope {
+        self.get(self.current)
+    }
+
+    #[inline]
+    // Mutable view used for the tracker's strict-mode bookkeeping.
+    fn current_mut(&mut self) -> &mut Scope {
+        &mut self.scopes[self.current.index()]
+    }
+
+    /// The scope where a `var` declared here would land.
+    #[inline]
+    pub fn hoist_target(&self) -> ScopeId {
+        self.current_scope().hoist_target
+    }
+
+    /// The scope with the given id.
+    #[inline]
+    pub fn get(&self, id: ScopeId) -> Scope {
+        assert!(id.index() < self.scopes.len());
+        self.scopes[id.index()]
+    }
+
+    /// Whether the current scope is in strict mode.
+    #[inline]
+    pub fn is_strict(&self) -> bool {
+        self.current_scope().flags.strict
+    }
+
+    /// Walks from `start` up to the root, yielding `start` first.
+    pub fn ancestors(&self, start: Option<ScopeId>) -> AncestorIterator<'_> {
+        assert!(start.is_none_or(|id| id.index() < self.scopes.len()));
+        AncestorIterator {
+            list: &self.scopes,
+            current: start,
+        }
+    }
+
+    /// Finalizes into an immutable [`ScopeTree`].
+    pub fn into_scope_tree(self) -> ScopeTree<'a> {
+        ScopeTree { list: self.scopes }
+    }
+}
+
+fn is_named_function_expression(tree: &Ast<'_>, function: Function) -> bool {
+    function.function_type(tree) == FunctionType::FunctionExpression && function.id(tree).is_some()
+}
+
+fn is_named_class_expression(tree: &Ast<'_>, class: Class) -> bool {
+    class.class_type(tree) != ClassType::ClassDeclaration && class.id(tree).is_some()
 }
