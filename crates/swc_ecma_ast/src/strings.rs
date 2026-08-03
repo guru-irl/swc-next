@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-
-use swc_next_allocator::wtf8::Wtf8;
+use swc_next_allocator::{
+    Allocator, hash_map::HashMap as ArenaHashMap, vec::Vec as ArenaVec, wtf8::Wtf8,
+};
 
 macro_rules! define_ast_string {
     ($name:ident) => {
@@ -53,20 +53,21 @@ impl From<AstUtf8> for AstWtf8 {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct StringPool<'a> {
-    pub source: &'a str,
-    pub extra: Vec<u8>,
-    dedup: HashMap<Vec<u8>, (u32, u32)>,
+pub(crate) struct StringPool<'a> {
+    allocator: &'a Allocator,
+    pub(crate) source: &'a str,
+    pub(crate) extra: ArenaVec<'a, u8>,
+    dedup: ArenaHashMap<'a, ArenaVec<'a, u8>, (u32, u32)>,
 }
 
 impl<'a> StringPool<'a> {
-    pub fn new(source: &'a str) -> Self {
+    pub fn new_in(allocator: &'a Allocator, source: &'a str) -> Self {
         assert!(source.len() <= u32::MAX as usize);
         Self {
             source,
-            extra: Vec::new(),
-            dedup: HashMap::new(),
+            allocator,
+            extra: ArenaVec::new_in(allocator),
+            dedup: ArenaHashMap::new_in(allocator),
         }
     }
 
@@ -148,7 +149,9 @@ impl<'a> StringPool<'a> {
         self.extra.extend_from_slice(text);
 
         let id = (start as u32, end as u32);
-        self.dedup.insert(text.to_vec(), id);
+        let mut key = ArenaVec::with_capacity_in(text.len(), self.allocator);
+        key.extend_from_slice(text);
+        self.dedup.insert(key, id);
         id
     }
 }
