@@ -1,10 +1,10 @@
 use rustc_hash::FxHashSet;
 use swc_next_allocator::{Allocator, vec::Vec as ArenaVec};
 use swc_next_ecma_ast::{
-    Ast, BindingIdentifier, BreakStatement, ClassElement, ClassElementData, ContinueStatement,
-    DebuggerStatement, ExportAllDeclaration, ExportDefaultDeclaration, ExportNamedDeclaration,
-    ExpressionStatement, GetSpan, IdentifierReference, ImportDeclaration, LabelIdentifier, Program,
-    ReturnStatement, Span, String as AstString, ThrowStatement, UpdateExpression,
+    Ast, AstUtf8, BindingIdentifier, BreakStatement, ClassElement, ClassElementData,
+    ContinueStatement, DebuggerStatement, ExportAllDeclaration, ExportDefaultDeclaration,
+    ExportNamedDeclaration, ExpressionStatement, GetSpan, IdentifierReference, ImportDeclaration,
+    LabelIdentifier, Program, ReturnStatement, Span, ThrowStatement, UpdateExpression,
     VariableDeclaration, Visit, VisitWith, YieldExpression,
 };
 use swc_next_ecma_parser::{Options, Parser, Token, TokenParserConfig, TokenTag};
@@ -24,7 +24,7 @@ fn run_parse<'a>(
     src: &'a str,
     allocator: &'a Allocator,
 ) -> (Program, Ast<'a>, ArenaVec<'a, Token>) {
-    let mut ast = Ast::new(src.as_bytes(), allocator);
+    let mut ast = Ast::new(src, allocator);
     let result = Parser::init(
         &mut ast,
         Options {
@@ -45,7 +45,7 @@ fn run_semantic<'a>(root: Program, ast: &Ast<'a>) -> Semantic<'a> {
 }
 
 #[inline(never)]
-fn run_scan_dependencies(root: Program, ast: &Ast<'_>) -> Vec<AstString> {
+fn run_scan_dependencies(root: Program, ast: &Ast<'_>) -> Vec<AstUtf8> {
     let mut parser = JavascriptParser {
         ast,
         idents: Vec::new(),
@@ -206,7 +206,7 @@ impl<'ast> Visit<'ast> for InsertedSemicolons<'_, 'ast, '_> {
 
 struct JavascriptParser<'visit, 'ast> {
     ast: &'visit Ast<'ast>,
-    idents: Vec<AstString>,
+    idents: Vec<AstUtf8>,
 }
 
 impl<'ast> Visit<'ast> for JavascriptParser<'_, 'ast> {

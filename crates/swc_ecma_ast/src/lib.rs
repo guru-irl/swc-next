@@ -31,7 +31,7 @@ pub use generated::ast_node::{NodeKind, NodeKindData};
 pub use generated::ast_visitor::*;
 pub use node_id::{AstNode, ExtraDataCompact, ExtraDataId, NodeId, SubRange, TypedSubRange};
 pub use semantic::{ReferenceId, ScopeId, SymbolId};
-pub use strings::{AstString as String, StringPool};
+pub use strings::{AstUtf8, AstWtf8, StringPool};
 pub use syntax::*;
 pub use visit::{TraverseAction, TraverseCtx};
 
@@ -104,7 +104,7 @@ impl ExtraData {
 
 impl<'a> Ast<'a> {
     /// Create a flattening AST backed by `source` and `allocator`.
-    pub fn new(source: &'a [u8], allocator: &'a Allocator) -> Self {
+    pub fn new(source: &'a str, allocator: &'a Allocator) -> Self {
         Self {
             allocator,
             source_type: SourceType::Module,
@@ -281,33 +281,54 @@ impl<'a> Ast<'a> {
     }
 
     #[inline]
-    pub fn source(&self) -> &'a [u8] {
+    pub fn source(&self) -> &'a str {
         self.strings.source
     }
 
+    /// Returns a slice of the source string corresponding to the given start and end offsets.
+    /// Actually this function should be unsafe because it does not check if the offsets are valid.
+    /// So external crates should be better not use this function directly.
     #[inline]
-    pub fn source_slice(&self, start: u32, end: u32) -> String {
+    pub fn source_slice(&self, start: u32, end: u32) -> AstUtf8 {
         self.strings.source_slice(start, end)
     }
 
+    /// Returns a slice of the source string corresponding to the given start and end offsets.
+    /// Actually this function should be unsafe because it does not check if the offsets are valid.
+    /// So external crates should be better not use this function directly.
     #[inline]
-    pub fn add_string(&mut self, value: &[u8]) -> String {
-        self.strings.add_string(value)
+    pub fn source_slice_wtf8(&self, start: u32, end: u32) -> AstWtf8 {
+        self.strings.source_slice_wtf8(start, end)
     }
 
     #[inline]
-    pub fn ensure_unused_string_capacity(&mut self, bytes: u32, entries: u32) {
-        self.strings.ensure_unused_capacity(bytes, entries);
+    pub fn add_utf8(&mut self, value: &str) -> AstUtf8 {
+        self.strings.add_utf8(value)
     }
 
     #[inline]
-    pub fn string(&self, id: String) -> &[u8] {
-        self.strings.get(id)
+    pub fn add_wtf8(&mut self, value: &swc_next_allocator::wtf8::Wtf8) -> AstWtf8 {
+        self.strings.add_wtf8(value)
     }
 
     #[inline]
-    pub fn empty_string(&self) -> String {
-        String::EMPTY
+    pub fn get_utf8(&self, id: AstUtf8) -> &str {
+        self.strings.get_utf8(id)
+    }
+
+    #[inline]
+    pub fn get_wtf8(&self, id: AstWtf8) -> &swc_next_allocator::wtf8::Wtf8 {
+        self.strings.get_wtf8(id)
+    }
+
+    #[inline]
+    pub fn empty_utf8(&self) -> AstUtf8 {
+        AstUtf8::EMPTY
+    }
+
+    #[inline]
+    pub fn empty_wtf8(&self) -> AstWtf8 {
+        AstWtf8::EMPTY
     }
 
     #[inline]

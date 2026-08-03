@@ -11,7 +11,7 @@ fn main() {
         .map(|p| read_to_string(p).unwrap())
         .unwrap_or(include_str!("../files/typescript.js").to_owned());
     let allocator = Allocator::new();
-    let mut ast = Ast::new(source.as_bytes(), &allocator);
+    let mut ast = Ast::new(&source, &allocator);
     let root = Parser::init(&mut ast, Options::default(), NoTokenParserConfig)
         .parse()
         .program;
@@ -35,7 +35,7 @@ impl<'a> Visit<'a> for ScopeDisplayVisitor<'a> {
     fn visit_identifier_reference(&mut self, node: IdentifierReference) {
         println!(
             "{} ({:?}) -> {:?}",
-            String::from_utf8_lossy(self.ast.string(node.name(self.ast))),
+            self.ast.get_utf8(node.name(self.ast)),
             node.name(self.ast),
             self.semantic.scope_of(node.node_id()),
         );

@@ -588,7 +588,7 @@ impl<'a> Ast<'a> {
         )
     }
     #[inline]
-    pub fn expr_identifier_reference(&mut self, span: Span, name: String) -> Expr {
+    pub fn expr_identifier_reference(&mut self, span: Span, name: AstUtf8) -> Expr {
         Expr::IdentifierReference(self.identifier_reference(span, name).into())
     }
     #[inline]
@@ -609,7 +609,7 @@ impl<'a> Ast<'a> {
         Expr::MetaProperty(self.meta_property(span, meta, property).into())
     }
     #[inline]
-    pub fn expr_string_literal(&mut self, span: Span, value: String, raw: String) -> Expr {
+    pub fn expr_string_literal(&mut self, span: Span, value: AstWtf8, raw: AstUtf8) -> Expr {
         Expr::StringLiteral(self.string_literal(span, value, raw).into())
     }
     #[inline]
@@ -617,12 +617,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: NumericLiteralKind,
-        raw: String,
+        raw: AstUtf8,
     ) -> Expr {
         Expr::NumericLiteral(self.numeric_literal(span, kind, raw).into())
     }
     #[inline]
-    pub fn expr_big_int_literal(&mut self, span: Span, raw: String) -> Expr {
+    pub fn expr_big_int_literal(&mut self, span: Span, raw: AstUtf8) -> Expr {
         Expr::BigIntLiteral(self.big_int_literal(span, raw).into())
     }
     #[inline]
@@ -634,7 +634,7 @@ impl<'a> Ast<'a> {
         Expr::NullLiteral(self.null_literal(span).into())
     }
     #[inline]
-    pub fn expr_reg_exp_literal(&mut self, span: Span, pattern: String, flags: String) -> Expr {
+    pub fn expr_reg_exp_literal(&mut self, span: Span, pattern: AstUtf8, flags: AstUtf8) -> Expr {
         Expr::RegExpLiteral(self.reg_exp_literal(span, pattern, flags).into())
     }
     #[inline]
@@ -908,7 +908,7 @@ impl<'a> Ast<'a> {
         Expr::YieldExpression(self.yield_expression(span, argument, delegate).into())
     }
     #[inline]
-    pub fn expr_private_identifier(&mut self, span: Span, name: String) -> Expr {
+    pub fn expr_private_identifier(&mut self, span: Span, name: AstUtf8) -> Expr {
         Expr::PrivateIdentifier(self.private_identifier(span, name).into())
     }
     #[inline]
@@ -993,7 +993,7 @@ impl<'a> Ast<'a> {
     pub fn binding_pattern_binding_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
         decorators: TypedSubRange<Decorator>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -1007,7 +1007,7 @@ impl<'a> Ast<'a> {
     pub fn binding_pattern_simple_assignment_target_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> BindingPattern {
         BindingPattern::SimpleAssignmentTarget(SimpleAssignmentTarget::IdentifierReference(
             self.identifier_reference(span, name).into(),
@@ -1143,7 +1143,7 @@ impl<'a> Ast<'a> {
     pub fn assignment_target_simple_assignment_target_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> AssignmentTarget {
         AssignmentTarget::SimpleAssignmentTarget(SimpleAssignmentTarget::IdentifierReference(
             self.identifier_reference(span, name).into(),
@@ -1250,7 +1250,7 @@ impl<'a> Ast<'a> {
     pub fn simple_assignment_target_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> SimpleAssignmentTarget {
         SimpleAssignmentTarget::IdentifierReference(self.identifier_reference(span, name).into())
     }
@@ -1315,19 +1315,19 @@ impl<'a> Ast<'a> {
         )
     }
     #[inline]
-    pub fn property_key_identifier_name(&mut self, span: Span, name: String) -> PropertyKey {
+    pub fn property_key_identifier_name(&mut self, span: Span, name: AstUtf8) -> PropertyKey {
         PropertyKey::IdentifierName(self.identifier_name(span, name).into())
     }
     #[inline]
-    pub fn property_key_private_identifier(&mut self, span: Span, name: String) -> PropertyKey {
+    pub fn property_key_private_identifier(&mut self, span: Span, name: AstUtf8) -> PropertyKey {
         PropertyKey::PrivateIdentifier(self.private_identifier(span, name).into())
     }
     #[inline]
     pub fn property_key_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> PropertyKey {
         PropertyKey::StringLiteral(self.string_literal(span, value, raw).into())
     }
@@ -1336,19 +1336,19 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: NumericLiteralKind,
-        raw: String,
+        raw: AstUtf8,
     ) -> PropertyKey {
         PropertyKey::NumericLiteral(self.numeric_literal(span, kind, raw).into())
     }
     #[inline]
-    pub fn property_key_big_int_literal(&mut self, span: Span, raw: String) -> PropertyKey {
+    pub fn property_key_big_int_literal(&mut self, span: Span, raw: AstUtf8) -> PropertyKey {
         PropertyKey::BigIntLiteral(self.big_int_literal(span, raw).into())
     }
     #[inline]
     pub fn property_key_expr_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::IdentifierReference(
             self.identifier_reference(span, name).into(),
@@ -1377,8 +1377,8 @@ impl<'a> Ast<'a> {
     pub fn property_key_expr_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::StringLiteral(
             self.string_literal(span, value, raw).into(),
@@ -1389,14 +1389,14 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: NumericLiteralKind,
-        raw: String,
+        raw: AstUtf8,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::NumericLiteral(
             self.numeric_literal(span, kind, raw).into(),
         ))
     }
     #[inline]
-    pub fn property_key_expr_big_int_literal(&mut self, span: Span, raw: String) -> PropertyKey {
+    pub fn property_key_expr_big_int_literal(&mut self, span: Span, raw: AstUtf8) -> PropertyKey {
         PropertyKey::Expr(Expr::BigIntLiteral(self.big_int_literal(span, raw).into()))
     }
     #[inline]
@@ -1413,8 +1413,8 @@ impl<'a> Ast<'a> {
     pub fn property_key_expr_reg_exp_literal(
         &mut self,
         span: Span,
-        pattern: String,
-        flags: String,
+        pattern: AstUtf8,
+        flags: AstUtf8,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::RegExpLiteral(
             self.reg_exp_literal(span, pattern, flags).into(),
@@ -1730,7 +1730,7 @@ impl<'a> Ast<'a> {
     pub fn property_key_expr_private_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::PrivateIdentifier(
             self.private_identifier(span, name).into(),
@@ -1824,7 +1824,7 @@ impl<'a> Ast<'a> {
     pub fn module_export_name_identifier_name(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> ModuleExportName {
         ModuleExportName::IdentifierName(self.identifier_name(span, name).into())
     }
@@ -1832,13 +1832,13 @@ impl<'a> Ast<'a> {
     pub fn module_export_name_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> ModuleExportName {
         ModuleExportName::StringLiteral(self.string_literal(span, value, raw).into())
     }
     #[inline]
-    pub fn argument_expr_identifier_reference(&mut self, span: Span, name: String) -> Argument {
+    pub fn argument_expr_identifier_reference(&mut self, span: Span, name: AstUtf8) -> Argument {
         Argument::Expr(Expr::IdentifierReference(
             self.identifier_reference(span, name).into(),
         ))
@@ -1866,8 +1866,8 @@ impl<'a> Ast<'a> {
     pub fn argument_expr_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> Argument {
         Argument::Expr(Expr::StringLiteral(
             self.string_literal(span, value, raw).into(),
@@ -1878,14 +1878,14 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: NumericLiteralKind,
-        raw: String,
+        raw: AstUtf8,
     ) -> Argument {
         Argument::Expr(Expr::NumericLiteral(
             self.numeric_literal(span, kind, raw).into(),
         ))
     }
     #[inline]
-    pub fn argument_expr_big_int_literal(&mut self, span: Span, raw: String) -> Argument {
+    pub fn argument_expr_big_int_literal(&mut self, span: Span, raw: AstUtf8) -> Argument {
         Argument::Expr(Expr::BigIntLiteral(self.big_int_literal(span, raw).into()))
     }
     #[inline]
@@ -1902,8 +1902,8 @@ impl<'a> Ast<'a> {
     pub fn argument_expr_reg_exp_literal(
         &mut self,
         span: Span,
-        pattern: String,
-        flags: String,
+        pattern: AstUtf8,
+        flags: AstUtf8,
     ) -> Argument {
         Argument::Expr(Expr::RegExpLiteral(
             self.reg_exp_literal(span, pattern, flags).into(),
@@ -2208,7 +2208,7 @@ impl<'a> Ast<'a> {
         ))
     }
     #[inline]
-    pub fn argument_expr_private_identifier(&mut self, span: Span, name: String) -> Argument {
+    pub fn argument_expr_private_identifier(&mut self, span: Span, name: AstUtf8) -> Argument {
         Argument::Expr(Expr::PrivateIdentifier(
             self.private_identifier(span, name).into(),
         ))
@@ -2342,7 +2342,7 @@ impl<'a> Ast<'a> {
     pub fn for_statement_init_expr_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::IdentifierReference(
             self.identifier_reference(span, name).into(),
@@ -2371,8 +2371,8 @@ impl<'a> Ast<'a> {
     pub fn for_statement_init_expr_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::StringLiteral(
             self.string_literal(span, value, raw).into(),
@@ -2383,7 +2383,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: NumericLiteralKind,
-        raw: String,
+        raw: AstUtf8,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::NumericLiteral(
             self.numeric_literal(span, kind, raw).into(),
@@ -2393,7 +2393,7 @@ impl<'a> Ast<'a> {
     pub fn for_statement_init_expr_big_int_literal(
         &mut self,
         span: Span,
-        raw: String,
+        raw: AstUtf8,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::BigIntLiteral(self.big_int_literal(span, raw).into()))
     }
@@ -2415,8 +2415,8 @@ impl<'a> Ast<'a> {
     pub fn for_statement_init_expr_reg_exp_literal(
         &mut self,
         span: Span,
-        pattern: String,
-        flags: String,
+        pattern: AstUtf8,
+        flags: AstUtf8,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::RegExpLiteral(
             self.reg_exp_literal(span, pattern, flags).into(),
@@ -2732,7 +2732,7 @@ impl<'a> Ast<'a> {
     pub fn for_statement_init_expr_private_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::PrivateIdentifier(
             self.private_identifier(span, name).into(),
@@ -2839,7 +2839,7 @@ impl<'a> Ast<'a> {
     pub fn for_statement_left_assignment_target_simple_assignment_target_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> ForStatementLeft {
         ForStatementLeft::AssignmentTarget(AssignmentTarget::SimpleAssignmentTarget(
             SimpleAssignmentTarget::IdentifierReference(
@@ -2967,7 +2967,7 @@ impl<'a> Ast<'a> {
     pub fn arrow_function_body_expr_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::IdentifierReference(
             self.identifier_reference(span, name).into(),
@@ -2996,8 +2996,8 @@ impl<'a> Ast<'a> {
     pub fn arrow_function_body_expr_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::StringLiteral(
             self.string_literal(span, value, raw).into(),
@@ -3008,7 +3008,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: NumericLiteralKind,
-        raw: String,
+        raw: AstUtf8,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::NumericLiteral(
             self.numeric_literal(span, kind, raw).into(),
@@ -3018,7 +3018,7 @@ impl<'a> Ast<'a> {
     pub fn arrow_function_body_expr_big_int_literal(
         &mut self,
         span: Span,
-        raw: String,
+        raw: AstUtf8,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::BigIntLiteral(self.big_int_literal(span, raw).into()))
     }
@@ -3040,8 +3040,8 @@ impl<'a> Ast<'a> {
     pub fn arrow_function_body_expr_reg_exp_literal(
         &mut self,
         span: Span,
-        pattern: String,
-        flags: String,
+        pattern: AstUtf8,
+        flags: AstUtf8,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::RegExpLiteral(
             self.reg_exp_literal(span, pattern, flags).into(),
@@ -3357,7 +3357,7 @@ impl<'a> Ast<'a> {
     pub fn arrow_function_body_expr_private_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::PrivateIdentifier(
             self.private_identifier(span, name).into(),
@@ -3481,7 +3481,7 @@ impl<'a> Ast<'a> {
     pub fn formal_parameter_pattern_binding_pattern_binding_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
         decorators: TypedSubRange<Decorator>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -3495,7 +3495,7 @@ impl<'a> Ast<'a> {
     pub fn formal_parameter_pattern_binding_pattern_simple_assignment_target_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> FormalParameterPattern {
         FormalParameterPattern::BindingPattern(BindingPattern::SimpleAssignmentTarget(
             SimpleAssignmentTarget::IdentifierReference(
@@ -3812,7 +3812,7 @@ impl<'a> Ast<'a> {
     pub fn export_default_declaration_kind_expr_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::IdentifierReference(
             self.identifier_reference(span, name).into(),
@@ -3847,8 +3847,8 @@ impl<'a> Ast<'a> {
     pub fn export_default_declaration_kind_expr_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::StringLiteral(
             self.string_literal(span, value, raw).into(),
@@ -3859,7 +3859,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: NumericLiteralKind,
-        raw: String,
+        raw: AstUtf8,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::NumericLiteral(
             self.numeric_literal(span, kind, raw).into(),
@@ -3869,7 +3869,7 @@ impl<'a> Ast<'a> {
     pub fn export_default_declaration_kind_expr_big_int_literal(
         &mut self,
         span: Span,
-        raw: String,
+        raw: AstUtf8,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::BigIntLiteral(
             self.big_int_literal(span, raw).into(),
@@ -3896,8 +3896,8 @@ impl<'a> Ast<'a> {
     pub fn export_default_declaration_kind_expr_reg_exp_literal(
         &mut self,
         span: Span,
-        pattern: String,
-        flags: String,
+        pattern: AstUtf8,
+        flags: AstUtf8,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::RegExpLiteral(
             self.reg_exp_literal(span, pattern, flags).into(),
@@ -4213,7 +4213,7 @@ impl<'a> Ast<'a> {
     pub fn export_default_declaration_kind_expr_private_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::PrivateIdentifier(
             self.private_identifier(span, name).into(),
@@ -4413,7 +4413,7 @@ impl<'a> Ast<'a> {
         ThisExpression(self.add_node(span, NodeKind::ThisExpression, NodePayload(0)))
     }
     #[inline]
-    pub fn string_literal(&mut self, span: Span, value: String, raw: String) -> StringLiteral {
+    pub fn string_literal(&mut self, span: Span, value: AstWtf8, raw: AstUtf8) -> StringLiteral {
         StringLiteral(self.add_node(
             span,
             NodeKind::StringLiteral,
@@ -4429,7 +4429,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: NumericLiteralKind,
-        raw: String,
+        raw: AstUtf8,
     ) -> NumericLiteral {
         NumericLiteral(self.add_node(
             span,
@@ -4442,7 +4442,7 @@ impl<'a> Ast<'a> {
         ))
     }
     #[inline]
-    pub fn big_int_literal(&mut self, span: Span, raw: String) -> BigIntLiteral {
+    pub fn big_int_literal(&mut self, span: Span, raw: AstUtf8) -> BigIntLiteral {
         BigIntLiteral(self.add_node(
             span,
             NodeKind::BigIntLiteral,
@@ -4462,7 +4462,12 @@ impl<'a> Ast<'a> {
         NullLiteral(self.add_node(span, NodeKind::NullLiteral, NodePayload(0)))
     }
     #[inline]
-    pub fn reg_exp_literal(&mut self, span: Span, pattern: String, flags: String) -> RegExpLiteral {
+    pub fn reg_exp_literal(
+        &mut self,
+        span: Span,
+        pattern: AstUtf8,
+        flags: AstUtf8,
+    ) -> RegExpLiteral {
         RegExpLiteral(self.add_node(
             span,
             NodeKind::RegExpLiteral,
@@ -4494,8 +4499,8 @@ impl<'a> Ast<'a> {
     pub fn template_element(
         &mut self,
         span: Span,
-        cooked: String,
-        raw: String,
+        cooked: AstWtf8,
+        raw: AstUtf8,
         tail: bool,
         is_cooked_undefined: bool,
     ) -> TemplateElement {
@@ -4513,7 +4518,7 @@ impl<'a> Ast<'a> {
         ))
     }
     #[inline]
-    pub fn identifier_reference(&mut self, span: Span, name: String) -> IdentifierReference {
+    pub fn identifier_reference(&mut self, span: Span, name: AstUtf8) -> IdentifierReference {
         IdentifierReference(self.add_node(
             span,
             NodeKind::IdentifierReference,
@@ -4521,7 +4526,7 @@ impl<'a> Ast<'a> {
         ))
     }
     #[inline]
-    pub fn private_identifier(&mut self, span: Span, name: String) -> PrivateIdentifier {
+    pub fn private_identifier(&mut self, span: Span, name: AstUtf8) -> PrivateIdentifier {
         PrivateIdentifier(self.add_node(
             span,
             NodeKind::PrivateIdentifier,
@@ -4532,7 +4537,7 @@ impl<'a> Ast<'a> {
     pub fn binding_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
         decorators: TypedSubRange<Decorator>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -4553,7 +4558,7 @@ impl<'a> Ast<'a> {
         ))
     }
     #[inline]
-    pub fn identifier_name(&mut self, span: Span, name: String) -> IdentifierName {
+    pub fn identifier_name(&mut self, span: Span, name: AstUtf8) -> IdentifierName {
         IdentifierName(self.add_node(
             span,
             NodeKind::IdentifierName,
@@ -4561,7 +4566,7 @@ impl<'a> Ast<'a> {
         ))
     }
     #[inline]
-    pub fn label_identifier(&mut self, span: Span, name: String) -> LabelIdentifier {
+    pub fn label_identifier(&mut self, span: Span, name: AstUtf8) -> LabelIdentifier {
         LabelIdentifier(self.add_node(
             span,
             NodeKind::LabelIdentifier,
@@ -5092,7 +5097,12 @@ impl<'a> Ast<'a> {
         EmptyStatement(self.add_node(span, NodeKind::EmptyStatement, NodePayload(0)))
     }
     #[inline]
-    pub fn directive(&mut self, span: Span, expression: StringLiteral, value: String) -> Directive {
+    pub fn directive(
+        &mut self,
+        span: Span,
+        expression: StringLiteral,
+        value: AstUtf8,
+    ) -> Directive {
         Directive(self.add_node(
             span,
             NodeKind::Directive,
@@ -5820,7 +5830,7 @@ impl<'a> Ast<'a> {
         ))
     }
     #[inline]
-    pub fn hashbang(&mut self, span: Span, value: String) -> Hashbang {
+    pub fn hashbang(&mut self, span: Span, value: AstUtf8) -> Hashbang {
         Hashbang(self.add_node(
             span,
             NodeKind::Hashbang,
@@ -6110,7 +6120,7 @@ impl<'a> Ast<'a> {
         )
     }
     #[inline]
-    pub fn ts_type_name_identifier_reference(&mut self, span: Span, name: String) -> TsTypeName {
+    pub fn ts_type_name_identifier_reference(&mut self, span: Span, name: AstUtf8) -> TsTypeName {
         TsTypeName::IdentifierReference(self.identifier_reference(span, name).into())
     }
     #[inline]
@@ -6126,7 +6136,7 @@ impl<'a> Ast<'a> {
     pub fn ts_qualified_name_left_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> TsQualifiedNameLeft {
         TsQualifiedNameLeft::IdentifierReference(self.identifier_reference(span, name).into())
     }
@@ -6134,7 +6144,7 @@ impl<'a> Ast<'a> {
     pub fn ts_qualified_name_left_identifier_name(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> TsQualifiedNameLeft {
         TsQualifiedNameLeft::IdentifierName(self.identifier_name(span, name).into())
     }
@@ -6142,7 +6152,7 @@ impl<'a> Ast<'a> {
     pub fn ts_qualified_name_left_binding_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
         decorators: TypedSubRange<Decorator>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -6169,7 +6179,7 @@ impl<'a> Ast<'a> {
     pub fn ts_import_type_qualifier_identifier_name(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> TsImportTypeQualifier {
         TsImportTypeQualifier::IdentifierName(self.identifier_name(span, name).into())
     }
@@ -6186,7 +6196,7 @@ impl<'a> Ast<'a> {
     pub fn ts_type_query_expr_name_ts_type_name_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> TsTypeQueryExprName {
         TsTypeQueryExprName::TsTypeName(TsTypeName::IdentifierReference(
             self.identifier_reference(span, name).into(),
@@ -6225,8 +6235,8 @@ impl<'a> Ast<'a> {
     pub fn ts_literal_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> TsLiteral {
         TsLiteral::StringLiteral(self.string_literal(span, value, raw).into())
     }
@@ -6235,12 +6245,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: NumericLiteralKind,
-        raw: String,
+        raw: AstUtf8,
     ) -> TsLiteral {
         TsLiteral::NumericLiteral(self.numeric_literal(span, kind, raw).into())
     }
     #[inline]
-    pub fn ts_literal_big_int_literal(&mut self, span: Span, raw: String) -> TsLiteral {
+    pub fn ts_literal_big_int_literal(&mut self, span: Span, raw: AstUtf8) -> TsLiteral {
         TsLiteral::BigIntLiteral(self.big_int_literal(span, raw).into())
     }
     #[inline]
@@ -6726,7 +6736,7 @@ impl<'a> Ast<'a> {
     pub fn ts_type_predicate_name_identifier_name(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> TsTypePredicateName {
         TsTypePredicateName::IdentifierName(self.identifier_name(span, name).into())
     }
@@ -6738,7 +6748,7 @@ impl<'a> Ast<'a> {
     pub fn ts_enum_member_name_identifier_name(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> TsEnumMemberName {
         TsEnumMemberName::IdentifierName(self.identifier_name(span, name).into())
     }
@@ -6746,8 +6756,8 @@ impl<'a> Ast<'a> {
     pub fn ts_enum_member_name_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> TsEnumMemberName {
         TsEnumMemberName::StringLiteral(self.string_literal(span, value, raw).into())
     }
@@ -6764,7 +6774,7 @@ impl<'a> Ast<'a> {
     pub fn ts_enum_member_name_expr_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::IdentifierReference(
             self.identifier_reference(span, name).into(),
@@ -6793,8 +6803,8 @@ impl<'a> Ast<'a> {
     pub fn ts_enum_member_name_expr_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::StringLiteral(
             self.string_literal(span, value, raw).into(),
@@ -6805,7 +6815,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: NumericLiteralKind,
-        raw: String,
+        raw: AstUtf8,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::NumericLiteral(
             self.numeric_literal(span, kind, raw).into(),
@@ -6815,7 +6825,7 @@ impl<'a> Ast<'a> {
     pub fn ts_enum_member_name_expr_big_int_literal(
         &mut self,
         span: Span,
-        raw: String,
+        raw: AstUtf8,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::BigIntLiteral(self.big_int_literal(span, raw).into()))
     }
@@ -6837,8 +6847,8 @@ impl<'a> Ast<'a> {
     pub fn ts_enum_member_name_expr_reg_exp_literal(
         &mut self,
         span: Span,
-        pattern: String,
-        flags: String,
+        pattern: AstUtf8,
+        flags: AstUtf8,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::RegExpLiteral(
             self.reg_exp_literal(span, pattern, flags).into(),
@@ -7154,7 +7164,7 @@ impl<'a> Ast<'a> {
     pub fn ts_enum_member_name_expr_private_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::PrivateIdentifier(
             self.private_identifier(span, name).into(),
@@ -7248,7 +7258,7 @@ impl<'a> Ast<'a> {
     pub fn ts_module_name_binding_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
         decorators: TypedSubRange<Decorator>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -7262,8 +7272,8 @@ impl<'a> Ast<'a> {
     pub fn ts_module_name_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> TsModuleName {
         TsModuleName::StringLiteral(self.string_literal(span, value, raw).into())
     }
@@ -7303,7 +7313,7 @@ impl<'a> Ast<'a> {
     pub fn ts_module_reference_ts_type_name_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> TsModuleReference {
         TsModuleReference::TsTypeName(TsTypeName::IdentifierReference(
             self.identifier_reference(span, name).into(),
@@ -8409,7 +8419,7 @@ impl<'a> Ast<'a> {
         ))
     }
     #[inline]
-    pub fn jsx_element_name_jsx_identifier(&mut self, span: Span, name: String) -> JsxElementName {
+    pub fn jsx_element_name_jsx_identifier(&mut self, span: Span, name: AstUtf8) -> JsxElementName {
         JsxElementName::JsxIdentifier(self.jsx_identifier(span, name).into())
     }
     #[inline]
@@ -8436,7 +8446,7 @@ impl<'a> Ast<'a> {
     pub fn jsx_member_expression_object_jsx_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> JsxMemberExpressionObject {
         JsxMemberExpressionObject::JsxIdentifier(self.jsx_identifier(span, name).into())
     }
@@ -8455,7 +8465,7 @@ impl<'a> Ast<'a> {
     pub fn jsx_attribute_name_jsx_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> JsxAttributeName {
         JsxAttributeName::JsxIdentifier(self.jsx_identifier(span, name).into())
     }
@@ -8489,8 +8499,8 @@ impl<'a> Ast<'a> {
     pub fn jsx_attribute_value_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> JsxAttributeValue {
         JsxAttributeValue::StringLiteral(self.string_literal(span, value, raw).into())
     }
@@ -8534,7 +8544,7 @@ impl<'a> Ast<'a> {
     pub fn jsx_expression_expr_identifier_reference(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::IdentifierReference(
             self.identifier_reference(span, name).into(),
@@ -8563,8 +8573,8 @@ impl<'a> Ast<'a> {
     pub fn jsx_expression_expr_string_literal(
         &mut self,
         span: Span,
-        value: String,
-        raw: String,
+        value: AstWtf8,
+        raw: AstUtf8,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::StringLiteral(
             self.string_literal(span, value, raw).into(),
@@ -8575,7 +8585,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: NumericLiteralKind,
-        raw: String,
+        raw: AstUtf8,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::NumericLiteral(
             self.numeric_literal(span, kind, raw).into(),
@@ -8585,7 +8595,7 @@ impl<'a> Ast<'a> {
     pub fn jsx_expression_expr_big_int_literal(
         &mut self,
         span: Span,
-        raw: String,
+        raw: AstUtf8,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::BigIntLiteral(self.big_int_literal(span, raw).into()))
     }
@@ -8607,8 +8617,8 @@ impl<'a> Ast<'a> {
     pub fn jsx_expression_expr_reg_exp_literal(
         &mut self,
         span: Span,
-        pattern: String,
-        flags: String,
+        pattern: AstUtf8,
+        flags: AstUtf8,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::RegExpLiteral(
             self.reg_exp_literal(span, pattern, flags).into(),
@@ -8924,7 +8934,7 @@ impl<'a> Ast<'a> {
     pub fn jsx_expression_expr_private_identifier(
         &mut self,
         span: Span,
-        name: String,
+        name: AstUtf8,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::PrivateIdentifier(
             self.private_identifier(span, name).into(),
@@ -9019,7 +9029,7 @@ impl<'a> Ast<'a> {
         JsxExpression::JsxEmptyExpression(self.jsx_empty_expression(span).into())
     }
     #[inline]
-    pub fn jsx_child_jsx_text(&mut self, span: Span, value: String) -> JsxChild {
+    pub fn jsx_child_jsx_text(&mut self, span: Span, value: AstUtf8) -> JsxChild {
         JsxChild::JsxText(self.jsx_text(span, value).into())
     }
     #[inline]
@@ -9141,7 +9151,7 @@ impl<'a> Ast<'a> {
         JsxClosingFragment(self.add_node(span, NodeKind::JsxClosingFragment, NodePayload(0)))
     }
     #[inline]
-    pub fn jsx_identifier(&mut self, span: Span, name: String) -> JsxIdentifier {
+    pub fn jsx_identifier(&mut self, span: Span, name: AstUtf8) -> JsxIdentifier {
         JsxIdentifier(self.add_node(
             span,
             NodeKind::JsxIdentifier,
@@ -9225,7 +9235,7 @@ impl<'a> Ast<'a> {
         JsxEmptyExpression(self.add_node(span, NodeKind::JsxEmptyExpression, NodePayload(0)))
     }
     #[inline]
-    pub fn jsx_text(&mut self, span: Span, value: String) -> JsxText {
+    pub fn jsx_text(&mut self, span: Span, value: AstUtf8) -> JsxText {
         JsxText(self.add_node(
             span,
             NodeKind::JsxText,

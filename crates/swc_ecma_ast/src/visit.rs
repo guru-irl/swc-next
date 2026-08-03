@@ -1,10 +1,9 @@
 use crate::{
-    Accessibility, AssignmentOperator, Ast, AstNode, BinaryOperator, ClassType,
+    Accessibility, AssignmentOperator, Ast, AstNode, AstUtf8, AstWtf8, BinaryOperator, ClassType,
     FormalParameterKind, FunctionType, ImportOrExportKind, ImportPhase, LogicalOperator,
     MethodDefinitionKind, NodeId, NodeKind, NumericLiteralKind, PropertyKind, SourceType, Span,
-    String as AstString, TsMappedTypeModifier, TsMethodSignatureKind, TsModuleDeclarationKind,
-    TsTypeOperatorKind, UnaryOperator, UpdateOperator, VariableKind, Visit, VisitMut, VisitMutWith,
-    VisitWith,
+    TsMappedTypeModifier, TsMethodSignatureKind, TsModuleDeclarationKind, TsTypeOperatorKind,
+    UnaryOperator, UpdateOperator, VariableKind, Visit, VisitMut, VisitMutWith, VisitWith,
 };
 
 /// Controls how traversal continues after an enter hook.
@@ -126,7 +125,8 @@ macro_rules! dummy_visit_mut_impl {
 dummy_visit_mut_impl!(bool);
 dummy_visit_mut_impl!(f64);
 dummy_visit_mut_impl!(Span);
-dummy_visit_mut_impl!(AstString);
+dummy_visit_mut_impl!(AstUtf8);
+dummy_visit_mut_impl!(AstWtf8);
 dummy_visit_mut_impl!(ImportPhase);
 dummy_visit_mut_impl!(SourceType);
 dummy_visit_mut_impl!(MethodDefinitionKind);
