@@ -11189,6 +11189,7 @@ impl<'parser, 'a, C: ParserConfig> Parser<'parser, 'a, C> {
     ///
     /// Reports an error when an escaped keyword is consumed in a keyword
     /// position.
+    #[inline(always)]
     pub fn advance(&mut self) -> Option<()> {
         self.check_escaped_keyword();
         self.prev_token_end = self.current_token.span.end;
