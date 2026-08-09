@@ -2836,6 +2836,7 @@ dependencies = [
  "swc_next_allocator",
  "swc_next_ecma_ast",
  "swc_next_ecma_parser",
+ "swc_next_regular_expression",
 ]
 
 [[package]]
@@ -2845,6 +2846,17 @@ dependencies = [
  "serde",
  "swc_next_ecma_ast",
  "swc_next_ecma_semantic",
+]
+
+[[package]]
+name = "swc_next_regular_expression"
+version = "0.11.0"
+dependencies = [
+ "bitflags",
+ "phf 0.14.0",
+ "rustc-hash",
+ "swc_next_allocator",
+ "unicode-id-start",
 ]
 
 [[package]]
