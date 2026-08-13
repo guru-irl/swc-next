@@ -1558,14 +1558,14 @@ impl<'a> Printer<'a> {
                 self.print_ts_type(e.type_annotation(self.ast), TsTypePrecedence::Lowest);
             }
             SimpleAssignmentTargetData::TsSatisfiesExpression(e) => {
+                self.print("(");
                 self.print_expr(e.expression(self.ast), Precedence::Compare);
                 self.print(" satisfies ");
                 self.print_ts_type(e.type_annotation(self.ast), TsTypePrecedence::Lowest);
+                self.print(")");
             }
             SimpleAssignmentTargetData::TsTypeAssertion(e) => {
-                self.print("<");
-                self.print_ts_type(e.type_annotation(self.ast), TsTypePrecedence::Lowest);
-                self.print(">");
+                self.print_ts_type_assertion_prefix(e.type_annotation(self.ast));
                 self.print_expr(e.expression(self.ast), Precedence::Prefix);
             }
             SimpleAssignmentTargetData::TsNonNullExpression(e) => {
@@ -2011,9 +2011,7 @@ impl<'a> Printer<'a> {
                     self.print("(");
                 }
                 self.add_source_mapping(expr.span(self.ast).start);
-                self.print("<");
-                self.print_ts_type(e.type_annotation(self.ast), TsTypePrecedence::Lowest);
-                self.print(">");
+                self.print_ts_type_assertion_prefix(e.type_annotation(self.ast));
                 self.print_expr(e.expression(self.ast), Precedence::Prefix);
                 if wrap {
                     self.print(")");
@@ -3590,6 +3588,18 @@ impl<'a> Printer<'a> {
             }
             self.print_ts_type(self.ast.get_node_in_sub_range(id), TsTypePrecedence::Lowest);
         }
+        self.print(">");
+    }
+
+    fn print_ts_type_assertion_prefix(&mut self, ty: TsType) {
+        self.print("<");
+        if matches!(
+            self.ast.ts_type_data(ty),
+            TsTypeData::TsFunctionType(function) if function.type_parameters(self.ast).is_some()
+        ) {
+            self.print(" ");
+        }
+        self.print_ts_type(ty, TsTypePrecedence::Lowest);
         self.print(">");
     }
 
