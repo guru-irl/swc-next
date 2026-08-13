@@ -2442,6 +2442,8 @@ impl<'a> Printer<'a> {
     }
 
     fn print_object(&mut self, e: ObjectExpression, _level: Precedence) {
+        let old_forbid_in = self.forbid_in;
+        self.forbid_in = false;
         let wrap = self.js.len() == self.stmt_start || self.js.len() == self.arrow_expr_start;
         if wrap {
             self.print("(");
@@ -2476,6 +2478,7 @@ impl<'a> Printer<'a> {
         if wrap {
             self.print(")");
         }
+        self.forbid_in = old_forbid_in;
     }
 
     fn print_object_property(&mut self, p: ObjectProperty) {
@@ -2757,6 +2760,8 @@ impl<'a> Printer<'a> {
             }
         }
         self.print_space();
+        let old_forbid_in = self.forbid_in;
+        self.forbid_in = false;
         self.add_source_mapping(c.body(self.ast).span(self.ast).start);
         self.print("{");
         let body = c.body(self.ast).body(self.ast);
@@ -2778,6 +2783,7 @@ impl<'a> Printer<'a> {
         self.print_indent();
         self.add_source_mapping(c.body(self.ast).span(self.ast).end.saturating_sub(1));
         self.print("}");
+        self.forbid_in = old_forbid_in;
         if wrap {
             self.print(")");
         }
