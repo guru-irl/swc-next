@@ -1322,6 +1322,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                     )
                     .map(|declaration| Stmt::Declaration(Decl::VariableDeclaration(declaration)));
             }
+            self.report_await_using_if_disallowed(await_span);
             return self.parse_await_expression_statement(start);
         }
         self.parse_expression_or_labeled_statement()
@@ -1340,6 +1341,11 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
 
     fn parse_await_expression_statement(&mut self, start: u32) -> Option<Stmt> {
         let expression = self.parse_await_expression(start)?;
+        let expression = self.parse_expr_from_left(
+            expression,
+            Precedence::Comma,
+            ParseExpressionOpts::default(),
+        )?;
         self.parse_expression_statement_with_expression(start, expression)
     }
 
@@ -1403,7 +1409,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
     fn is_using_identifier(&mut self) -> Option<bool> {
         debug_assert_eq!(self.current_token.tag, TokenTag::Using);
         let next = self.peek_ahead()?;
-        if next.tag.is_identifier_like() && !self.can_insert_implicit_semicolon(next) {
+        if can_start_binding_identifier(next.tag) && !self.can_insert_implicit_semicolon(next) {
             return Some(false);
         }
         Some(true)
@@ -7114,11 +7120,21 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
 
     #[inline(always)]
     fn parse_expr(&mut self, minimum: Precedence, opts: ParseExpressionOpts) -> Option<Expr> {
-        let mut left = if self.current_token.tag == TokenTag::Identifier {
+        let left = if self.current_token.tag == TokenTag::Identifier {
             self.parse_plain_identifier()?
         } else {
             self.parse_prefix(opts.in_cover, minimum)?
         };
+        self.parse_expr_from_left(left, minimum, opts)
+    }
+
+    #[inline(always)]
+    fn parse_expr_from_left(
+        &mut self,
+        mut left: Expr,
+        minimum: Precedence,
+        opts: ParseExpressionOpts,
+    ) -> Option<Expr> {
         let is_ts = self.lang.is_typescript();
 
         loop {
@@ -11856,6 +11872,63 @@ mod tests {
             ast.expr_data(ast.root_expression()),
             swc_next_ecma_ast::ExprData::BinaryExpression(_)
         ));
+    }
+
+    #[test]
+    fn await_using_context() {
+        let allocator = Allocator::new();
+        let options = Options {
+            source_type: SourceType::Script,
+            ..Options::default()
+        };
+
+        let script = Parser::init(
+            &allocator,
+            "await using in object;",
+            options,
+            NoTokenParserConfig,
+        )
+        .parse();
+        assert_eq!(script.diagnostics.len(), 1, "{:#?}", script.diagnostics);
+        assert_eq!(
+            script.diagnostics[0].message,
+            "'await using' is only valid in async functions or modules"
+        );
+
+        let function = Parser::init(
+            &allocator,
+            "function f() { await using instanceof C; }",
+            options,
+            NoTokenParserConfig,
+        )
+        .parse();
+        assert_eq!(function.diagnostics.len(), 1, "{:#?}", function.diagnostics);
+        assert_eq!(
+            function.diagnostics[0].message,
+            "'await using' is only valid in async functions or modules"
+        );
+
+        let async_function = Parser::init(
+            &allocator,
+            "async function f() { await using in object; }",
+            options,
+            NoTokenParserConfig,
+        )
+        .parse();
+        assert!(
+            async_function.diagnostics.is_empty(),
+            "{:#?}",
+            async_function.diagnostics
+        );
+
+        let module = Parser::init(
+            &allocator,
+            "await using in object;",
+            Options::default(),
+            NoTokenParserConfig,
+        )
+        .parse();
+        assert!(module.diagnostics.is_empty(), "{:#?}", module.diagnostics);
     }
 
     #[test]
