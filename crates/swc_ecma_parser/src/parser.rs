@@ -496,6 +496,12 @@ enum AngleListKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AngleClose {
+    Peel,
+    Exact,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AngleList {
     Arguments(TsTypeParameterInstantiation),
     Parameters(TsTypeParameterDeclaration),
@@ -6385,20 +6391,27 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
     }
 
     fn parse_type_parameters(&mut self) -> Option<TsTypeParameterDeclaration> {
-        match self.parse_angle_list(AngleListKind::Parameters)? {
+        match self.parse_angle_list(AngleListKind::Parameters, AngleClose::Peel)? {
             AngleList::Parameters(parameters) => Some(parameters),
             AngleList::Arguments(_) => unreachable!(),
         }
     }
 
     fn parse_type_arguments(&mut self) -> Option<TsTypeParameterInstantiation> {
-        match self.parse_angle_list(AngleListKind::Arguments)? {
+        match self.parse_angle_list(AngleListKind::Arguments, AngleClose::Peel)? {
             AngleList::Arguments(arguments) => Some(arguments),
             AngleList::Parameters(_) => unreachable!(),
         }
     }
 
-    fn parse_angle_list(&mut self, kind: AngleListKind) -> Option<AngleList> {
+    fn parse_type_arguments_in_expression(&mut self) -> Option<TsTypeParameterInstantiation> {
+        match self.parse_angle_list(AngleListKind::Arguments, AngleClose::Exact)? {
+            AngleList::Arguments(arguments) => Some(arguments),
+            AngleList::Parameters(_) => unreachable!(),
+        }
+    }
+
+    fn parse_angle_list(&mut self, kind: AngleListKind, close: AngleClose) -> Option<AngleList> {
         let start = self.consume_angle_open()?;
         let checkpoint = self.scratch_a.begin();
         let result = (|| {
@@ -6425,7 +6438,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                     ReportOptions::default(),
                 );
             }
-            let end = self.consume_angle_close(kind)?;
+            let end = self.consume_angle_close(kind, close)?;
             Some(match kind {
                 AngleListKind::Arguments => {
                     let parameters = self.add_extra_from_scratch_a(checkpoint);
@@ -6530,7 +6543,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         Some(start)
     }
 
-    fn consume_angle_close(&mut self, kind: AngleListKind) -> Option<u32> {
+    fn consume_angle_close(&mut self, kind: AngleListKind, close: AngleClose) -> Option<u32> {
         match self.current_token.tag {
             TokenTag::GreaterThan => {
                 let end = self.current_token.span.end;
@@ -6542,6 +6555,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             | TokenTag::GreaterThanEqual
             | TokenTag::RightShiftAssign
             | TokenTag::UnsignedRightShiftAssign => {
+                if close == AngleClose::Exact {
+                    return None;
+                }
                 let token = self
                     .lexer
                     .re_scan_greater_than(self.current_token.span.start);
@@ -10710,7 +10726,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
 
         let checkpoint = self.checkpoint();
-        let type_arguments = match self.parse_type_arguments() {
+        let type_arguments = match self.parse_type_arguments_in_expression() {
             Some(type_arguments) if can_follow_type_arguments_in_expression(self.current_token) => {
                 type_arguments
             }
