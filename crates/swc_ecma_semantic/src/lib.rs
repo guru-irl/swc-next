@@ -35,6 +35,7 @@ oxc_index::define_nonmax_u32_index_type! {
 }
 
 type ScopeMap<'a> = ArenaHashMap<'a, &'a [u8], SymbolId>;
+type Redeclarations<'a> = ArenaHashMap<'a, SymbolId, ArenaVec<'a, DeclarationId>>;
 
 /// The complete semantic model of a tree, with every scope, symbol,
 /// and reference fully resolved and cross-indexed. Backed by the
@@ -53,8 +54,8 @@ pub struct Semantic<'a> {
     references: ArenaVec<'a, Reference>,
     /// Every declaration in source order, indexed by [`DeclarationId`].
     declarations: ArenaVec<'a, Declaration>,
-    /// Declaration ids for each symbol, in source order.
-    symbol_declarations: ArenaVec<'a, ArenaVec<'a, DeclarationId>>,
+    /// Additional declaration ids for redeclared symbols, in source order.
+    redeclarations: Redeclarations<'a>,
 
     use_ids: ArenaVec<'a, ReferenceId>,
     use_ranges: ArenaVec<'a, Range>,
@@ -112,9 +113,16 @@ impl<'a> Semantic<'a> {
         self.symbols[id.index()].scope
     }
 
-    /// The ids of every declaration of `id`, in source order.
-    pub fn declaration_ids(&self, id: SymbolId) -> &[DeclarationId] {
-        &self.symbol_declarations[id.index()]
+    /// Iterates the ids of every declaration of `id`, in source order.
+    pub fn declaration_ids(&self, id: SymbolId) -> DeclarationIdIterator<'_> {
+        let additional = self
+            .redeclarations
+            .get(&id)
+            .map_or(&[][..], |declarations| declarations.as_slice());
+        DeclarationIdIterator {
+            first: Some(self.symbols[id.index()].declaration),
+            additional: additional.iter().copied(),
+        }
     }
 
     /// Every declaration of `id`, in source order. Usually a single element.
@@ -135,8 +143,7 @@ impl<'a> Semantic<'a> {
         id: SymbolId,
     ) -> impl ExactSizeIterator<Item = Declaration> + DoubleEndedIterator + '_ {
         self.declaration_ids(id)
-            .iter()
-            .map(|&declaration_id| self.declaration(declaration_id))
+            .map(|declaration_id| self.declaration(declaration_id))
     }
 
     /// Every use site of `id`, in source order. Declaration sites are
@@ -259,6 +266,40 @@ pub struct DeclarationEntry {
     pub id: DeclarationId,
     pub declaration: Declaration,
 }
+
+/// Declaration ids for one symbol, in source order.
+#[derive(Clone)]
+pub struct DeclarationIdIterator<'a> {
+    first: Option<DeclarationId>,
+    additional: std::iter::Copied<std::slice::Iter<'a, DeclarationId>>,
+}
+
+impl Iterator for DeclarationIdIterator<'_> {
+    type Item = DeclarationId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.first.take().or_else(|| self.additional.next())
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.len();
+        (len, Some(len))
+    }
+}
+
+impl DoubleEndedIterator for DeclarationIdIterator<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.additional.next_back().or_else(|| self.first.take())
+    }
+}
+
+impl ExactSizeIterator for DeclarationIdIterator<'_> {
+    fn len(&self) -> usize {
+        usize::from(self.first.is_some()) + self.additional.len()
+    }
+}
+
+impl std::iter::FusedIterator for DeclarationIdIterator<'_> {}
 
 pub struct ScopeIterator<'a> {
     list: &'a [scope::Scope],
@@ -442,33 +483,41 @@ mod tests {
         let allocator = Allocator::new();
         let (ast, semantic) = analyze_source(
             &allocator,
-            "interface A {} interface B {} interface A {}",
+            "interface A {} interface B {} interface A {} interface A {}",
             Lang::Ts,
             SourceType::Script,
         );
         let a = semantic.binding(ScopeId::ROOT, b"A").unwrap();
         let b = semantic.binding(ScopeId::ROOT, b"B").unwrap();
-        let a_declarations = semantic.declaration_ids(a);
-        assert_eq!(a_declarations.len(), 2);
+        let mut a_declarations = semantic.declaration_ids(a);
+        assert_eq!(a_declarations.len(), 3);
+        let first_a = a_declarations.next().unwrap();
+        let last_a = a_declarations.next_back().unwrap();
         assert!(
-            ast.span(semantic.declaration(a_declarations[0]).node).start
-                < ast.span(semantic.declaration(a_declarations[1]).node).start
+            ast.span(semantic.declaration(first_a).node).start
+                < ast.span(semantic.declaration(last_a).node).start
         );
 
         let mut declarations = semantic.iter_declarations();
         let first = declarations.next().unwrap();
         let second = declarations.next().unwrap();
         let third = declarations.next().unwrap();
+        let fourth = declarations.next().unwrap();
         assert!(declarations.next().is_none());
         assert_eq!(
             [
                 first.declaration.symbol,
                 second.declaration.symbol,
                 third.declaration.symbol,
+                fourth.declaration.symbol,
             ],
-            [a, b, a]
+            [a, b, a, a]
         );
-        assert_eq!(a_declarations, &[first.id, third.id]);
+        assert_eq!(semantic.symbol(a).declaration, first.id);
+        assert_eq!(
+            semantic.declaration_ids(a).collect::<Vec<_>>(),
+            [first.id, third.id, fourth.id]
+        );
     }
 
     #[test]
