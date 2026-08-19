@@ -71,14 +71,14 @@ impl From<AstLang> for Lang {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CommentMode {
     None,
-    Attached,
+    Flat,
 }
 
 impl From<CommentMode> for AstCommentMode {
     fn from(value: CommentMode) -> Self {
         match value {
             CommentMode::None => Self::None,
-            CommentMode::Attached => Self::Attached,
+            CommentMode::Flat => Self::Flat,
         }
     }
 }
@@ -99,9 +99,12 @@ pub struct ParserOptions {
     ///
     /// @default true
     pub preserve_parens: Option<bool>,
-    /// Determines whether comments are attached to AST nodes.
+    /// Determines how comments are exposed.
     ///
-    /// @default "attached"
+    /// `"none"` disables comment collection. `"flat"` exposes a
+    /// source-ordered comment list.
+    ///
+    /// @default "flat"
     pub comments: Option<CommentMode>,
     /// Allows `return` statements outside functions.
     ///

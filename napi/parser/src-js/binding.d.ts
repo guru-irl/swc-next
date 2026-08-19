@@ -2,7 +2,7 @@
 /* eslint-disable */
 export declare const enum CommentMode {
   None = 'none',
-  Attached = 'attached'
+  Flat = 'flat'
 }
 
 export declare const enum Lang {
@@ -34,9 +34,12 @@ export interface ParserOptions {
    */
   preserveParens?: boolean
   /**
-   * Determines whether comments are attached to AST nodes.
+   * Determines how comments are exposed.
    *
-   * @default "attached"
+   * `"none"` disables comment collection. `"flat"` exposes a
+   * source-ordered comment list.
+   *
+   * @default "flat"
    */
   comments?: CommentMode
   /**

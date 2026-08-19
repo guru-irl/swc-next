@@ -885,6 +885,7 @@ export function decode(buffer, source) {
   const extraCount = _u32[1];
   const stringPoolLength = _u32[2];
   const sourceLength = _u32[3];
+  const commentCount = _u32[4];
   const programIndex = _u32[7];
   const isTs = (_u32[8] & 1) !== 0;
 
@@ -893,6 +894,7 @@ export function decode(buffer, source) {
   const payloads = (kinds + nodeCount + 3) & ~3;
   const extra = payloads + nodeCount * 16;
   const strings = extra + extraCount * 8;
+  const comments = strings + ((stringPoolLength + 3) & ~3);
   const positions =
     source.length === sourceLength ? null : buildPosMap(source, sourceLength);
 
@@ -922,6 +924,26 @@ export function decode(buffer, source) {
     return result;
   };
 
+  const _decodeComments = () => {
+    const result = new Array(commentCount);
+    for (let index = 0; index < commentCount; index++) {
+      const offset = comments + index * 16;
+      const start = _u32[offset >> 2];
+      const end = _u32[(offset >> 2) + 1];
+      const kind = _dv.getUint16(offset + 12, true);
+      const first = source.charCodeAt(pos(start));
+      const valueStart = start + (first === 0x3c ? 4 : first === 0x2d ? 3 : 2);
+      const valueEnd = end - (kind === 1 ? 2 : 0);
+      result[index] = {
+        type: kind === 1 ? "Block" : "Line",
+        value: str(valueStart, valueEnd),
+        start: pos(start),
+        end: pos(end),
+      };
+    }
+    return result;
+  };
+
   function node(index) {
     const span = spans + index * 8;
     const start = pos(_u32[span >> 2]);
@@ -937,7 +959,18 @@ const POSTAMBLE: &str = r#"      default:
     return result;
   }
 
-  const root = node(programIndex);
-  return root;
+  let _program, _comments;
+  return {
+    get program() {
+      return _program !== undefined
+        ? _program
+        : (_program = node(programIndex));
+    },
+    get comments() {
+      return _comments !== undefined
+        ? _comments
+        : (_comments = _decodeComments());
+    },
+  };
 }
 "#;

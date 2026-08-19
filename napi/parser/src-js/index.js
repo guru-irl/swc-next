@@ -5,7 +5,5 @@ export * from "./binding.js";
 
 export function parseSync(source, options) {
   const buffer = __parseSync(source, options);
-  return {
-    program: decode(buffer, source),
-  };
+  return decode(buffer, source);
 }
