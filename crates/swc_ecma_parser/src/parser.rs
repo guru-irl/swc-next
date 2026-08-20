@@ -1250,14 +1250,10 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 decorators,
             )?)));
         }
-        self.parse_export_decorated(decorators_start, decorators)
+        self.parse_export_decorated(decorators)
     }
 
-    fn parse_export_decorated(
-        &mut self,
-        decorators_start: u32,
-        decorators: TypedSubRange<Decorator>,
-    ) -> Option<Stmt> {
+    fn parse_export_decorated(&mut self, decorators: TypedSubRange<Decorator>) -> Option<Stmt> {
         let export_start = self.current_token.span.start;
         self.advance()?;
         let is_default = self.eat(TokenTag::Default)?;
@@ -1266,7 +1262,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 is_default_export: is_default,
                 ..ParseClassOpts::default()
             },
-            Some(decorators_start),
+            None,
             decorators,
         )?;
         let end = class.span(&self.ast).end;
@@ -2132,12 +2128,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         start_from_param: Option<u32>,
         decorators: TypedSubRange<Decorator>,
     ) -> Option<Class> {
-        debug_assert!(
-            start_from_param.is_some()
-                || matches!(self.current_token.tag, TokenTag::Class | TokenTag::Abstract)
-        );
         let start = start_from_param.unwrap_or(self.current_token.span.start);
-
         let mut is_abstract = opts.is_abstract;
         if self.current_token.tag == TokenTag::Abstract
             && !is_abstract
