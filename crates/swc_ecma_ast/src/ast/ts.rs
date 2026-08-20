@@ -137,7 +137,7 @@ pub enum TsImportTypeQualifier {
     TsQualifiedName(TsQualifiedName),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum TsTypeQueryExprName {
     TsTypeName(TsTypeName),
     ThisExpression(ThisExpression),
@@ -154,7 +154,7 @@ pub enum TsLiteral {
     UnaryExpression(UnaryExpression),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum TsTupleElement {
     TsType(TsType),
     TsNamedTupleMember(TsNamedTupleMember),
@@ -175,7 +175,7 @@ pub enum TsTypePredicateName {
     TsThisType(TsThisType),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum TsEnumMemberName {
     IdentifierName(IdentifierName),
     StringLiteral(StringLiteral),
@@ -196,7 +196,7 @@ pub enum TsModuleBody {
     TsModuleDeclaration(TsModuleDeclaration),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum TsModuleReference {
     TsTypeName(TsTypeName),
     TsExternalModuleReference(TsExternalModuleReference),

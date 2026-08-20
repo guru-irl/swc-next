@@ -358,7 +358,7 @@ pub struct Program {
     hashbang: Option<Hashbang>,
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum Stmt {
     BlockStatement(BlockStatement),
     BreakStatement(BreakStatement),
@@ -445,7 +445,7 @@ pub enum Expr {
     JsxFragment(JsxFragment),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum BindingPattern {
     BindingIdentifier(BindingIdentifier),
     SimpleAssignmentTarget(SimpleAssignmentTarget),
@@ -455,7 +455,7 @@ pub enum BindingPattern {
     ObjectPattern(ObjectPattern),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum AssignmentTarget {
     SimpleAssignmentTarget(SimpleAssignmentTarget),
     ArrayAssignmentTarget(ArrayPattern),
@@ -472,7 +472,7 @@ pub enum SimpleAssignmentTarget {
     TsNonNullExpression(TsNonNullExpression),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum PropertyKey {
     IdentifierName(IdentifierName),
     PrivateIdentifier(PrivateIdentifier),
@@ -488,7 +488,7 @@ pub enum ModuleExportName {
     StringLiteral(StringLiteral),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum Argument {
     Expr(Expr),
     SpreadElement(SpreadElement),
@@ -500,19 +500,19 @@ pub enum ObjectPropertyKind {
     SpreadElement(SpreadElement),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum ForStatementInit {
     VariableDeclaration(VariableDeclaration),
     Expr(Expr),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum ForStatementLeft {
     VariableDeclaration(VariableDeclaration),
     AssignmentTarget(AssignmentTarget),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum ArrowFunctionBody {
     FunctionBody(FunctionBody),
     Expr(Expr),
@@ -524,7 +524,7 @@ pub enum FormalParameterItem {
     TsParameterProperty(TsParameterProperty),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum FormalParameterPattern {
     BindingPattern(BindingPattern),
     TsThisParameter(TsThisParameter),
@@ -546,7 +546,7 @@ pub enum ImportDeclarationSpecifier {
     ImportNamespaceSpecifier(ImportNamespaceSpecifier),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum ExportDefaultDeclarationKind {
     Expr(Expr),
     Function(Function),

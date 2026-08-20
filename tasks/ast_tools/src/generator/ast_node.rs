@@ -16,7 +16,6 @@ pub fn ast_node(schema: &Schema) -> RawOutput {
     let mut node_kind_variants = TokenStream::new();
     let mut node_kind_enum_checks = TokenStream::new();
     let mut node_kind_data_variants = TokenStream::new();
-    let mut node_kind_data_arms = TokenStream::new();
 
     for ty in &schema.types {
         match ty {
@@ -25,10 +24,9 @@ pub fn ast_node(schema: &Schema) -> RawOutput {
 
                 let name = format_ident!("{}", ast_struct.name);
                 node_kind_variants.extend(quote!(#name,));
-                node_kind_data_variants.extend(quote!(#name(#name),));
-                node_kind_data_arms.extend(quote! {
-                    NodeKind::#name => NodeKindData::#name(#name(node_id)),
-                });
+                node_kind_data_variants.extend(quote!(
+                    #name(#name) = NodeKind::#name as u8,
+                ));
             }
             AstType::Enum(ast_enum) => {
                 node_impls.extend(generate_node_impls_for_enum(ast_enum));
@@ -57,7 +55,14 @@ pub fn ast_node(schema: &Schema) -> RawOutput {
                 #node_kind_enum_checks
             }
 
+            #[repr(C)]
+            struct AstEnumDataRepr {
+                kind: NodeKind,
+                node_id: NodeId,
+            }
+
             /// The typed wrapper for the concrete node stored at a node ID.
+            #[repr(C, u8)]
             #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
             pub enum NodeKindData {
                 #node_kind_data_variants
@@ -69,9 +74,10 @@ pub fn ast_node(schema: &Schema) -> RawOutput {
                 /// Returns the typed wrapper for the concrete node stored at `node_id`.
                 #[inline]
                 pub fn kind_data(&self, node_id: NodeId) -> NodeKindData {
-                    match self.node_kind(node_id) {
-                        #node_kind_data_arms
-                    }
+                    let kind = self.node_kind(node_id);
+                    // SAFETY: `NodeKindData` uses the same C layout, discriminant, and node ID
+                    // payload as `AstEnumDataRepr` for every `NodeKind`.
+                    unsafe { std::mem::transmute(AstEnumDataRepr { kind, node_id }) }
                 }
 
                 #data_accessors
@@ -102,6 +108,49 @@ fn generate_node_kind_enum_check(ast: &AstEnum, schema: &Schema) -> TokenStream 
 }
 
 fn generate_data_accessor(ast: &AstEnum, schema: &Schema) -> TokenStream {
+    let has_nested_enum = ast.variants.iter().any(|variant| {
+        variant
+            .type_id
+            .is_some_and(|type_id| matches!(schema.types[type_id], AstType::Enum(_)))
+    });
+    let marked_nested = ast._attrs.ast_attrs.contains("nested");
+    assert_eq!(
+        marked_nested, has_nested_enum,
+        "AST enum `{}` must use `#[ast(repr, nested)]` exactly when it directly contains another AST enum",
+        ast.name
+    );
+
+    if has_nested_enum {
+        generate_nested_data_accessor(ast, schema)
+    } else {
+        generate_flat_data_accessor(ast)
+    }
+}
+
+fn generate_flat_data_accessor(ast: &AstEnum) -> TokenStream {
+    let wrapper_ident = format_ident!("{}", ast.name);
+    let data_ident = format_ident!("{}Data", ast.name);
+    let fn_name = format_ident!("{}_data", ast.name.to_case(Case::Snake));
+    let kind_check = format_ident!("is_{}", ast.name.to_case(Case::Snake));
+
+    quote! {
+        #[inline]
+        pub fn #fn_name(&self, node: #wrapper_ident) -> #data_ident {
+            let kind = unsafe { *self.nodes.kind_unchecked(node.0) };
+            debug_assert!(kind.#kind_check());
+            // SAFETY: Flat `#[ast(repr)]` enums align every data variant discriminant with its
+            // payload's `NodeKind`. Typed wrappers guarantee `kind` belongs to this enum.
+            unsafe {
+                std::mem::transmute(AstEnumDataRepr {
+                    kind,
+                    node_id: node.0,
+                })
+            }
+        }
+    }
+}
+
+fn generate_nested_data_accessor(ast: &AstEnum, schema: &Schema) -> TokenStream {
     let wrapper_ident = format_ident!("{}", ast.name);
     let data_ident = format_ident!("{}Data", ast.name);
     let fn_name = format_ident!("{}_data", ast.name.to_case(Case::Snake));

@@ -35,7 +35,7 @@ pub enum JsxAttributeValue {
     JsxFragment(JsxFragment),
 }
 
-#[ast(repr)]
+#[ast(repr, nested)]
 pub enum JsxExpression {
     Expr(Expr),
     JsxEmptyExpression(JsxEmptyExpression),
