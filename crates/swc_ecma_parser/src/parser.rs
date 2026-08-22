@@ -5,6 +5,7 @@
 
 use std::{borrow::Cow, mem};
 
+use bitflags::bitflags;
 use rustc_hash::FxHashSet;
 use swc_next_allocator::{Allocator, vec::Vec as ArenaVec, wtf8::Wtf8Buf};
 use swc_next_ecma_ast::*;
@@ -60,19 +61,23 @@ impl Default for Options {
     }
 }
 
-/// The active values of ECMAScript grammatical parameters.
-///
-/// See <https://tc39.es/ecma262/multipage/notational-conventions.html#sec-grammatical-parameters>.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Context {
-    /// The grammar's `[In]` parameter.
-    r#in: bool,
-    /// The grammar's `[Yield]` parameter.
-    r#yield: bool,
-    /// The grammar's `[Await]` parameter.
-    r#await: bool,
-    /// The grammar's `[Return]` parameter.
-    r#return: bool,
+bitflags! {
+    /// The active values of ECMAScript grammatical parameters.
+    ///
+    /// See <https://tc39.es/ecma262/multipage/notational-conventions.html#sec-grammatical-parameters>.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct Context: u8 {
+        /// The grammar's `[In]` parameter.
+        const IN = 1 << 0;
+        /// The grammar's `[Yield]` parameter.
+        const YIELD = 1 << 1;
+        /// The grammar's `[Await]` parameter.
+        const AWAIT = 1 << 2;
+        /// The grammar's `[Return]` parameter.
+        const RETURN = 1 << 3;
+        /// Whether top-level `await` may resolve an unambiguous program to a module.
+        const CAN_BE_MODULE = 1 << 4;
+    }
 }
 
 /// Enters a derived grammatical context and returns the previous context.
@@ -80,25 +85,25 @@ struct Context {
 /// The modifiers mirror ECMA-262 grammatical arguments: `+` enables a
 /// parameter, `~` disables it, and `?` inherits its current value.
 macro_rules! enter_grammar_context {
-    (@set $context:ident, $modifier:tt In) => {
-        enter_grammar_context!(@apply $context.r#in, $modifier);
+    (@flag In) => {
+        Context::IN
     };
-    (@set $context:ident, $modifier:tt Yield) => {
-        enter_grammar_context!(@apply $context.r#yield, $modifier);
+    (@flag Yield) => {
+        Context::YIELD
     };
-    (@set $context:ident, $modifier:tt Await) => {
-        enter_grammar_context!(@apply $context.r#await, $modifier);
+    (@flag Await) => {
+        Context::AWAIT
     };
-    (@set $context:ident, $modifier:tt Return) => {
-        enter_grammar_context!(@apply $context.r#return, $modifier);
+    (@flag Return) => {
+        Context::RETURN
     };
-    (@apply $parameter:expr, +) => {
-        $parameter = true;
+    (@set $context:ident, + $parameter:ident) => {
+        $context.insert(enter_grammar_context!(@flag $parameter));
     };
-    (@apply $parameter:expr, ~) => {
-        $parameter = false;
+    (@set $context:ident, ~ $parameter:ident) => {
+        $context.remove(enter_grammar_context!(@flag $parameter));
     };
-    (@apply $parameter:expr, ?) => {};
+    (@set $context:ident, ? $parameter:ident) => {};
     ($context:expr, $($modifier:tt $parameter:ident),+ $(,)?) => {{
         let context = $context;
         let previous = *context;
@@ -109,27 +114,17 @@ macro_rules! enter_grammar_context {
 
 impl Default for Context {
     fn default() -> Self {
-        Self {
-            r#in: true,
-            r#yield: false,
-            r#await: false,
-            r#return: false,
-        }
+        Self::IN
     }
 }
 
 impl From<SourceType> for Context {
     fn from(source_type: SourceType) -> Self {
         match source_type {
-            SourceType::Script | SourceType::Unambiguous => Self::default(),
-            SourceType::CommonJs => Self {
-                r#return: true,
-                ..Self::default()
-            },
-            SourceType::Module => Self {
-                r#await: true,
-                ..Self::default()
-            },
+            SourceType::Script => Self::default(),
+            SourceType::Unambiguous => Self::default() | Self::CAN_BE_MODULE,
+            SourceType::CommonJs => Self::default() | Self::RETURN,
+            SourceType::Module => Self::default() | Self::AWAIT,
         }
     }
 }
@@ -257,12 +252,14 @@ fn enter_function_grammar_context(
     generator: bool,
     async_function: bool,
 ) -> Context {
-    match (generator, async_function) {
-        (false, false) => enter_grammar_context![context, ~Yield, ~Await],
-        (true, false) => enter_grammar_context![context, +Yield, ~Await],
-        (false, true) => enter_grammar_context![context, ~Yield, +Await],
-        (true, true) => enter_grammar_context![context, +Yield, +Await],
-    }
+    let previous = match (generator, async_function) {
+        (false, false) => enter_grammar_context![&mut *context, ~Yield, ~Await],
+        (true, false) => enter_grammar_context![&mut *context, +Yield, ~Await],
+        (false, true) => enter_grammar_context![&mut *context, ~Yield, +Await],
+        (true, true) => enter_grammar_context![&mut *context, +Yield, +Await],
+    };
+    context.remove(Context::CAN_BE_MODULE);
+    previous
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -673,6 +670,7 @@ struct Peek<'peek, 'a, C: ParserConfig = NoTokenParserConfig> {
     state: LexerState,
     cursor: u32,
     comments_len: usize,
+    module_mode_errors_len: usize,
     processed_comments: usize,
     tokens_len: usize,
     active: bool,
@@ -689,6 +687,9 @@ impl<C: ParserConfig> Peek<'_, '_, C> {
         self.lexer.state = self.state;
         self.lexer.cursor = self.cursor;
         self.lexer.comments.truncate(self.comments_len);
+        self.lexer
+            .module_mode_errors
+            .truncate(self.module_mode_errors_len);
         self.lexer.processed_comments = self.processed_comments;
         self.lexer.tokens.truncate(self.tokens_len);
         self.active = false;
@@ -781,7 +782,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
 
     pub fn parse(mut self) -> ParseReturn<'a> {
         self.context = self.source_type.into();
-        self.context.r#return |= self.allow_return_outside_function;
+        if self.allow_return_outside_function {
+            self.context.insert(Context::RETURN);
+        }
         if self.advance().is_none() {
             self.current_token = Token::eof(0);
         }
@@ -794,13 +797,17 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             let value = self.ast.source_slice(start, end);
             self.ast.hashbang(Span::new(0, end), value)
         });
-        if self.source_type == SourceType::Unambiguous {
-            self.source_type = if self.has_module_syntax {
-                SourceType::Module
-            } else {
-                SourceType::Script
-            };
-            self.ast.set_source_metadata(self.source_type, self.lang);
+        self.resolve_unambiguous_source_type();
+        if self.source_type == SourceType::Module {
+            for index in 0..self.lexer.module_mode_errors.len() {
+                self.diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    message: Cow::Borrowed("Legacy comments cannot be used in module code"),
+                    span: self.lexer.module_mode_errors[index],
+                    help: None,
+                    labels: Vec::new(),
+                });
+            }
         }
         let program = self
             .ast
@@ -833,7 +840,10 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
 
     pub fn parse_expression(mut self) -> Result<Ast<'a>, Vec<Diagnostic<'a>>> {
         self.context = self.source_type.into();
-        self.context.r#return |= self.allow_return_outside_function;
+        self.statement_context = self.source_type.into();
+        if self.allow_return_outside_function {
+            self.context.insert(Context::RETURN);
+        }
         if self.advance().is_none() {
             self.current_token = Token::eof(0);
         }
@@ -841,6 +851,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         let expr = self.parse_expr(Precedence::Lowest, ParseExpressionOpts::default());
         match expr {
             Some(expr) if self.diagnostics.is_empty() => {
+                self.resolve_unambiguous_source_type();
                 if !self.preserve_parens {
                     strip_parenthesized_nodes(&mut self.ast, &mut self.lexer.comments);
                 }
@@ -852,6 +863,27 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 Ok(self.ast)
             }
             _ => Err(self.diagnostics),
+        }
+    }
+
+    fn resolve_unambiguous_source_type(&mut self) {
+        if self.source_type != SourceType::Unambiguous {
+            return;
+        }
+        self.source_type = if self.has_module_syntax {
+            SourceType::Module
+        } else {
+            SourceType::Script
+        };
+        self.ast.set_source_metadata(self.source_type, self.lang);
+    }
+
+    fn enter_module_context(&mut self) {
+        if self.statement_context == StatementContext::ModuleItem
+            && self.context.contains(Context::CAN_BE_MODULE)
+        {
+            self.context.insert(Context::AWAIT);
+            self.has_module_syntax = true;
         }
     }
 
@@ -1064,6 +1096,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.lexer.state = checkpoint.lexer_state;
         self.lexer.mode = checkpoint.lexer_mode;
         self.lexer.comments.truncate(checkpoint.lexer_comments_len);
+        self.lexer
+            .rewind_module_mode_errors(checkpoint.lexer_cursor);
         self.lexer.processed_comments = checkpoint.lexer_processed_comments;
         self.lexer.tokens.truncate(checkpoint.lexer_tokens_len);
         self.current_token = checkpoint.current_token;
@@ -1082,6 +1116,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             state: self.lexer.state,
             cursor: self.lexer.cursor,
             comments_len: self.lexer.comments.len(),
+            module_mode_errors_len: self.lexer.module_mode_errors.len(),
             processed_comments: self.lexer.processed_comments,
             tokens_len: self.lexer.tokens.len(),
             active: true,
@@ -1254,6 +1289,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
     }
 
     fn parse_export_decorated(&mut self, decorators: TypedSubRange<Decorator>) -> Option<Stmt> {
+        self.enter_module_context();
         let export_start = self.current_token.span.start;
         self.advance()?;
         let is_default = self.eat(TokenTag::Default)?;
@@ -1331,7 +1367,13 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
     }
 
     fn report_await_using_if_disallowed(&mut self, span: Span) {
-        if self.context.r#await {
+        if self.context.contains(Context::AWAIT) {
+            return;
+        }
+        if self.context.contains(Context::CAN_BE_MODULE) {
+            if self.statement_context == StatementContext::ModuleItem {
+                self.has_module_syntax = true;
+            }
             return;
         }
         self.report(
@@ -1388,6 +1430,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         if matches!(next.tag, TokenTag::LeftParen | TokenTag::Dot) {
             return self.parse_expression_statement();
         }
+        self.enter_module_context();
         self.parse_import_declaration()
     }
 
@@ -1547,7 +1590,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         debug_assert_eq!(self.current_token.tag, TokenTag::Return);
         let start = self.current_token.span.start;
         self.advance()?;
-        if !self.context.r#return {
+        if !self.context.contains(Context::RETURN) {
             self.report(
                 Span::new(start, self.lexer.state.prev_token_end),
                 "'return' statement is only valid inside a function",
@@ -2789,6 +2832,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
 
         let value = if self.eat(TokenTag::Assign)? {
             let context = enter_grammar_context![&mut self.context, ~Yield, ~Await];
+            self.context.remove(Context::CAN_BE_MODULE);
             let value = self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default());
             self.context = context;
             Some(value?)
@@ -3674,6 +3718,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
 
     fn parse_export_declaration(&mut self) -> Option<Stmt> {
         debug_assert_eq!(self.current_token.tag, TokenTag::Export);
+        self.enter_module_context();
         let start = self.current_token.span.start;
         self.advance()?;
         if self.lang.is_typescript() {
@@ -4836,6 +4881,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             return None;
         }
         let context = enter_grammar_context![&mut self.context, ~Return];
+        self.context.remove(Context::CAN_BE_MODULE);
         let ParsedBody { directives, body } =
             self.parse_body(Some(TokenTag::RightBrace), StatementContext::ModuleItem);
         self.context = context;
@@ -6601,7 +6647,10 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         let start = self.current_token.span.start;
         self.advance()?;
         if self.current_token.tag == TokenTag::Await {
-            if !self.context.r#await {
+            if !self
+                .context
+                .intersects(Context::AWAIT | Context::CAN_BE_MODULE)
+            {
                 self.report(
                     self.current_token.span,
                     "'for await' is only valid in async functions or modules",
@@ -7186,7 +7235,10 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             if precedence > max_left_precedence(left, &self.ast) {
                 break;
             }
-            if opts.respect_in_parameter && token.tag == TokenTag::In && !self.context.r#in {
+            if opts.respect_in_parameter
+                && token.tag == TokenTag::In
+                && !self.context.contains(Context::IN)
+            {
                 break;
             }
             left = if token.tag.is_binary_operator() {
@@ -7316,13 +7368,43 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             return self.parse_parenthesized_or_arrow_function(None, minimum);
         }
 
-        if tag == TokenTag::Await && self.context.r#await {
-            let start = self.current_token.span.start;
-            self.advance()?;
-            return self.parse_await_expression(start);
+        if tag == TokenTag::Await
+            && self
+                .context
+                .intersects(Context::AWAIT | Context::CAN_BE_MODULE)
+        {
+            let token = self.current_token;
+            let unambiguous_await = !self.context.contains(Context::AWAIT);
+            self.advance_without_escape_check()?;
+            let parse_as_await = self.context.contains(Context::AWAIT)
+                || !self.current_token.has_line_terminator_before()
+                    && !matches!(
+                        self.current_token.tag,
+                        TokenTag::Semicolon
+                            | TokenTag::RightBrace
+                            | TokenTag::RightParen
+                            | TokenTag::RightBracket
+                            | TokenTag::Comma
+                            | TokenTag::Colon
+                            | TokenTag::Eof
+                    );
+            if parse_as_await {
+                self.report_if_escaped_keyword(token);
+                if unambiguous_await && self.statement_context == StatementContext::ModuleItem {
+                    self.has_module_syntax = true;
+                }
+                return self.parse_await_expression(token.span.start);
+            }
+
+            self.validate_identifier(token, "an identifier");
+            let name = self.identifier_name(token);
+            return Some(self.ast.expr_identifier_reference(token.span, name));
         }
 
-        if tag == TokenTag::Yield && self.context.r#yield && minimum < Precedence::Add {
+        if tag == TokenTag::Yield
+            && self.context.contains(Context::YIELD)
+            && minimum < Precedence::Add
+        {
             return self.parse_yield_expression();
         }
 
@@ -7710,7 +7792,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         arrow_start: Option<u32>,
         minimum: Precedence,
     ) -> Option<Expr> {
-        let start = arrow_start.unwrap_or(self.current_token.span.start);
+        let position = self.current_token.span.start;
+        let start = arrow_start.unwrap_or(position);
         if self.lang.is_typescript() && minimum <= Precedence::Assignment {
             match self.classify_arrow_head() {
                 ArrowHead::Yes => {
@@ -7723,8 +7806,26 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 }
                 ArrowHead::No => {}
             }
+        } else if self.context.contains(Context::CAN_BE_MODULE)
+            && minimum <= Precedence::Assignment
+            && self.classify_arrow_head() != ArrowHead::No
+            && let Some(arrow) = self.try_parse_arrow(false, start)?
+        {
+            return Some(arrow);
         }
-        let cover = self.parse_parenthesized_cover()?;
+        let cover = match self.parse_parenthesized_cover() {
+            Some(cover) => cover,
+            None => {
+                if self.source_type == SourceType::Unambiguous
+                    && !self.context.contains(Context::CAN_BE_MODULE)
+                    && !self.lang.is_typescript()
+                    && minimum <= Precedence::Assignment
+                {
+                    self.not_parenthesized_arrow.insert(position);
+                }
+                return None;
+            }
+        };
         let is_arrow = self.current_token.tag == TokenTag::Arrow
             && !self.current_token.has_line_terminator_before()
             && minimum <= Precedence::Assignment;
@@ -8250,6 +8351,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         } else {
             enter_grammar_context![&mut self.context, ?Yield, ?Await]
         };
+        self.context.remove(Context::CAN_BE_MODULE);
         let result = self.parse_arrow_inner(is_async, start);
         self.context = context;
         result
@@ -8266,7 +8368,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
         let params =
             self.parse_formal_parameters(FormalParameterKind::ArrowFormalParameters, false)?;
-        let return_type = if self.current_token.tag == TokenTag::Colon {
+        let return_type = if self.lang.is_typescript() && self.current_token.tag == TokenTag::Colon
+        {
             Some(self.parse_return_type_annotation()?)
         } else {
             None
@@ -11304,7 +11407,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 ReportOptions::default(),
             );
         }
-        if token.tag == TokenTag::Yield && self.context.r#yield {
+        if token.tag == TokenTag::Yield && self.context.contains(Context::YIELD) {
             self.report(
                 token.span,
                 Cow::Owned(format!(
@@ -11315,7 +11418,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
         if token.tag == TokenTag::Await
             && !self.ts_context.ambient
-            && (self.context.r#await || self.source_type == SourceType::Module)
+            && (self.context.contains(Context::AWAIT) || self.source_type == SourceType::Module)
         {
             self.report(
                 token.span,
@@ -11962,6 +12065,36 @@ mod tests {
             ast.expr_data(ast.root_expression()),
             swc_next_ecma_ast::ExprData::BinaryExpression(_)
         ));
+
+        let allocator = Allocator::default();
+        let parser = Parser::init(
+            &allocator,
+            "await value",
+            Options {
+                source_type: SourceType::Unambiguous,
+                ..Options::default()
+            },
+            NoTokenParserConfig,
+        );
+        let ast = parser.parse_expression().unwrap();
+        assert_eq!(ast.source_type(), SourceType::Module);
+        assert!(matches!(
+            ast.expr_data(ast.root_expression()),
+            swc_next_ecma_ast::ExprData::AwaitExpression(_)
+        ));
+
+        let allocator = Allocator::default();
+        let parser = Parser::init(
+            &allocator,
+            "value",
+            Options {
+                source_type: SourceType::Unambiguous,
+                ..Options::default()
+            },
+            NoTokenParserConfig,
+        );
+        let ast = parser.parse_expression().unwrap();
+        assert_eq!(ast.source_type(), SourceType::Script);
     }
 
     #[test]
@@ -12023,11 +12156,15 @@ mod tests {
 
     #[test]
     fn unambiguous() {
-        fn assert_unambiguous_source_type(source: &str, expected: SourceType) {
+        fn assert_unambiguous_source_type_with_lang(
+            source: &str,
+            lang: Lang,
+            expected: SourceType,
+        ) {
             let allocator = Allocator::new();
             let options = Options {
                 source_type: SourceType::Unambiguous,
-                lang: Lang::Ts,
+                lang,
                 ..Options::default()
             };
             let result = Parser::init(&allocator, source, options, NoTokenParserConfig).parse();
@@ -12036,14 +12173,108 @@ mod tests {
             assert_eq!(result.ast.source_type(), expected, "{source}");
         }
 
+        fn assert_unambiguous_source_type(source: &str, expected: SourceType) {
+            assert_unambiguous_source_type_with_lang(source, Lang::Ts, expected);
+        }
+
         assert_unambiguous_source_type("const value = 1;", SourceType::Script);
+        assert_unambiguous_source_type("const f = (x = await + value) => x;", SourceType::Script);
+        assert_unambiguous_source_type_with_lang(
+            "const f = (x = await + value) => x;",
+            Lang::Js,
+            SourceType::Script,
+        );
+        assert_unambiguous_source_type_with_lang(
+            "(x = await value);",
+            Lang::Js,
+            SourceType::Module,
+        );
+        assert_unambiguous_source_type_with_lang(
+            "(a = (b = (c = await value)));",
+            Lang::Js,
+            SourceType::Module,
+        );
         assert_unambiguous_source_type("import value from 'value';", SourceType::Module);
         assert_unambiguous_source_type("export const value = 1;", SourceType::Module);
         assert_unambiguous_source_type("const value = import.meta.url;", SourceType::Module);
         assert_unambiguous_source_type("import('value');", SourceType::Script);
         assert_unambiguous_source_type("import value = require('value');", SourceType::Module);
-        assert_unambiguous_source_type("import Value = Namespace.Value;", SourceType::Script);
-        assert_unambiguous_source_type("export as namespace Foo", SourceType::Script);
+        assert_unambiguous_source_type("import Value = Namespace.Value;", SourceType::Module);
+        assert_unambiguous_source_type("export as namespace Foo", SourceType::Module);
+        assert_unambiguous_source_type("await value;", SourceType::Module);
+        assert_unambiguous_source_type("await;", SourceType::Script);
+        assert_unambiguous_source_type("await! + value;", SourceType::Module);
+        assert_unambiguous_source_type("await<T>(value);", SourceType::Module);
+        assert_unambiguous_source_type("await /1/u; var await = 1, u = 1;", SourceType::Module);
+        assert_unambiguous_source_type("await\nvalue;", SourceType::Script);
+        assert_unambiguous_source_type("class C { field = await + value; }", SourceType::Script);
+        assert_unambiguous_source_type("for await (const value of values) {}", SourceType::Script);
+        assert_unambiguous_source_type(
+            "{ for await (const value of values) {} }",
+            SourceType::Script,
+        );
+        assert_unambiguous_source_type("await using value = resource;", SourceType::Module);
+        assert_unambiguous_source_type("{ await using value = resource; }", SourceType::Script);
+        assert_unambiguous_source_type("using value = resource;", SourceType::Script);
+        assert_unambiguous_source_type("async function f() { await value; }", SourceType::Script);
+        assert_unambiguous_source_type(
+            "async function f() { await value; } await other;",
+            SourceType::Module,
+        );
+        assert_unambiguous_source_type("{ using value = resource; }", SourceType::Script);
+        assert_unambiguous_source_type("export {}; await\nvalue;", SourceType::Module);
+        assert_unambiguous_source_type("await\nvalue; export {};", SourceType::Module);
+        assert_unambiguous_source_type("await; export {};", SourceType::Module);
+
+        let allocator = Allocator::new();
+        let result = Parser::init(
+            &allocator,
+            "value + await \"unterminated",
+            Options {
+                source_type: SourceType::Unambiguous,
+                lang: Lang::Js,
+                ..Options::default()
+            },
+            NoTokenParserConfig,
+        )
+        .parse();
+        assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+        assert_eq!(result.diagnostics[0].message, "Unterminated string literal");
+
+        let allocator = Allocator::new();
+        let result = Parser::init(
+            &allocator,
+            "value\n<!-- comment",
+            Options {
+                source_type: SourceType::Unambiguous,
+                lang: Lang::Js,
+                ..Options::default()
+            },
+            NoTokenParserConfig,
+        )
+        .parse();
+        assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+        assert_eq!(result.ast.source_type(), SourceType::Script);
+        assert_eq!(result.ast.root_program().body(&result.ast).len(), 1);
+
+        let allocator = Allocator::new();
+        let result = Parser::init(
+            &allocator,
+            "value\n<!-- comment\nexport {};",
+            Options {
+                source_type: SourceType::Unambiguous,
+                lang: Lang::Js,
+                ..Options::default()
+            },
+            NoTokenParserConfig,
+        )
+        .parse();
+        assert_eq!(result.ast.source_type(), SourceType::Module);
+        assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+        assert_eq!(
+            result.diagnostics[0].message,
+            "Legacy comments cannot be used in module code"
+        );
     }
 
     #[test]
