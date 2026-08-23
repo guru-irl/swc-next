@@ -8,15 +8,15 @@ use swc_next_ecma_ast::{
     Visit, VisitWith, YieldExpression,
 };
 use swc_next_ecma_parser::{Options, Parser, Token, TokenParserConfig, TokenTag};
-use swc_next_ecma_semantic::{AnalyzeOptions, Semantic, analyze};
+use swc_next_ecma_semantic::{AnalyzeOptions, Semantic, analyze, name_resolver::resolver};
 
 pub fn run(src: &'static str) {
     let allocator = Allocator::new();
     let (ast, tokens) = run_parse(src, &allocator);
-    let semantic = run_semantic(&ast);
+    let _semantic = resolver(&ast);
     let semicolons = run_collect_semicolons(&ast, &tokens);
     let idents = run_scan_dependencies(&ast);
-    drop((ast, semantic, tokens, semicolons, idents));
+    drop((ast, tokens, semicolons, idents));
 }
 
 #[inline(never)]
