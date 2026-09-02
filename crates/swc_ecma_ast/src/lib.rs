@@ -80,29 +80,27 @@ multi_index_vec! {
 pub struct NodePayload(pub(crate) u128);
 
 /// Compact values stored in the flattening AST's extra-data table.
+///
+/// The AST schema determines the logical type of each value, so no runtime
+/// discriminant is stored. Little-endian targets retain the original native
+/// typed views used by hot traversal paths.
+#[cfg(target_endian = "little")]
 #[derive(Clone, Copy)]
 pub union ExtraData {
     node_id: NodeId,
-
     sub_range: SubRange,
-
-    /// Any scalar enum or other value representable within eight bytes.
     other: u64,
 }
 
-impl ExtraData {
-    /// Construct a fully initialized extra-data word containing a node ID.
-    ///
-    /// `ExtraData` is copied byte-for-byte across the JavaScript FFI. Writing
-    /// the four-byte union field directly would leave the high four bytes
-    /// uninitialized.
-    #[inline]
-    pub(crate) fn from_node_id(node_id: NodeId) -> Self {
-        let mut data = Self { other: 0 };
-        data.node_id = node_id;
-        data
-    }
-}
+/// Compact values stored in the flattening AST's extra-data table.
+///
+/// On big-endian targets, numeric bit positions match the fixed little-endian
+/// FFI format. The AST schema determines the logical type of each value, so no
+/// runtime discriminant is stored.
+#[cfg(target_endian = "big")]
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct ExtraData(u64);
 
 impl<'a> Ast<'a> {
     #[inline]

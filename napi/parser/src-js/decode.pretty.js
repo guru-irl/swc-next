@@ -2,6 +2,8 @@
 
 const NULL = 0xffffffff;
 const HEADER_SIZE = 36;
+const NATIVE_LITTLE_ENDIAN =
+  new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
 const textDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
 const ENUMS = Object.freeze({
@@ -91,20 +93,31 @@ function decodePool(bytes) {
   return result;
 }
 
+function copyLittleEndianU32(view) {
+  const u32 = new Uint32Array(view.byteLength >> 2);
+  for (let offset = 0; offset + 4 <= view.byteLength; offset += 4) {
+    u32[offset >> 2] = view.getUint32(offset, true);
+  }
+  return u32;
+}
+
 export function decode(buffer, source) {
   const arrayBuffer = buffer instanceof ArrayBuffer ? buffer : buffer.buffer;
   const byteOffset = buffer.byteOffset ?? 0;
   const byteLength = buffer.byteLength;
   const bytes = new Uint8Array(arrayBuffer, byteOffset, byteLength);
-  const _u32 = new Uint32Array(arrayBuffer, byteOffset, byteLength >> 2);
   const _dv = new DataView(arrayBuffer, byteOffset, byteLength);
+  const _u32 = NATIVE_LITTLE_ENDIAN && (byteOffset & 3) === 0
+    ? new Uint32Array(arrayBuffer, byteOffset, byteLength >> 2)
+    : copyLittleEndianU32(_dv);
   const nodeCount = _u32[0];
   const extraCount = _u32[1];
   const stringPoolLength = _u32[2];
   const sourceLength = _u32[3];
   const commentCount = _u32[4];
   const programIndex = _u32[7];
-  const isTs = (_u32[8] & 1) !== 0;
+  const flags = _u32[8];
+  const isTs = (flags & 1) !== 0;
 
   const spans = HEADER_SIZE;
   const kinds = spans + nodeCount * 8;
@@ -128,7 +141,7 @@ export function decode(buffer, source) {
     const values = ENUMS[name];
     return values !== undefined && value < values.length ? values[value] : value;
   };
-  const sourceType = enumValue("SourceType", (_u32[8] >> 1) & 3);
+  const sourceType = enumValue("SourceType", (flags >> 1) & 3);
   const optionalEnum = (name, value) =>
     value === 0xff ? null : enumValue(name, value);
   const optionalNode = index => index === NULL ? null : node(index);
