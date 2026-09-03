@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const instructionFormatter = new Intl.NumberFormat("en-US");
+const cycleFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 0,
+});
 
 function hasOwn(value, key) {
   return Object.prototype.hasOwnProperty.call(value, key);
@@ -36,66 +39,62 @@ function benchmarkName(summary) {
   return `${groupName}::${functionName}`;
 }
 
-function instructionCount(metric, side, benchmark) {
+function integerMetricValue(metric, name, side, benchmark) {
   if (!metric || typeof metric !== "object" || !hasOwn(metric, "Int")) {
-    throw new Error(`Missing ${side} instruction value for ${benchmark}`);
+    throw new Error(`Missing ${side} ${name} value for ${benchmark}`);
   }
 
-  const count = metric.Int;
-  if (!Number.isSafeInteger(count) || count < 0) {
-    throw new Error(`Invalid ${side} instruction count for ${benchmark}`);
+  const value = metric.Int;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Invalid ${side} ${name} value for ${benchmark}`);
   }
-  return count;
+  return value;
 }
 
-function instructionComparison(metrics, benchmark) {
-  const instruction = metrics?.Ir;
-  const values = instruction?.metrics;
+function metricComparison(metrics, event, name, benchmark) {
+  const metric = metrics?.[event];
+  const values = metric?.metrics;
   if (!values || typeof values !== "object") {
-    throw new Error(`Missing instruction values for ${benchmark}`);
+    throw new Error(`Missing ${name} values for ${benchmark}`);
   }
 
   if (hasOwn(values, "Both")) {
     const pair = values.Both;
     if (!Array.isArray(pair) || pair.length !== 2) {
-      throw new Error(`Invalid merge/base instruction values for ${benchmark}`);
+      throw new Error(`Invalid merge/base ${name} values for ${benchmark}`);
     }
 
-    const mergeInstructions = instructionCount(pair[0], "merge", benchmark);
-    const baseInstructions = instructionCount(pair[1], "base", benchmark);
+    const mergeValue = integerMetricValue(pair[0], name, "merge", benchmark);
+    const baseValue = integerMetricValue(pair[1], name, "base", benchmark);
     return {
-      mergeInstructions,
-      baseInstructions,
+      mergeValue,
+      baseValue,
       comparison: "both",
-      change: parseDiff(String(instruction.diffs?.diff_pct)),
+      change: parseDiff(String(metric.diffs?.diff_pct)),
     };
   }
 
   if (hasOwn(values, "Left")) {
-    const mergeInstructions = instructionCount(
-      values.Left,
-      "merge",
-      benchmark,
-    );
+    const mergeValue = integerMetricValue(values.Left, name, "merge", benchmark);
     return {
-      mergeInstructions,
-      baseInstructions: null,
+      mergeValue,
+      baseValue: null,
       comparison: "new",
       change: null,
     };
   }
 
   if (hasOwn(values, "Right")) {
-    const baseInstructions = instructionCount(values.Right, "base", benchmark);
+    const baseValue = integerMetricValue(values.Right, name, "base", benchmark);
     return {
-      mergeInstructions: null,
-      baseInstructions,
+      mergeValue: null,
+      baseValue,
       comparison: "removed",
       change: null,
     };
   }
 
-  throw new Error(`Unsupported instruction values for ${benchmark}`);
+  throw new Error(`Unsupported ${name} values for ${benchmark}`);
 }
 
 function summaryRows(summary) {
@@ -118,11 +117,28 @@ function summaryRows(summary) {
   }
 
   const caseName = summary.id ?? summary.details ?? "default";
-  const row = (label, metrics) => ({
-    benchmark,
-    caseName: label ? `${caseName}/${label}` : caseName,
-    ...instructionComparison(metrics, benchmark),
-  });
+  const row = (label, metrics) => {
+    const instructions = metricComparison(
+      metrics,
+      "Ir",
+      "instruction count",
+      benchmark,
+    );
+    return {
+      benchmark,
+      caseName: label ? `${caseName}/${label}` : caseName,
+      mergeInstructions: instructions.mergeValue,
+      baseInstructions: instructions.baseValue,
+      comparison: instructions.comparison,
+      change: instructions.change,
+      throughputCycles: metricComparison(
+        metrics,
+        "Ct",
+        "throughput cycle estimate",
+        benchmark,
+      ),
+    };
+  };
   const total = profile.total?.summary?.Callgrind;
   if (profile.parts.length <= 1) {
     return [row(null, total)];
@@ -220,6 +236,14 @@ function formatInstructionCount(value) {
   return value === null ? "—" : instructionFormatter.format(value);
 }
 
+function formatCycleCount(value) {
+  return value === null ? "—" : cycleFormatter.format(value / 100);
+}
+
+function formatPair(left, right, formatter) {
+  return `${formatter(left)} / ${formatter(right)}`;
+}
+
 function groupRows(rows) {
   const groups = new Map();
   for (const row of rows) {
@@ -237,16 +261,23 @@ function renderGroupTable(group, rows) {
   const lines = [
     `##### ${groupTitle(group)}`,
     "",
-    "| Benchmark | Merge instructions | Base instructions | Change |",
-    "| --- | ---: | ---: | ---: |",
+    "| Benchmark | Ir | Change | Ct | Change |",
+    "| --- | ---: | ---: | ---: | ---: |",
   ];
   for (const row of rows) {
     const label = escapeTableCell(benchmarkLabel(row, includeBenchmark));
-    const mergeInstructions = formatInstructionCount(row.mergeInstructions);
-    const baseInstructions = formatInstructionCount(row.baseInstructions);
-    const change = formatChange(row);
+    const instructions = formatPair(
+      row.mergeInstructions,
+      row.baseInstructions,
+      formatInstructionCount,
+    );
+    const throughputCycles = formatPair(
+      row.throughputCycles.mergeValue,
+      row.throughputCycles.baseValue,
+      formatCycleCount,
+    );
     lines.push(
-      `| \`${label}\` | ${mergeInstructions} | ${baseInstructions} | ${change} |`,
+      `| \`${label}\` | ${instructions} | ${formatChange(row)} | ${throughputCycles} | ${formatChange(row.throughputCycles)} |`,
     );
   }
   lines.push("");
@@ -315,7 +346,7 @@ export async function loadSummaries(inputPath) {
 export function renderSummary(summaries) {
   const rows = summaries.flatMap(summaryRows).sort(compareRows);
   if (rows.length === 0) {
-    throw new Error("No instruction comparisons to summarize");
+    throw new Error("No Callgrind comparisons to summarize");
   }
 
   const groups = groupRows(rows);
@@ -324,9 +355,9 @@ export function renderSummary(summaries) {
   ).join("\n");
 
   return [
-    "### Instruction-count changes",
+    "### Callgrind metric changes",
     "",
-    "Exact Callgrind instruction counts for the merge and base revisions. Multi-part profiles use the part numbers from Gungraun and include an aggregated Total. New and Removed identify benchmarks that exist on only one side; the missing count is shown as a dash. Percentages use the same precision as the Gungraun text report. Markers: 🟢 fewer instructions, 🔴 more instructions, ⚪ unchanged.",
+    "Callgrind instruction counts (Ir) and CodSpeed throughput cycle estimates (Ct) for the merge and base revisions. Values are shown as merge / base; Ct is converted from centi-cycles and rounded to whole cycles. Multi-part profiles use the part numbers from Gungraun and include an aggregated Total. New and Removed identify benchmarks that exist on only one side; the missing value is shown as a dash. Percentages use the same precision as the Gungraun text report. Lower is better: 🟢 improvement, 🔴 regression, ⚪ unchanged.",
     "",
     tables,
   ].join("\n");
@@ -339,7 +370,7 @@ export function renderFailureSummary(message) {
     .trim();
   const detail = safeMessage ? ` Renderer error: ${safeMessage}` : "";
   return [
-    "### Instruction-count changes",
+    "### Callgrind metric changes",
     "",
     `⚠️ **The comparison summary could not be generated.** See the workflow log.${detail}`,
     "",
