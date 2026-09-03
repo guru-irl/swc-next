@@ -4,7 +4,18 @@ export declare function langFromPath(path: string): Lang
 
 export declare function parseSync(source: string, options?: ParserOptions | undefined | null): Buffer
 
+export declare function printSync(buffer: Buffer, options?: CodegenOptions | undefined | null): CodegenOutput
+
 export declare function sourceTypeFromPath(path: string): SourceType
+export interface CodegenOptions {
+  asciiOnly?: boolean
+  minify?: boolean
+}
+
+export interface CodegenOutput {
+  code: string
+}
+
 export declare const enum CommentMode {
   None = 'none',
   Flat = 'flat'
