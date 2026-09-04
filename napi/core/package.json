@@ -19,8 +19,6 @@
   "files": [
     "src-js/binding.d.ts",
     "src-js/binding.js",
-    "src-js/decode.js",
-    "src-js/encode.js",
     "src-js/index.d.ts",
     "src-js/index.js"
   ],
@@ -54,6 +52,10 @@
       "x86_64-unknown-linux-gnu",
       "x86_64-unknown-linux-musl"
     ]
+  },
+  "dependencies": {
+    "@swc-next/decoder": "workspace:*",
+    "@swc-next/encoder": "workspace:*"
   },
   "devDependencies": {
     "@babel/parser": "catalog:",
