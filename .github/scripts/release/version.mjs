@@ -21,7 +21,7 @@ function readManifest(relativePath) {
 
 function npmManifestPaths() {
   const paths = ["package.json"];
-  for (const parent of ["napi", "packages"]) {
+  for (const parent of ["npm", "packages"]) {
     for (const entry of fs
       .readdirSync(path.join(repositoryRoot, parent), { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
@@ -50,9 +50,21 @@ export function npmPackages() {
   );
 }
 
+export function wasmPackages() {
+  return packages().filter(
+    ({ manifest }) => manifest.private !== true && manifest.wasm,
+  );
+}
+
 export function jsPackages() {
   return packages().filter(
     ({ manifest }) => manifest.private !== true && !manifest.napi,
+  );
+}
+
+export function wasmApiPackages() {
+  return packages().filter(
+    ({ manifest }) => manifest.private !== true && manifest.wasmBinding,
   );
 }
 
@@ -121,8 +133,14 @@ function main() {
     console.log(cargoVersion());
   } else if (command === "npm-packages" && !argument) {
     for (const { directory } of npmPackages()) console.log(directory);
+  } else if (command === "wasm-packages" && !argument) {
+    for (const { directory } of wasmPackages()) console.log(directory);
+  } else if (command === "wasm-api-packages" && !argument) {
+    for (const { directory } of wasmApiPackages()) console.log(directory);
   } else {
-    fail("usage: version.mjs write <version>|cargo-version|npm-packages");
+    fail(
+      "usage: version.mjs write <version>|cargo-version|npm-packages|wasm-packages|wasm-api-packages"
+    );
   }
 }
 

@@ -6,14 +6,18 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "build": "pnpm --filter \"./napi/*\" --workspace-concurrency=1 build",
-    "test": "pnpm --filter \"./napi/*\" --if-present test"
+    "build": "pnpm --filter \"./npm/*\" --workspace-concurrency=1 build",
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "test": "pnpm --filter \"./npm/*\" --if-present test"
   },
   "keywords": [],
   "author": "",
   "license": "Apache-2.0",
   "packageManager": "pnpm@11.17.0",
   "devDependencies": {
-    "@napi-rs/cli": "catalog:"
+    "@napi-rs/cli": "catalog:",
+    "@rstest/browser": "catalog:",
+    "@rstest/core": "catalog:",
+    "playwright": "catalog:"
   }
 }
