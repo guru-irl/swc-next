@@ -18,13 +18,16 @@ Run from the workspace root.
 
 ### JavaScript Development
 
-| Task                     | Command                                                              |
-| ------------------------ | -------------------------------------------------------------------- |
-| Install                  | `pnpm install`                                                       |
-| Build all N-API packages | `pnpm build [--release]`                                             |
+| Task                     | Command                                                                                 |
+| ------------------------ | --------------------------------------------------------------------------------------- |
+| Install                  | `pnpm install`                                                                          |
+| Build all N-API packages | `pnpm build [--release]`                                                                |
 | Build one package        | `pnpm --filter <@swc-next/core\|@swc-next/parser\|@swc-next/codegen> build [--release]` |
-| Test                     | `pnpm test`                                                          |
-| Test parser package      | `pnpm --filter @swc-next/parser test`                                |
+| Build browser package    | `pnpm build:browser [--release]`                                                       |
+| Build all WASM packages  | `pnpm build:wasm [--release]`                                                           |
+| Test Node.js API         | `pnpm test` (all Node.js tests live in `npm/core/test`)                                 |
+| Test Node.js WASM        | `pnpm test:wasm` (after `pnpm build:wasm`)                                              |
+| Smoke test browser       | `pnpm test:browser` (after building the browser package)                                |
 
 ## Testing & Examples
 
@@ -38,7 +41,7 @@ First run `./scripts/clone_fixtures.sh`. Review changes under `tasks/testsuite/s
 | Codegen   | Test262, TypeScript, Babel | `parse -> print` is idempotent                       | Same as above                                             |
 | Resolver  | SWC resolver fixtures      | Name resolution text matches `swc-conformance`       | Same as above                                             |
 | Transform | Babel                      | Normalized output matches Babel fixtures             | `cargo run -p testsuite --bin babel_transform`            |
-| ESTree    | Test262, TypeScript        | N-API AST matches `estree-conformance`               | `pnpm --filter @swc-next/core conformance`                |
+| ESTree    | Test262, TypeScript        | N-API AST matches `estree-conformance`               | `pnpm test:conformance`                                    |
 
 Debug one fixture with:
 
@@ -57,7 +60,7 @@ Use a small `input.js`/`.ts`/`.tsx` file.
 | Scopes, bindings, semantic diagnostics              | `cargo run -p swc_next_ecma_semantic --example semantic -- input.js`                                             |
 | Compare/profile Rspack-like pipelines               | `TARGET=<legacy\|next\|oxc> cargo run -p benchmark --release --example rspack_simulator [--features tracy]`      |
 
-### Adding Unit Tests
+### Adding Rust Unit Tests
 
 - Add tests to the existing module; group related cases by broad feature and use a coarse
   feature name for the test function.
@@ -72,5 +75,9 @@ Use a small `input.js`/`.ts`/`.tsx` file.
   failure output unless the text itself is part of the contract.
 - Do not add unit tests for behavior already covered by conformance tests or for highly specific
   cases.
+
+### Adding JavaScript Unit Tests
+
+- New JavaScript tests should only be added to `@swc-next/core`. `test:wasm` runs the same tests with `NAPI_RS_FORCE_WASI=error`. The browser package should only have a simple smoke test.
 
 Update this file when the commands or workflows above change; otherwise do not edit it.
