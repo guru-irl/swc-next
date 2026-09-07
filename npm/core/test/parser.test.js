@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { decode } from "@swc-next/decoder";
-import { CommentMode, parseSync, SourceType } from "../src-js/index.js";
+import { CommentMode, Lang, parseSync, SourceType } from "../src-js/index.js";
 
 test("decoder reads little-endian words from unaligned buffers", () => {
   const backing = new ArrayBuffer(73);
@@ -22,6 +22,20 @@ test("decoder reads little-endian words from unaligned buffers", () => {
     body: [],
   });
   assert.deepEqual(result.comments, []);
+});
+
+test("decoder rejects unknown diagnostic severities", () => {
+  const buffer = new Uint8Array(65);
+  const view = new DataView(buffer.buffer);
+  view.setUint32(0, 1, true); // node count
+  view.setUint32(24, 1, true); // diagnostic count
+  buffer[64] = 0xff; // diagnostic severity
+
+  const result = decode(buffer, "");
+  assert.throws(
+    () => result.diagnostics,
+    new RangeError("Unknown diagnostic severity 255"),
+  );
 });
 
 test("parseSync exposes the program lazily", () => {
@@ -105,4 +119,85 @@ test("parseSync can disable comment collection", () => {
   const result = parseSync("// omitted", { comments: CommentMode.None });
 
   assert.deepEqual(result.comments, []);
+});
+
+test("parseSync exposes parser diagnostics lazily", () => {
+  const result = parseSync("const = 1");
+  const descriptor = Object.getOwnPropertyDescriptor(result, "diagnostics");
+
+  assert.equal(typeof descriptor.get, "function");
+  assert.equal(descriptor.set, undefined);
+  assert.equal(descriptor.enumerable, true);
+  assert.equal(result.diagnostics.length, 1);
+  const [error] = result.diagnostics;
+  assert.equal(error.severity, "error");
+  assert.ok(error.message.length > 0);
+  assert.equal(error.start, 6);
+  assert.equal(error.end, 7);
+  assert.deepEqual(error.labels, []);
+  assert.equal(result.diagnostics, result.diagnostics);
+  assert.equal(result.program.type, "Program");
+});
+
+test("parseSync returns an empty diagnostics array for valid input", () => {
+  const result = parseSync("const answer = 42;");
+
+  assert.deepEqual(result.diagnostics, []);
+  assert.equal(result.diagnostics, result.diagnostics);
+
+  const empty = parseSync("");
+  assert.deepEqual(empty.diagnostics, []);
+});
+
+test("parseSync reports diagnostics with UTF-16 offsets", () => {
+  const source = '/* 文😀 */ const = 1';
+  const result = parseSync(source);
+
+  assert.equal(result.diagnostics.length, 1);
+  assert.equal(result.diagnostics[0].start, source.indexOf("="));
+  assert.equal(result.diagnostics[0].end, source.indexOf("=") + 1);
+  assert.equal(result.comments[0].value, " 文😀 ");
+
+  const noComments = parseSync(source, { comments: CommentMode.None });
+  assert.deepEqual(noComments.diagnostics, result.diagnostics);
+  assert.deepEqual(noComments.comments, []);
+
+  const eofSource = '"文😀"; const value =';
+  const eof = parseSync(eofSource);
+  assert.equal(eof.diagnostics.length, 1);
+  assert.equal(eof.diagnostics[0].start, eofSource.length);
+  assert.equal(eof.diagnostics[0].end, eofSource.length);
+});
+
+test("parseSync preserves diagnostic help, labels, and Unicode messages", () => {
+  const source = "/* 😀 */ <开始></结束>";
+  const result = parseSync(source, { lang: Lang.Jsx });
+
+  assert.equal(result.diagnostics.length, 1);
+  const [error] = result.diagnostics;
+  assert.equal(error.severity, "error");
+  assert.ok(error.message.includes("开始"));
+  assert.ok(error.message.includes("结束"));
+  assert.ok(error.help.length > 0);
+  assert.equal(error.start, source.indexOf("结束"));
+  assert.equal(error.end, source.indexOf("结束") + 2);
+  assert.equal(error.labels.length, 1);
+  assert.ok(error.labels[0].message.length > 0);
+  assert.equal(error.labels[0].start, source.indexOf("开始"));
+  assert.equal(error.labels[0].end, source.indexOf("开始") + 2);
+});
+
+test("parseSync preserves multiple recoverable diagnostics", () => {
+  const result = parseSync("const a; const b;");
+
+  assert.equal(result.diagnostics.length, 2);
+  assert.equal(result.diagnostics[0].severity, "error");
+  assert.equal(result.diagnostics[1].severity, "error");
+  assert.ok(result.diagnostics[0].start < result.diagnostics[1].start);
+  assert.equal(result.program.body.length, 2);
+
+  const ambient = parseSync("declare function f() {}", { lang: Lang.Dts });
+  assert.equal(ambient.diagnostics.length, 1);
+  assert.equal(ambient.diagnostics[0].severity, "error");
+  assert.equal(ambient.diagnostics[0].help, undefined);
 });

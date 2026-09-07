@@ -850,6 +850,7 @@ export function decode(buffer, source) {
   const stringPoolLength = _u32[2];
   const sourceLength = _u32[3];
   const commentCount = _u32[4];
+  const diagnosticCount = _u32[6];
   const programIndex = _u32[7];
   const flags = _u32[8];
   const isTs = (flags & 1) !== 0;
@@ -860,6 +861,7 @@ export function decode(buffer, source) {
   const extra = payloads + nodeCount * 16;
   const strings = extra + extraCount * 8;
   const comments = strings + ((stringPoolLength + 3) & ~3);
+  const diagnostics = comments + commentCount * 16;
   const positions =
     source.length === sourceLength ? null : buildPosMap(source, sourceLength);
 
@@ -909,6 +911,46 @@ export function decode(buffer, source) {
     return result;
   };
 
+  const _decodeDiagnostics = () => {
+    let offset = diagnostics;
+    const readU8 = () => bytes[offset++];
+    const readU32 = () => {
+      const value = _dv.getUint32(offset, true);
+      offset += 4;
+      return value;
+    };
+    const readDiagnosticString = () => {
+      const length = readU32();
+      const value = textDecoder.decode(bytes.subarray(offset, offset + length));
+      offset += length;
+      return value;
+    };
+    const severities = ["error", "warning", "hint", "info"];
+    const result = new Array(diagnosticCount);
+    for (let index = 0; index < diagnosticCount; index++) {
+      const severityValue = readU8();
+      const severity = severities[severityValue];
+      if (severity === undefined) {
+        throw new RangeError(`Unknown diagnostic severity ${severityValue}`);
+      }
+      const start = pos(readU32());
+      const end = pos(readU32());
+      const message = readDiagnosticString();
+      const help = readU8() === 0 ? undefined : readDiagnosticString();
+      const labelCount = readU32();
+      const labels = new Array(labelCount);
+      for (let label = 0; label < labelCount; label++) {
+        labels[label] = {
+          start: pos(readU32()),
+          end: pos(readU32()),
+          message: readDiagnosticString(),
+        };
+      }
+      result[index] = { severity, message, start, end, help, labels };
+    }
+    return result;
+  };
+
   function node(index) {
     const span = spans + index * 8;
     const start = pos(_u32[span >> 2]);
@@ -924,7 +966,7 @@ const POSTAMBLE: &str = r#"      default:
     return result;
   }
 
-  let _program, _comments;
+  let _program, _comments, _diagnostics;
   return {
     get program() {
       return _program !== undefined
@@ -935,6 +977,11 @@ const POSTAMBLE: &str = r#"      default:
       return _comments !== undefined
         ? _comments
         : (_comments = _decodeComments());
+    },
+    get diagnostics() {
+      return _diagnostics !== undefined
+        ? _diagnostics
+        : (_diagnostics = _decodeDiagnostics());
     },
   };
 }
