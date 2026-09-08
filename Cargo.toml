@@ -93,11 +93,12 @@ strip         = "symbols"
 inherits = "release"
 strip    = "symbols"
 
-[profile.test]
+[profile.conformance]
 codegen-units    = 256
 debug-assertions = true
 inherits         = "release"
 lto              = "thin"
 opt-level        = 2
 overflow-checks  = true
+panic            = "unwind"
 strip            = "none"

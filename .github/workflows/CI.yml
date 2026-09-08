@@ -129,7 +129,7 @@ jobs:
       - name: Clone test fixtures
         run: ./scripts/clone_fixtures.sh
       - name: Run parser and codegen conformance
-        run: cargo run --locked -p testsuite --bin conformance
+        run: cargo run --locked -p testsuite --bin conformance --profile conformance
       - name: Run Babel transform conformance
         run: cargo run --locked -p testsuite --bin babel_transform
       - name: Build Node.js bindings
