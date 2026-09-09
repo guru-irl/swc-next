@@ -2477,19 +2477,18 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             let params_end = params.span(&self.ast).end;
             let return_type_end =
                 return_type.map_or(params_end, |return_type| return_type.span(&self.ast).end);
-            let explicit_ambient_declaration = opts.is_declare && !is_function_expression;
-            if explicit_ambient_declaration && self.current_token.tag == TokenTag::LeftBrace {
+            let ambient_declaration =
+                (opts.is_declare || self.ts_context.ambient()) && !is_function_expression;
+            if ambient_declaration && self.current_token.tag == TokenTag::LeftBrace {
                 self.report(
                     self.current_token.span,
                     "An implementation cannot be declared in ambient contexts",
                     ReportOptions::default(),
                 );
-                return None;
             }
-            let has_body = !explicit_ambient_declaration
-                && (!self.lang.is_typescript()
-                    || is_function_expression
-                    || self.current_token.tag == TokenTag::LeftBrace);
+            let has_body = !self.lang.is_typescript()
+                || is_function_expression
+                || self.current_token.tag == TokenTag::LeftBrace;
             let body = if has_body {
                 Some(self.parse_function_body()?)
             } else {
@@ -2500,6 +2499,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             } else {
                 self.eat_semicolon(return_type_end)?
             };
+            // Consume an invalid ambient body before dropping it, so its closing
+            // brace cannot be mistaken for the surrounding namespace/module's.
+            let body = if ambient_declaration { None } else { body };
             Some((params, body, type_parameters, return_type, params_end, end))
         })();
         self.context = context;
