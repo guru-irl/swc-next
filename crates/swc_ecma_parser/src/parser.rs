@@ -422,7 +422,6 @@ impl FragmentContext {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct ParseExpressionOpts {
     in_cover: bool,
-    respect_in_parameter: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1512,6 +1511,20 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.scratch_decorators.items.reserve(128);
     }
 
+    // ScriptBody :
+    //   StatementList[~Yield, ~Await, ~Return]
+    //
+    // ModuleBody :
+    //   ModuleItemList
+    //
+    // FunctionBody[Yield, Await] :
+    //   FunctionStatementList[?Yield, ?Await]
+    //
+    // FunctionStatementList[Yield, Await] :
+    //   StatementList[?Yield, ?Await, +Return]?
+    //
+    // ExpressionStatement[Yield, Await] :
+    //   [lookahead ∉ { `{`, `function`, `async` [no LineTerminator here] `function`, `class`, `let` `[` }] Expression[+In, ?Yield, ?Await] `;`
     fn parse_body(
         &mut self,
         terminator: Option<TokenTag>,
@@ -1528,6 +1541,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         while !self.is_at_body_end(terminator) {
             let is_directive = (|| {
                 if in_directive_prologue && self.current_token.tag == TokenTag::StringLiteral {
+                    // The program or function/static block entry already establishes +In.
                     let expression =
                         self.parse_expr(Precedence::Lowest, ParseExpressionOpts::default())?;
                     if let ExprData::StringLiteral(string_literal) = self.ast.expr_data(expression)
@@ -1755,13 +1769,12 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         );
     }
 
+    // ExpressionStatement[Yield, Await] :
+    //   [lookahead ∉ { `{`, `function`, `async` [no LineTerminator here] `function`, `class`, `let` `[` }] Expression[+In, ?Yield, ?Await] `;`
     fn parse_await_expression_statement(&mut self, start: u32) -> Option<Stmt> {
+        // The program or function/static block entry already establishes +In.
         let expression = self.parse_await_expression(start)?;
-        let expression = self.parse_expr_from_left(
-            expression,
-            Precedence::Comma,
-            ParseExpressionOpts::default(),
-        )?;
+        let expression = self.parse_expr_from_left(expression, Precedence::Comma)?;
         self.parse_expression_statement_with_expression(start, expression)
     }
 
@@ -1891,6 +1904,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         Some(self.ast.stmt_empty_statement(span))
     }
 
+    // IfStatement[Yield, Await, Return] :
+    //   `if` `(` Expression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return] `else` Statement[?Yield, ?Await, ?Return]
+    //   `if` `(` Expression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return] [lookahead != `else`]
     fn parse_if_statement(&mut self) -> Option<Stmt> {
         debug_assert_eq!(self.current_token.tag, TokenTag::If);
         let start = self.current_token.span.start;
@@ -1898,6 +1914,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         if !self.expect(TokenTag::LeftParen, "Expected '(' after 'if'", None) {
             return None;
         }
+        // The program or function/static block entry already establishes +In.
         let test = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?;
         if !self.expect(
             TokenTag::RightParen,
@@ -1922,6 +1939,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // WhileStatement[Yield, Await, Return] :
+    //   `while` `(` Expression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return]
     fn parse_while_statement(&mut self) -> Option<Stmt> {
         debug_assert_eq!(self.current_token.tag, TokenTag::While);
         let start = self.current_token.span.start;
@@ -1929,6 +1948,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         if !self.expect(TokenTag::LeftParen, "Expected '(' after 'while'", None) {
             return None;
         }
+        // The program or function/static block entry already establishes +In.
         let test = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?;
         if !self.expect(
             TokenTag::RightParen,
@@ -1945,6 +1965,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // DoWhileStatement[Yield, Await, Return] :
+    //   `do` Statement[?Yield, ?Await, ?Return] `while` `(` Expression[+In, ?Yield, ?Await] `)` `;`
     fn parse_do_while_statement(&mut self) -> Option<Stmt> {
         debug_assert_eq!(self.current_token.tag, TokenTag::Do);
         let start = self.current_token.span.start;
@@ -1960,6 +1982,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         if !self.expect(TokenTag::LeftParen, "Expected '(' after 'while'", None) {
             return None;
         }
+        // The program or function/static block entry already establishes +In.
         let test = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?;
         if !self.expect(
             TokenTag::RightParen,
@@ -1976,6 +1999,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // ReturnStatement[Yield, Await] :
+    //   `return` `;`
+    //   `return` [no LineTerminator here] Expression[+In, ?Yield, ?Await] `;`
     fn parse_return_statement(&mut self) -> Option<Stmt> {
         debug_assert_eq!(self.current_token.tag, TokenTag::Return);
         let start = self.current_token.span.start;
@@ -2005,6 +2031,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             ) {
             None
         } else {
+            // The program or function/static block entry already establishes +In.
             Some(self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?)
         };
         let end = self.eat_semicolon(self.lexer.state.prev_token_end)?;
@@ -2014,6 +2041,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // ThrowStatement[Yield, Await] :
+    //   `throw` [no LineTerminator here] Expression[+In, ?Yield, ?Await] `;`
     fn parse_throw_statement(&mut self) -> Option<Stmt> {
         debug_assert_eq!(self.current_token.tag, TokenTag::Throw);
         let start = self.current_token.span.start;
@@ -2029,6 +2058,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 None
             };
         }
+        // The program or function/static block entry already establishes +In.
         let argument = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?;
         let end = self.eat_semicolon(self.lexer.state.prev_token_end)?;
         Some(
@@ -2078,6 +2108,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         Some(self.ast.stmt_debugger_statement(Span::new(start, end)))
     }
 
+    // WithStatement[Yield, Await, Return] :
+    //   `with` `(` Expression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return]
     fn parse_with_statement(&mut self) -> Option<Stmt> {
         debug_assert_eq!(self.current_token.tag, TokenTag::With);
         let start = self.current_token.span.start;
@@ -2085,6 +2117,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         if !self.expect(TokenTag::LeftParen, "Expected '(' after 'with'", None) {
             return None;
         }
+        // The program or function/static block entry already establishes +In.
         let object = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?;
         if !self.expect(
             TokenTag::RightParen,
@@ -2101,7 +2134,10 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // ExpressionStatement[Yield, Await] :
+    //   [lookahead ∉ { `{`, `function`, `async` [no LineTerminator here] `function`, `class`, `let` `[` }] Expression[+In, ?Yield, ?Await] `;`
     fn parse_expression_or_labeled_statement(&mut self) -> Option<Stmt> {
+        // The program or function/static block entry already establishes +In.
         let expression = self.parse_expr(Precedence::Lowest, ParseExpressionOpts::default())?;
         if self.ast.node_kind(expression.node_id()) == NodeKind::IdentifierReference
             && self.current_token.tag == TokenTag::Colon
@@ -2114,8 +2150,11 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // ExpressionStatement[Yield, Await] :
+    //   [lookahead ∉ { `{`, `function`, `async` [no LineTerminator here] `function`, `class`, `let` `[` }] Expression[+In, ?Yield, ?Await] `;`
     fn parse_expression_statement(&mut self) -> Option<Stmt> {
         let start = self.current_token.span.start;
+        // The program or function/static block entry already establishes +In.
         let expression = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?;
         self.parse_expression_statement_with_expression(start, expression)
     }
@@ -2159,6 +2198,13 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // VariableStatement[Yield, Await] :
+    //   `var` VariableDeclarationList[+In, ?Yield, ?Await] `;`
+    //
+    // Declaration[Yield, Await] :
+    //   HoistableDeclaration[?Yield, ?Await, ~Default]
+    //   ClassDeclaration[?Yield, ?Await, ~Default]
+    //   LexicalDeclaration[+In, ?Yield, ?Await]
     fn parse_variable_declaration(
         &mut self,
         opts: ParseVariableDeclarationOpts,
@@ -2178,6 +2224,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         } else {
             DeclaratorCtx::Normal
         };
+        // The program or function/static block entry already establishes +In.
         let checkpoint = self.scratch_a.begin();
         let result = (|| {
             let first = self.parse_variable_declarator(kind, context)?;
@@ -2237,6 +2284,13 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
     }
 
+    // VariableDeclaration[In, Yield, Await] :
+    //   BindingIdentifier[?Yield, ?Await] Initializer[?In, ?Yield, ?Await]?
+    //   BindingPattern[?Yield, ?Await] Initializer[?In, ?Yield, ?Await]
+    //
+    // LexicalBinding[In, Yield, Await, Pattern] :
+    //   BindingIdentifier[?Yield, ?Await] Initializer[?In, ?Yield, ?Await]?
+    //   [+Pattern] BindingPattern[?Yield, ?Await] Initializer[?In, ?Yield, ?Await]
     fn parse_variable_declarator(
         &mut self,
         kind: VariableKind,
@@ -2268,13 +2322,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             self.apply_type_annotation_to_pattern(id, annotation);
         }
         let init = if self.eat(TokenTag::Assign)? {
-            let expression = self.parse_expr(
-                Precedence::Assignment,
-                ParseExpressionOpts {
-                    respect_in_parameter: true,
-                    ..ParseExpressionOpts::default()
-                },
-            )?;
+            let expression =
+                self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?;
             end = expression.span(&self.ast).end;
             Some(expression)
         } else {
@@ -2361,11 +2410,23 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.object_cover_to_pattern(cover, PatternContext::Binding)
     }
 
+    // BindingElement[Yield, Await] :
+    //   SingleNameBinding[?Yield, ?Await]
+    //   BindingPattern[?Yield, ?Await] Initializer[+In, ?Yield, ?Await]?
+    //
+    // SingleNameBinding[Yield, Await] :
+    //   BindingIdentifier[?Yield, ?Await] Initializer[+In, ?Yield, ?Await]?
+    //
+    // Initializer[In, Yield, Await] :
+    //   `=` AssignmentExpression[?In, ?Yield, ?Await]
     fn parse_assignment_pattern(&mut self, left: BindingPattern) -> Option<BindingPattern> {
         if !self.eat(TokenTag::Assign)? {
             return Some(left);
         }
-        let right = self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?;
+        let grammar_context = enter_grammar_context![&mut self.context, +In];
+        let right = self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default());
+        self.context = grammar_context;
+        let right = right?;
         let span = Span::new(left.span(&self.ast).start, right.span(&self.ast).end);
         if self.ts_context.ambient() {
             self.report(
@@ -2949,6 +3010,14 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.parse_static_block(static_token.span.start)
     }
 
+    // ClassStaticBlock :
+    //   `static` `{` ClassStaticBlockBody `}`
+    //
+    // ClassStaticBlockBody :
+    //   ClassStaticBlockStatementList
+    //
+    // ClassStaticBlockStatementList :
+    //   StatementList[~Yield, +Await, ~Return]?
     fn parse_static_block(&mut self, start: u32) -> Option<ClassElement> {
         if !self.expect(
             TokenTag::LeftBrace,
@@ -2957,7 +3026,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         ) {
             return None;
         }
-        let context = enter_grammar_context![&mut self.context, ~Yield, +Await];
+        let context = enter_grammar_context![&mut self.context, +In, ~Yield, +Await];
         let boundary_context = mem::take(&mut self.boundary_context);
         let checkpoint = self.scratch_statements.begin();
         let body = {
@@ -3212,6 +3281,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
     }
 
+    // FieldDefinition[Yield, Await] :
+    //   ClassElementName[?Yield, ?Await] Initializer[+In, ?Yield, ?Await]?
     fn parse_property_definition(
         &mut self,
         start: u32,
@@ -3237,7 +3308,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             };
 
         let value = if self.eat(TokenTag::Assign)? {
-            let context = enter_grammar_context![&mut self.context, ~Yield, ~Await];
+            let context = enter_grammar_context![&mut self.context, +In, ~Yield, ~Await];
             let boundary_context = self.boundary_context;
             self.boundary_context
                 .remove(BoundaryContext::CAN_BE_MODULE | BoundaryContext::CAN_BE_COMMONJS);
@@ -3639,6 +3710,11 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
     }
 
+    // FunctionBody[Yield, Await] :
+    //   FunctionStatementList[?Yield, ?Await]
+    //
+    // FunctionStatementList[Yield, Await] :
+    //   StatementList[?Yield, ?Await, +Return]?
     fn parse_function_body(&mut self) -> Option<FunctionBody> {
         let start = self.current_token.span.start;
         if !self.expect(
@@ -3648,12 +3724,14 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         ) {
             return None;
         }
+        let grammar_context = enter_grammar_context![&mut self.context, +In];
         let boundary_context = self.boundary_context;
         self.boundary_context.insert(BoundaryContext::IN_FUNCTION);
         let ParsedBody { directives, body } = self.parse_body(
             Some(TokenTag::RightBrace),
             StatementContext::StatementListItem,
         );
+        self.context = grammar_context;
         self.boundary_context = boundary_context;
         let end = self.current_token.span.end;
         if !self.expect(
@@ -4222,6 +4300,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // ExportDeclaration :
+    //   `export` `default` [lookahead ∉ { `function`, `async` [no LineTerminator here] `function`, `class` }] AssignmentExpression[+In, ~Yield, +Await] `;`
     fn parse_export_default_part(&mut self) -> Option<DefaultExportPart> {
         let is_ts = self.lang.is_typescript();
         let tag = self.current_token.tag;
@@ -4323,6 +4403,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             }
         }
 
+        // The program or function/static block entry already establishes +In.
         let expression = self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?;
         Some(DefaultExportPart {
             declaration: ExportDefaultDeclarationKind::Expr(expression),
@@ -5169,6 +5250,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         let (id, computed) = self.parse_enum_member_name()?;
         let start = id.span(&self.ast).start;
         let initializer = if self.eat(TokenTag::Assign)? {
+            // The program or function/static block entry already establishes +In.
             Some(self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?)
         } else {
             None
@@ -5189,9 +5271,12 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // ComputedPropertyName[Yield, Await] :
+    //   `[` AssignmentExpression[+In, ?Yield, ?Await] `]`
     fn parse_enum_member_name(&mut self) -> Option<(TsEnumMemberName, bool)> {
         let token = self.current_token;
         if self.eat(TokenTag::LeftBracket)? {
+            // The program or function/static block entry already establishes +In.
             let expression =
                 self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?;
             if !self.expect(
@@ -7260,17 +7345,13 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
     }
 
+    // ForStatement[Yield, Await, Return] :
+    //   `for` `(` [lookahead != `let` `[`] Expression[~In, ?Yield, ?Await]? `;` Expression[+In, ?Yield, ?Await]? `;` Expression[+In, ?Yield, ?Await]? `)` Statement[?Yield, ?Await, ?Return]
     fn parse_for_with_expression(&mut self, start: u32, is_for_await: bool) -> Option<Stmt> {
         let head = self.current_token;
         let head_is_let = head.tag == TokenTag::Let && !head.is_escaped();
         let context = enter_grammar_context![&mut self.context, ~In];
-        let expression = self.parse_expr(
-            Precedence::Comma,
-            ParseExpressionOpts {
-                respect_in_parameter: true,
-                ..ParseExpressionOpts::default()
-            },
-        );
+        let expression = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default());
         self.context = context;
         let expression = expression?;
 
@@ -7314,6 +7395,10 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // ForStatement[Yield, Await, Return] :
+    //   `for` `(` [lookahead != `let` `[`] Expression[~In, ?Yield, ?Await]? `;` Expression[+In, ?Yield, ?Await]? `;` Expression[+In, ?Yield, ?Await]? `)` Statement[?Yield, ?Await, ?Return]
+    //   `for` `(` `var` VariableDeclarationList[~In, ?Yield, ?Await] `;` Expression[+In, ?Yield, ?Await]? `;` Expression[+In, ?Yield, ?Await]? `)` Statement[?Yield, ?Await, ?Return]
+    //   `for` `(` LexicalDeclaration[~In, ?Yield, ?Await] Expression[+In, ?Yield, ?Await]? `;` Expression[+In, ?Yield, ?Await]? `)` Statement[?Yield, ?Await, ?Return]
     fn parse_for_statement_rest(
         &mut self,
         start: u32,
@@ -7341,6 +7426,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         let test = if self.current_token.tag == TokenTag::Semicolon {
             None
         } else {
+            // The program or function/static block entry already establishes +In.
             Some(self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?)
         };
         if !self.expect(
@@ -7353,6 +7439,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         let update = if self.current_token.tag == TokenTag::RightParen {
             None
         } else {
+            // The program or function/static block entry already establishes +In.
             Some(self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?)
         };
         if !self.expect(
@@ -7370,6 +7457,10 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // ForInOfStatement[Yield, Await, Return] :
+    //   `for` `(` [lookahead != `let` `[`] LeftHandSideExpression[?Yield, ?Await] `in` Expression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return]
+    //   `for` `(` `var` ForBinding[?Yield, ?Await, +Pattern] `in` Expression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return]
+    //   `for` `(` ForDeclaration[?Yield, ?Await, ~Using] `in` Expression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return]
     fn parse_for_in_statement_rest(
         &mut self,
         start: u32,
@@ -7389,6 +7480,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
         self.report_if_escaped_keyword(self.current_token);
         self.advance_without_escape_check()?;
+        // The program or function/static block entry already establishes +In.
         let right = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?;
         if !self.expect(
             TokenTag::RightParen,
@@ -7405,6 +7497,13 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // ForInOfStatement[Yield, Await, Return] :
+    //   `for` `(` [lookahead ∉ { `let`, `async` `of` }] LeftHandSideExpression[?Yield, ?Await] `of` AssignmentExpression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return]
+    //   `for` `(` `var` ForBinding[?Yield, ?Await, +Pattern] `of` AssignmentExpression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return]
+    //   `for` `(` [lookahead != `using` `of`] ForDeclaration[?Yield, ?Await, +Using] `of` AssignmentExpression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return]
+    //   [+Await] `for` `await` `(` [lookahead != `let`] LeftHandSideExpression[?Yield, ?Await] `of` AssignmentExpression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return]
+    //   [+Await] `for` `await` `(` `var` ForBinding[?Yield, ?Await, +Pattern] `of` AssignmentExpression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return]
+    //   [+Await] `for` `await` `(` [lookahead != `using` `of`] ForDeclaration[?Yield, ?Await, +Using] `of` AssignmentExpression[+In, ?Yield, ?Await] `)` Statement[?Yield, ?Await, ?Return]
     fn parse_for_of_statement_rest(
         &mut self,
         start: u32,
@@ -7413,6 +7512,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
     ) -> Option<Stmt> {
         self.report_if_escaped_keyword(self.current_token);
         self.advance_without_escape_check()?;
+        // The program or function/static block entry already establishes +In.
         let right = self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?;
         if !self.expect(
             TokenTag::RightParen,
@@ -7485,6 +7585,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         Some(())
     }
 
+    // SwitchStatement[Yield, Await, Return] :
+    //   `switch` `(` Expression[+In, ?Yield, ?Await] `)` CaseBlock[?Yield, ?Await, ?Return]
     fn parse_switch_statement(&mut self) -> Option<Stmt> {
         debug_assert_eq!(self.current_token.tag, TokenTag::Switch);
         let start = self.current_token.span.start;
@@ -7492,6 +7594,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         if !self.expect(TokenTag::LeftParen, "Expected '(' after 'switch'", None) {
             return None;
         }
+        // The program or function/static block entry already establishes +In.
         let discriminant = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?;
         if !self.expect(
             TokenTag::RightParen,
@@ -7535,6 +7638,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         cases
     }
 
+    // CaseClause[Yield, Await, Return] :
+    //   `case` Expression[+In, ?Yield, ?Await] `:` StatementList[?Yield, ?Await, ?Return]?
     fn parse_switch_case(&mut self) -> Option<SwitchCase> {
         debug_assert!(matches!(
             self.current_token.tag,
@@ -7542,6 +7647,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         ));
         let case_start = self.current_token.span.start;
         let test = if self.eat(TokenTag::Case)? {
+            // The program or function/static block entry already establishes +In.
             Some(self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?)
         } else {
             self.advance()?;
@@ -7663,6 +7769,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // Expression[In, Yield, Await] :
+    //   AssignmentExpression[?In, ?Yield, ?Await]
+    //   Expression[?In, ?Yield, ?Await] `,` AssignmentExpression[?In, ?Yield, ?Await]
     #[inline(always)]
     fn parse_expr(&mut self, minimum: Precedence, opts: ParseExpressionOpts) -> Option<Expr> {
         let left = if self.current_token.tag == TokenTag::Identifier {
@@ -7670,7 +7779,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         } else {
             self.parse_prefix(opts.in_cover, minimum)?
         };
-        self.parse_expr_from_left(left, minimum, opts)
+        self.parse_expr_from_left(left, minimum)
     }
 
     #[inline(always)]
@@ -7685,13 +7794,10 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         expression
     }
 
+    // RelationalExpression[In, Yield, Await] :
+    //   [+In] RelationalExpression[+In, ?Yield, ?Await] `in` ShiftExpression[?Yield, ?Await]
     #[inline(always)]
-    fn parse_expr_from_left(
-        &mut self,
-        mut left: Expr,
-        minimum: Precedence,
-        opts: ParseExpressionOpts,
-    ) -> Option<Expr> {
+    fn parse_expr_from_left(&mut self, mut left: Expr, minimum: Precedence) -> Option<Expr> {
         let is_ts = self.lang.is_typescript();
 
         loop {
@@ -7711,23 +7817,15 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             if precedence > max_left_precedence(left, &self.ast) {
                 break;
             }
-            if opts.respect_in_parameter
-                && token.tag == TokenTag::In
-                && !self.context.contains(Context::IN)
-            {
-                break;
-            }
             left = if token.tag.is_binary_operator() {
+                if token.tag == TokenTag::In && !self.context.contains(Context::IN) {
+                    break;
+                }
                 self.parse_binary_expression(left, token.tag)?
             } else if token.tag.is_logical_operator() {
                 self.parse_logical_expression(left, token.tag)?
             } else if token.tag.is_assignment_operator() {
-                self.parse_assignment_expression(
-                    precedence,
-                    left,
-                    token.tag,
-                    opts.respect_in_parameter,
-                )?
+                self.parse_assignment_expression(precedence, left, token.tag)?
             } else {
                 self.parse_infix(precedence, left)?
             };
@@ -7735,14 +7833,11 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         Some(left)
     }
 
+    // Expression[In, Yield, Await] :
+    //   AssignmentExpression[?In, ?Yield, ?Await]
+    //   Expression[?In, ?Yield, ?Await] `,` AssignmentExpression[?In, ?Yield, ?Await]
     fn parse_expression_in_cover(&mut self, precedence: Precedence) -> Option<Expr> {
-        self.parse_expr(
-            precedence,
-            ParseExpressionOpts {
-                in_cover: true,
-                ..ParseExpressionOpts::default()
-            },
-        )
+        self.parse_expr(precedence, ParseExpressionOpts { in_cover: true })
     }
 
     fn parse_assignment_expression_in_cover(&mut self) -> Option<Expr> {
@@ -8161,12 +8256,19 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         Some(self.ast.template_literal(token.span, quasis, expressions))
     }
 
+    // SubstitutionTemplate[Yield, Await] :
+    //   TemplateHead Expression[+In, ?Yield, ?Await] TemplateSpans[?Yield, ?Await]
+    //
+    // TemplateMiddleList[Yield, Await] :
+    //   TemplateMiddle Expression[+In, ?Yield, ?Await]
+    //   TemplateMiddleList[?Yield, ?Await] TemplateMiddle Expression[+In, ?Yield, ?Await]
     fn parse_template_literal(&mut self, tagged: bool) -> Option<TemplateLiteral> {
         debug_assert_eq!(self.current_token.tag, TokenTag::TemplateHead);
         let start = self.current_token.span.start;
         let quasis_checkpoint = self.scratch_a.begin();
         let expressions_checkpoint = self.scratch_b.begin();
         let head = self.current_token;
+        let grammar_context = enter_grammar_context![&mut self.context, +In];
         let result = (|| {
             let head = self.add_template_element(head, false, tagged);
             self.scratch_a.append(head);
@@ -8222,6 +8324,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                     .template_literal(Span::new(start, end), quasis, expressions),
             )
         })();
+        self.context = grammar_context;
         self.scratch_a.reset(quasis_checkpoint);
         self.scratch_b.reset(expressions_checkpoint);
         result
@@ -8306,12 +8409,18 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.cover_to_parenthesized_expression(cover)
     }
 
+    // CoverParenthesizedExpressionAndArrowParameterList[Yield, Await] :
+    //   `(` `)`
+    //   `(` Expression[+In, ?Yield, ?Await] `,`? `)`
+    //   `(` `...` BindingIdentifier[?Yield, ?Await] `)`
+    //   `(` `...` BindingPattern[?Yield, ?Await] `)`
+    //   `(` Expression[+In, ?Yield, ?Await] `,` `...` BindingIdentifier[?Yield, ?Await] `)`
+    //   `(` Expression[+In, ?Yield, ?Await] `,` `...` BindingPattern[?Yield, ?Await] `)`
     fn parse_parenthesized_cover(&mut self) -> Option<ParenthesizedCover> {
         debug_assert_eq!(self.current_token.tag, TokenTag::LeftParen);
         let start = self.current_token.span.start;
         self.advance()?;
         let checkpoint = self.scratch_cover.begin();
-        let context = enter_grammar_context![&mut self.context, +In];
         let allow_arrow_return_type = self.ts_context.allow_arrow_return_type();
         self.ts_context.insert(TsContext::ALLOW_ARROW_RETURN_TYPE);
         let result = (|| {
@@ -8324,23 +8433,20 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                     let spread_start = self.lexer.state.prev_token_end - 3;
                     let argument = self.parse_expr(
                         Precedence::Assignment,
-                        ParseExpressionOpts {
-                            in_cover: true,
-                            ..ParseExpressionOpts::default()
-                        },
+                        ParseExpressionOpts { in_cover: true },
                     )?;
                     Argument::SpreadElement(self.ast.spread_element(
                         Span::new(spread_start, argument.span(&self.ast).end),
                         argument,
                     ))
                 } else {
-                    Argument::Expr(self.parse_expr(
+                    let grammar_context = enter_grammar_context![&mut self.context, +In];
+                    let expression = self.parse_expr(
                         Precedence::Assignment,
-                        ParseExpressionOpts {
-                            in_cover: true,
-                            ..ParseExpressionOpts::default()
-                        },
-                    )?)
+                        ParseExpressionOpts { in_cover: true },
+                    );
+                    self.context = grammar_context;
+                    Argument::Expr(expression?)
                 };
                 end = element.span(&self.ast).end;
                 self.scratch_cover.append(element);
@@ -8384,7 +8490,6 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 has_trailing_comma,
             })
         })();
-        self.context = context;
         self.ts_context
             .set(TsContext::ALLOW_ARROW_RETURN_TYPE, allow_arrow_return_type);
         self.scratch_cover.reset(checkpoint);
@@ -8905,6 +9010,16 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         ))
     }
 
+    // ConciseBody[In] :
+    //   [lookahead != `{`] ExpressionBody[?In, ~Await]
+    //   `{` FunctionBody[~Yield, ~Await] `}`
+    //
+    // AsyncConciseBody[In] :
+    //   [lookahead != `{`] ExpressionBody[?In, +Await]
+    //   `{` AsyncFunctionBody `}`
+    //
+    // ExpressionBody[In, Await] :
+    //   AssignmentExpression[?In, ~Yield, ?Await]
     fn parse_arrow_body(&mut self) -> Option<ArrowBodyResult> {
         if self.current_token.tag == TokenTag::LeftBrace {
             let body = self.parse_function_body()?;
@@ -8913,13 +9028,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 is_expression: false,
             });
         }
-        let expression = self.parse_expr(
-            Precedence::Assignment,
-            ParseExpressionOpts {
-                respect_in_parameter: true,
-                ..ParseExpressionOpts::default()
-            },
-        )?;
+        let expression = self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?;
         Some(ArrowBodyResult {
             body: ArrowFunctionBody::Expr(expression),
             is_expression: true,
@@ -9714,11 +9823,32 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.object_cover_to_expression(cover, needs_validation)
     }
 
+    // ArrayLiteral[Yield, Await] :
+    //   `[` Elision? `]`
+    //   `[` ElementList[?Yield, ?Await] `]`
+    //   `[` ElementList[?Yield, ?Await] `,` Elision? `]`
+    //
+    // ElementList[Yield, Await] :
+    //   Elision? AssignmentExpression[+In, ?Yield, ?Await]
+    //   Elision? SpreadElement[?Yield, ?Await]
+    //   ElementList[?Yield, ?Await] `,` Elision? AssignmentExpression[+In, ?Yield, ?Await]
+    //   ElementList[?Yield, ?Await] `,` Elision? SpreadElement[?Yield, ?Await]
+    //
+    // SpreadElement[Yield, Await] :
+    //   `...` AssignmentExpression[+In, ?Yield, ?Await]
+    //
+    // BindingElement[Yield, Await] :
+    //   SingleNameBinding[?Yield, ?Await]
+    //   BindingPattern[?Yield, ?Await] Initializer[+In, ?Yield, ?Await]?
+    //
+    // SingleNameBinding[Yield, Await] :
+    //   BindingIdentifier[?Yield, ?Await] Initializer[+In, ?Yield, ?Await]?
     fn parse_array_cover(&mut self) -> Option<ArrayCover> {
         debug_assert_eq!(self.current_token.tag, TokenTag::LeftBracket);
         let start = self.current_token.span.start;
         self.advance()?;
         let checkpoint = self.scratch_cover.begin();
+        let grammar_context = enter_grammar_context![&mut self.context, +In];
         let result =
             (|| {
                 let mut end = start + 1;
@@ -9785,15 +9915,37 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                     end,
                 })
             })();
+        self.context = grammar_context;
         self.scratch_cover.reset(checkpoint);
         result
     }
 
+    // ObjectLiteral[Yield, Await] :
+    //   `{` `}`
+    //   `{` PropertyDefinitionList[?Yield, ?Await] `,`? `}`
+    //
+    // PropertyDefinition[Yield, Await] :
+    //   IdentifierReference[?Yield, ?Await]
+    //   CoverInitializedName[?Yield, ?Await]
+    //   PropertyName[?Yield, ?Await] `:` AssignmentExpression[+In, ?Yield, ?Await]
+    //   MethodDefinition[?Yield, ?Await]
+    //   `...` AssignmentExpression[+In, ?Yield, ?Await]
+    //
+    // CoverInitializedName[Yield, Await] :
+    //   IdentifierReference[?Yield, ?Await] Initializer[+In, ?Yield, ?Await]
+    //
+    // BindingElement[Yield, Await] :
+    //   SingleNameBinding[?Yield, ?Await]
+    //   BindingPattern[?Yield, ?Await] Initializer[+In, ?Yield, ?Await]?
+    //
+    // SingleNameBinding[Yield, Await] :
+    //   BindingIdentifier[?Yield, ?Await] Initializer[+In, ?Yield, ?Await]?
     fn parse_object_cover(&mut self) -> Option<ObjectCover> {
         debug_assert_eq!(self.current_token.tag, TokenTag::LeftBrace);
         let start = self.current_token.span.start;
         self.advance()?;
         let checkpoint = self.scratch_cover.begin();
+        let grammar_context = enter_grammar_context![&mut self.context, +In];
         let result = (|| {
             let mut end = start + 1;
             while self.current_token.tag != TokenTag::RightBrace
@@ -9803,10 +9955,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                     let spread_start = self.lexer.state.prev_token_end - 3;
                     let expression = self.parse_expr(
                         Precedence::Assignment,
-                        ParseExpressionOpts {
-                            in_cover: true,
-                            ..ParseExpressionOpts::default()
-                        },
+                        ParseExpressionOpts { in_cover: true },
                     )?;
                     let spread = self.ast.spread_element(
                         Span::new(spread_start, expression.span(&self.ast).end),
@@ -9857,6 +10006,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 end,
             })
         })();
+        self.context = grammar_context;
         self.scratch_cover.reset(checkpoint);
         result
     }
@@ -9881,6 +10031,14 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         Some(expression)
     }
 
+    // PropertyDefinition[Yield, Await] :
+    //   IdentifierReference[?Yield, ?Await]
+    //   CoverInitializedName[?Yield, ?Await]
+    //   PropertyName[?Yield, ?Await] `:` AssignmentExpression[+In, ?Yield, ?Await]
+    //   MethodDefinition[?Yield, ?Await]
+    //
+    // CoverInitializedName[Yield, Await] :
+    //   IdentifierReference[?Yield, ?Await] Initializer[+In, ?Yield, ?Await]
     fn parse_cover_property(&mut self) -> Option<ObjectPropertyKind> {
         let start = self.current_token.span.start;
         let mut async_function = false;
@@ -9970,10 +10128,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             self.advance()?;
             let value = self.parse_expr(
                 Precedence::Assignment,
-                ParseExpressionOpts {
-                    in_cover: true,
-                    ..ParseExpressionOpts::default()
-                },
+                ParseExpressionOpts { in_cover: true },
             )?;
             return Some(ObjectPropertyKind::ObjectProperty(
                 self.ast.object_property(
@@ -10021,10 +10176,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             self.advance()?;
             let default_value = self.parse_expr(
                 Precedence::Assignment,
-                ParseExpressionOpts {
-                    in_cover: true,
-                    ..ParseExpressionOpts::default()
-                },
+                ParseExpressionOpts { in_cover: true },
             )?;
             let identifier = self
                 .ast
@@ -10192,12 +10344,17 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             || tag.is_identifier_like()
     }
 
+    // ComputedPropertyName[Yield, Await] :
+    //   `[` AssignmentExpression[+In, ?Yield, ?Await] `]`
     fn parse_class_element_key(&mut self) -> Option<PropertyKey> {
         let token = self.current_token;
         if token.tag == TokenTag::LeftBracket {
             self.advance()?;
+            let grammar_context = enter_grammar_context![&mut self.context, +In];
             let expression =
-                self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?;
+                self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default());
+            self.context = grammar_context;
+            let expression = expression?;
             if !self.expect(
                 TokenTag::RightBracket,
                 "Expected ']' after computed property key",
@@ -10244,6 +10401,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         Some(key)
     }
 
+    // ComputedPropertyName[Yield, Await] :
+    //   `[` AssignmentExpression[+In, ?Yield, ?Await] `]`
     fn parse_property_key(&mut self, in_cover: bool) -> Option<PropertyKey> {
         let token = self.current_token;
         match token.tag {
@@ -10251,13 +10410,13 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 self.advance()?;
                 // Computed keys stay expressions when an object cover becomes a
                 // binding pattern, so they must not replace binding evidence.
+                let context = enter_grammar_context![&mut self.context, +In];
                 let expression = self.parse_expr_preserving_stripped_paren(
                     Precedence::Assignment,
-                    ParseExpressionOpts {
-                        in_cover,
-                        ..ParseExpressionOpts::default()
-                    },
-                )?;
+                    ParseExpressionOpts { in_cover },
+                );
+                self.context = context;
+                let expression = expression?;
                 let (message, help) = if in_cover {
                     ("Expected ']' after computed property key", None)
                 } else {
@@ -10321,6 +10480,15 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
     }
 
+    // MemberExpression[Yield, Await] :
+    //   MemberExpression[?Yield, ?Await] `[` Expression[+In, ?Yield, ?Await] `]`
+    //
+    // CallExpression[Yield, Await] :
+    //   CallExpression[?Yield, ?Await] `[` Expression[+In, ?Yield, ?Await] `]`
+    //
+    // OptionalChain[Yield, Await] :
+    //   `?.` `[` Expression[+In, ?Yield, ?Await] `]`
+    //   OptionalChain[?Yield, ?Await] `[` Expression[+In, ?Yield, ?Await] `]`
     fn parse_computed_member_expression(&mut self, object: Expr, optional: bool) -> Option<Expr> {
         debug_assert_eq!(self.current_token.tag, TokenTag::LeftBracket);
         let start = object.span(&self.ast).start;
@@ -10559,9 +10727,14 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
     }
 
+    // ArgumentList[Yield, Await] :
+    //   AssignmentExpression[+In, ?Yield, ?Await]
+    //   `...` AssignmentExpression[+In, ?Yield, ?Await]
+    //   ArgumentList[?Yield, ?Await] `,` AssignmentExpression[+In, ?Yield, ?Await]
+    //   ArgumentList[?Yield, ?Await] `,` `...` AssignmentExpression[+In, ?Yield, ?Await]
     fn parse_arguments(&mut self) -> Option<TypedSubRange<Argument>> {
         let checkpoint = self.scratch_a.begin();
-        let context = enter_grammar_context![&mut self.context, +In];
+        let grammar_context = enter_grammar_context![&mut self.context, +In];
         let result = (|| {
             while self.current_token.tag != TokenTag::RightParen
                 && self.current_token.tag != TokenTag::Eof
@@ -10586,7 +10759,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             }
             Some(self.add_extra_from_scratch_a(checkpoint))
         })();
-        self.context = context;
+        self.context = grammar_context;
         self.scratch_a.reset(checkpoint);
         result
     }
@@ -10746,6 +10919,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.parse_dynamic_import(import_name.span(&self.ast).start, phase, sync)
     }
 
+    // ImportCall[Yield, Await] :
+    //   `import` `(` AssignmentExpression[+In, ?Yield, ?Await] `,`? `)`
+    //   `import` `(` AssignmentExpression[+In, ?Yield, ?Await] `,` AssignmentExpression[+In, ?Yield, ?Await] `,`? `)`
     fn parse_dynamic_import(
         &mut self,
         start: u32,
@@ -10755,30 +10931,38 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         if !self.expect(TokenTag::LeftParen, "Expected '(' after import", None) {
             return None;
         }
-        let source = self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?;
-        let options = if phase.is_none() && self.eat(TokenTag::Comma)? {
-            let options = if self.current_token.tag == TokenTag::RightParen {
-                None
+        let grammar_context = enter_grammar_context![&mut self.context, +In];
+        let result = (|| {
+            let source = self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?;
+            let options = if phase.is_none() && self.eat(TokenTag::Comma)? {
+                let options = if self.current_token.tag == TokenTag::RightParen {
+                    None
+                } else {
+                    Some(self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?)
+                };
+                self.eat(TokenTag::Comma)?;
+                options
             } else {
-                Some(self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?)
+                None
             };
-            self.eat(TokenTag::Comma)?;
-            options
-        } else {
-            None
-        };
-        let end = self.current_token.span.end;
-        if !self.expect(
-            TokenTag::RightParen,
-            "Expected ')' after import()",
-            Some("Dynamic import call must end with ')'"),
-        ) {
-            return None;
-        }
-        Some(
-            self.ast
-                .expr_import_expression(Span::new(start, end), source, options, phase, sync),
-        )
+            let end = self.current_token.span.end;
+            if !self.expect(
+                TokenTag::RightParen,
+                "Expected ')' after import()",
+                Some("Dynamic import call must end with ')'"),
+            ) {
+                return None;
+            }
+            Some(self.ast.expr_import_expression(
+                Span::new(start, end),
+                source,
+                options,
+                phase,
+                sync,
+            ))
+        })();
+        self.context = grammar_context;
+        result
     }
 
     fn parse_new_target(&mut self, meta: IdentifierName) -> Option<Expr> {
@@ -11129,6 +11313,12 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         result
     }
 
+    // JSXChild :
+    //   `{` JSXChildExpression? `}`
+    //
+    // JSXChildExpression :
+    //   AssignmentExpression
+    //   `...` AssignmentExpression
     fn parse_jsx_child_from_left_brace(&mut self) -> Option<JsxChild> {
         debug_assert_eq!(self.current_token.tag, TokenTag::LeftBrace);
         let start = self.current_token.span.start;
@@ -11144,14 +11334,24 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             );
         }
         if self.eat(TokenTag::Spread)? {
-            let expression = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?;
+            // JSX omits grammar parameters; this parser allows in inside {...}
+            // independently of an enclosing for initializer.
+            let grammar_context = enter_grammar_context![&mut self.context, +In];
+            let expression = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default());
+            self.context = grammar_context;
+            let expression = expression?;
             let end = self.expect_jsx_child_right_brace("JSX spread")?;
             return Some(
                 self.ast
                     .jsx_child_jsx_spread_child(Span::new(start, end), expression),
             );
         }
-        let expression = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?;
+        // JSX omits grammar parameters; this parser allows in inside {...}
+        // independently of an enclosing for initializer.
+        let grammar_context = enter_grammar_context![&mut self.context, +In];
+        let expression = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default());
+        self.context = grammar_context;
+        let expression = expression?;
         let end = self.expect_jsx_child_right_brace("JSX expression")?;
         Some(self.ast.jsx_child_jsx_expression_container(
             Span::new(start, end),
@@ -11374,6 +11574,15 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
     }
 
+    // JSXAttributeValue :
+    //   `{` AssignmentExpression `}`
+    //
+    // JSXChild :
+    //   `{` JSXChildExpression? `}`
+    //
+    // JSXChildExpression :
+    //   AssignmentExpression
+    //   `...` AssignmentExpression
     fn parse_jsx_expression_container(
         &mut self,
         context: JsxExprContext,
@@ -11396,7 +11605,12 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 JsxExpression::JsxEmptyExpression(empty),
             ));
         }
-        let expression = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?;
+        // JSX omits grammar parameters; this parser allows in inside {...}
+        // independently of an enclosing for initializer.
+        let grammar_context = enter_grammar_context![&mut self.context, +In];
+        let expression = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default());
+        self.context = grammar_context;
+        let expression = expression?;
         let end = self.current_token.span.end;
         if context == JsxExprContext::Tag {
             self.enter_jsx_tag();
@@ -11414,6 +11628,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // JSXSpreadAttribute :
+    //   `{` `...` AssignmentExpression `}`
     fn parse_jsx_spread_attribute(&mut self) -> Option<JsxAttributeItem> {
         debug_assert_eq!(self.current_token.tag, TokenTag::LeftBrace);
         let start = self.current_token.span.start;
@@ -11426,7 +11642,12 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         ) {
             return None;
         }
-        let argument = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default())?;
+        // JSX omits grammar parameters; this parser allows in inside {...}
+        // independently of an enclosing for initializer.
+        let grammar_context = enter_grammar_context![&mut self.context, +In];
+        let argument = self.parse_expr(Precedence::Comma, ParseExpressionOpts::default());
+        self.context = grammar_context;
+        let argument = argument?;
         let end = self.current_token.span.end;
         self.enter_jsx_tag();
         if !self.expect(
@@ -11617,6 +11838,10 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         )
     }
 
+    // YieldExpression[In, Await] :
+    //   `yield`
+    //   `yield` [no LineTerminator here] AssignmentExpression[?In, +Yield, ?Await]
+    //   `yield` [no LineTerminator here] `*` AssignmentExpression[?In, +Yield, ?Await]
     fn parse_yield_expression(&mut self) -> Option<Expr> {
         debug_assert_eq!(self.current_token.tag, TokenTag::Yield);
         let start = self.current_token.span.start;
@@ -11642,13 +11867,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             ) {
             None
         } else {
-            Some(self.parse_expr(
-                Precedence::Assignment,
-                ParseExpressionOpts {
-                    respect_in_parameter: true,
-                    ..ParseExpressionOpts::default()
-                },
-            )?)
+            Some(self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?)
         };
         if delegate && argument.is_none() {
             self.report_expected(
@@ -11800,12 +12019,17 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         ))
     }
 
+    // AssignmentExpression[In, Yield, Await] :
+    //   LeftHandSideExpression[?Yield, ?Await] `=` AssignmentExpression[?In, ?Yield, ?Await]
+    //   LeftHandSideExpression[?Yield, ?Await] AssignmentOperator AssignmentExpression[?In, ?Yield, ?Await]
+    //   LeftHandSideExpression[?Yield, ?Await] `&&=` AssignmentExpression[?In, ?Yield, ?Await]
+    //   LeftHandSideExpression[?Yield, ?Await] `||=` AssignmentExpression[?In, ?Yield, ?Await]
+    //   LeftHandSideExpression[?Yield, ?Await] `??=` AssignmentExpression[?In, ?Yield, ?Await]
     fn parse_assignment_expression(
         &mut self,
         precedence: Precedence,
         left: Expr,
         tag: TokenTag,
-        respect_in_parameter: bool,
     ) -> Option<Expr> {
         let start = left.span(&self.ast).start;
         let target = if tag == TokenTag::Assign {
@@ -11828,13 +12052,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.advance()?;
         // A stripped parenthesis in the right-hand side is in expression
         // position and must not overwrite evidence from the arrow-head target.
-        let right = self.parse_expr_preserving_stripped_paren(
-            precedence,
-            ParseExpressionOpts {
-                respect_in_parameter,
-                ..ParseExpressionOpts::default()
-            },
-        )?;
+        let right =
+            self.parse_expr_preserving_stripped_paren(precedence, ParseExpressionOpts::default())?;
         Some(self.ast.expr_assignment_expression(
             Span::new(start, right.span(&self.ast).end),
             target,
@@ -11843,6 +12062,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         ))
     }
 
+    // ConditionalExpression[In, Yield, Await] :
+    //   ShortCircuitExpression[?In, ?Yield, ?Await]
+    //   ShortCircuitExpression[?In, ?Yield, ?Await] `?` AssignmentExpression[+In, ?Yield, ?Await] `:` AssignmentExpression[?In, ?Yield, ?Await]
     fn parse_conditional_expression(&mut self, test: Expr) -> Option<Expr> {
         let start = test.span(&self.ast).start;
         debug_assert_eq!(self.current_token.tag, TokenTag::Question);
@@ -11866,13 +12088,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         ) {
             return None;
         }
-        let alternate = self.parse_expr(
-            Precedence::Assignment,
-            ParseExpressionOpts {
-                respect_in_parameter: true,
-                ..ParseExpressionOpts::default()
-            },
-        )?;
+        let alternate = self.parse_expr(Precedence::Assignment, ParseExpressionOpts::default())?;
         Some(self.ast.expr_conditional_expression(
             Span::new(start, alternate.span(&self.ast).end),
             test,
