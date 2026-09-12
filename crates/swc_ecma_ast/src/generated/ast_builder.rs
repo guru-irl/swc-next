@@ -11,17 +11,17 @@ impl<'a> Ast<'a> {
     pub fn program(
         &mut self,
         span: Span,
-        directives: TypedSubRange<Directive>,
-        body: TypedSubRange<Stmt>,
+        directives: SubRange<Directive>,
+        body: SubRange<Stmt>,
         hashbang: Option<Hashbang>,
     ) -> Program {
-        let _f0 = self.add_extra(body.to_extra_data(self));
+        let _f0 = self.add_extra(body);
         Program(self.add_node(
             span,
             NodeKind::Program,
             NodePayload(
                 0u128
-                    | ((directives.to_extra_data(self).raw() as u128) << 32usize)
+                    | ((directives.into_extra_data().raw() as u128) << 32usize)
                     | ((hashbang.map_or(u32::MAX, |node| node.node_id().index() as u32) as u128)
                         << 0usize)
                     | ((_f0.index() as u128) << 96usize),
@@ -29,7 +29,7 @@ impl<'a> Ast<'a> {
         ))
     }
     #[inline]
-    pub fn stmt_block_statement(&mut self, span: Span, body: TypedSubRange<Stmt>) -> Stmt {
+    pub fn stmt_block_statement(&mut self, span: Span, body: SubRange<Stmt>) -> Stmt {
         Stmt::BlockStatement(self.block_statement(span, body).into())
     }
     #[inline]
@@ -119,7 +119,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         discriminant: Expr,
-        cases: TypedSubRange<SwitchCase>,
+        cases: SubRange<SwitchCase>,
     ) -> Stmt {
         Stmt::SwitchStatement(self.switch_statement(span, discriminant, cases).into())
     }
@@ -150,7 +150,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: VariableKind,
-        declarators: TypedSubRange<VariableDeclarator>,
+        declarators: SubRange<VariableDeclarator>,
         declare: bool,
     ) -> Stmt {
         Stmt::Declaration(Decl::VariableDeclaration(
@@ -191,12 +191,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         class_type: ClassType,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         id: Option<BindingIdentifier>,
         type_parameters: Option<TsTypeParameterDeclaration>,
         super_class: Option<Expr>,
         super_type_arguments: Option<TsTypeParameterInstantiation>,
-        implements: TypedSubRange<TsClassImplements>,
+        implements: SubRange<TsClassImplements>,
         body: ClassBody,
         r#abstract: bool,
         declare: bool,
@@ -264,7 +264,7 @@ impl<'a> Ast<'a> {
         span: Span,
         id: BindingIdentifier,
         type_parameters: Option<TsTypeParameterDeclaration>,
-        extends: TypedSubRange<TsInterfaceHeritage>,
+        extends: SubRange<TsInterfaceHeritage>,
         body: TsInterfaceBody,
         declare: bool,
     ) -> Stmt {
@@ -330,9 +330,9 @@ impl<'a> Ast<'a> {
     pub fn stmt_import_declaration(
         &mut self,
         span: Span,
-        specifiers: TypedSubRange<ImportDeclarationSpecifier>,
+        specifiers: SubRange<ImportDeclarationSpecifier>,
         source: StringLiteral,
-        attributes: TypedSubRange<ImportAttribute>,
+        attributes: SubRange<ImportAttribute>,
         phase: Option<ImportPhase>,
         import_kind: ImportOrExportKind,
     ) -> Stmt {
@@ -346,9 +346,9 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         declaration: Option<Decl>,
-        specifiers: TypedSubRange<ExportSpecifier>,
+        specifiers: SubRange<ExportSpecifier>,
         source: Option<StringLiteral>,
-        attributes: TypedSubRange<ImportAttribute>,
+        attributes: SubRange<ImportAttribute>,
         export_kind: ImportOrExportKind,
     ) -> Stmt {
         Stmt::ExportNamedDeclaration(
@@ -377,7 +377,7 @@ impl<'a> Ast<'a> {
         span: Span,
         exported: Option<ModuleExportName>,
         source: StringLiteral,
-        attributes: TypedSubRange<ImportAttribute>,
+        attributes: SubRange<ImportAttribute>,
         export_kind: ImportOrExportKind,
     ) -> Stmt {
         Stmt::ExportAllDeclaration(
@@ -398,7 +398,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: VariableKind,
-        declarators: TypedSubRange<VariableDeclarator>,
+        declarators: SubRange<VariableDeclarator>,
         declare: bool,
     ) -> Decl {
         Decl::VariableDeclaration(
@@ -439,12 +439,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         class_type: ClassType,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         id: Option<BindingIdentifier>,
         type_parameters: Option<TsTypeParameterDeclaration>,
         super_class: Option<Expr>,
         super_type_arguments: Option<TsTypeParameterInstantiation>,
-        implements: TypedSubRange<TsClassImplements>,
+        implements: SubRange<TsClassImplements>,
         body: ClassBody,
         r#abstract: bool,
         declare: bool,
@@ -512,7 +512,7 @@ impl<'a> Ast<'a> {
         span: Span,
         id: BindingIdentifier,
         type_parameters: Option<TsTypeParameterDeclaration>,
-        extends: TypedSubRange<TsInterfaceHeritage>,
+        extends: SubRange<TsInterfaceHeritage>,
         body: TsInterfaceBody,
         declare: bool,
     ) -> Decl {
@@ -621,8 +621,8 @@ impl<'a> Ast<'a> {
     pub fn expr_template_literal(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        expressions: TypedSubRange<Expr>,
+        quasis: SubRange<TemplateElement>,
+        expressions: SubRange<Expr>,
     ) -> Expr {
         Expr::TemplateLiteral(self.template_literal(span, quasis, expressions).into())
     }
@@ -695,11 +695,7 @@ impl<'a> Ast<'a> {
         )
     }
     #[inline]
-    pub fn expr_sequence_expression(
-        &mut self,
-        span: Span,
-        expressions: TypedSubRange<Expr>,
-    ) -> Expr {
+    pub fn expr_sequence_expression(&mut self, span: Span, expressions: SubRange<Expr>) -> Expr {
         Expr::SequenceExpression(self.sequence_expression(span, expressions).into())
     }
     #[inline]
@@ -722,7 +718,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
         optional: bool,
     ) -> Expr {
         Expr::CallExpression(
@@ -740,7 +736,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
     ) -> Expr {
         Expr::NewExpression(
             self.new_expression(span, callee, type_arguments, arguments)
@@ -788,7 +784,7 @@ impl<'a> Ast<'a> {
     pub fn expr_array_expression(
         &mut self,
         span: Span,
-        elements: TypedSubRange<Option<Argument>>,
+        elements: SubRange<Option<Argument>>,
     ) -> Expr {
         Expr::ArrayExpression(self.array_expression(span, elements).into())
     }
@@ -796,7 +792,7 @@ impl<'a> Ast<'a> {
     pub fn expr_object_expression(
         &mut self,
         span: Span,
-        properties: TypedSubRange<ObjectPropertyKind>,
+        properties: SubRange<ObjectPropertyKind>,
     ) -> Expr {
         Expr::ObjectExpression(self.object_expression(span, properties).into())
     }
@@ -837,12 +833,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         class_type: ClassType,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         id: Option<BindingIdentifier>,
         type_parameters: Option<TsTypeParameterDeclaration>,
         super_class: Option<Expr>,
         super_type_arguments: Option<TsTypeParameterInstantiation>,
-        implements: TypedSubRange<TsClassImplements>,
+        implements: SubRange<TsClassImplements>,
         body: ClassBody,
         r#abstract: bool,
         declare: bool,
@@ -952,7 +948,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_element: JsxOpeningElement,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_element: Option<JsxClosingElement>,
     ) -> Expr {
         Expr::JsxElement(
@@ -965,7 +961,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_fragment: JsxOpeningFragment,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_fragment: JsxClosingFragment,
     ) -> Expr {
         Expr::JsxFragment(
@@ -978,7 +974,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         name: AstUtf8,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
     ) -> BindingPattern {
@@ -1061,7 +1057,7 @@ impl<'a> Ast<'a> {
     pub fn binding_pattern_assignment_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         left: BindingPattern,
         type_annotation: Option<TsTypeAnnotation>,
         right: Expr,
@@ -1076,7 +1072,7 @@ impl<'a> Ast<'a> {
     pub fn binding_pattern_binding_rest_element(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         argument: BindingPattern,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -1090,8 +1086,8 @@ impl<'a> Ast<'a> {
     pub fn binding_pattern_array_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
-        elements: TypedSubRange<Option<BindingPattern>>,
+        decorators: SubRange<Decorator>,
+        elements: SubRange<Option<BindingPattern>>,
         rest: Option<BindingRestElement>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -1105,8 +1101,8 @@ impl<'a> Ast<'a> {
     pub fn binding_pattern_object_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
-        properties: TypedSubRange<BindingProperty>,
+        decorators: SubRange<Decorator>,
+        properties: SubRange<BindingProperty>,
         rest: Option<BindingRestElement>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -1197,8 +1193,8 @@ impl<'a> Ast<'a> {
     pub fn assignment_target_array_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
-        elements: TypedSubRange<Option<BindingPattern>>,
+        decorators: SubRange<Decorator>,
+        elements: SubRange<Option<BindingPattern>>,
         rest: Option<BindingRestElement>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -1212,8 +1208,8 @@ impl<'a> Ast<'a> {
     pub fn assignment_target_object_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
-        properties: TypedSubRange<BindingProperty>,
+        decorators: SubRange<Decorator>,
+        properties: SubRange<BindingProperty>,
         rest: Option<BindingRestElement>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -1408,8 +1404,8 @@ impl<'a> Ast<'a> {
     pub fn property_key_expr_template_literal(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        expressions: TypedSubRange<Expr>,
+        quasis: SubRange<TemplateElement>,
+        expressions: SubRange<Expr>,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::TemplateLiteral(
             self.template_literal(span, quasis, expressions).into(),
@@ -1493,7 +1489,7 @@ impl<'a> Ast<'a> {
     pub fn property_key_expr_sequence_expression(
         &mut self,
         span: Span,
-        expressions: TypedSubRange<Expr>,
+        expressions: SubRange<Expr>,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::SequenceExpression(
             self.sequence_expression(span, expressions).into(),
@@ -1519,7 +1515,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
         optional: bool,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::CallExpression(
@@ -1543,7 +1539,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::NewExpression(
             self.new_expression(span, callee, type_arguments, arguments)
@@ -1591,7 +1587,7 @@ impl<'a> Ast<'a> {
     pub fn property_key_expr_array_expression(
         &mut self,
         span: Span,
-        elements: TypedSubRange<Option<Argument>>,
+        elements: SubRange<Option<Argument>>,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::ArrayExpression(
             self.array_expression(span, elements).into(),
@@ -1601,7 +1597,7 @@ impl<'a> Ast<'a> {
     pub fn property_key_expr_object_expression(
         &mut self,
         span: Span,
-        properties: TypedSubRange<ObjectPropertyKind>,
+        properties: SubRange<ObjectPropertyKind>,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::ObjectExpression(
             self.object_expression(span, properties).into(),
@@ -1650,12 +1646,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         class_type: ClassType,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         id: Option<BindingIdentifier>,
         type_parameters: Option<TsTypeParameterDeclaration>,
         super_class: Option<Expr>,
         super_type_arguments: Option<TsTypeParameterInstantiation>,
-        implements: TypedSubRange<TsClassImplements>,
+        implements: SubRange<TsClassImplements>,
         body: ClassBody,
         r#abstract: bool,
         declare: bool,
@@ -1785,7 +1781,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_element: JsxOpeningElement,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_element: Option<JsxClosingElement>,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::JsxElement(
@@ -1798,7 +1794,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_fragment: JsxOpeningFragment,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_fragment: JsxClosingFragment,
     ) -> PropertyKey {
         PropertyKey::Expr(Expr::JsxFragment(
@@ -1899,8 +1895,8 @@ impl<'a> Ast<'a> {
     pub fn argument_expr_template_literal(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        expressions: TypedSubRange<Expr>,
+        quasis: SubRange<TemplateElement>,
+        expressions: SubRange<Expr>,
     ) -> Argument {
         Argument::Expr(Expr::TemplateLiteral(
             self.template_literal(span, quasis, expressions).into(),
@@ -1984,7 +1980,7 @@ impl<'a> Ast<'a> {
     pub fn argument_expr_sequence_expression(
         &mut self,
         span: Span,
-        expressions: TypedSubRange<Expr>,
+        expressions: SubRange<Expr>,
     ) -> Argument {
         Argument::Expr(Expr::SequenceExpression(
             self.sequence_expression(span, expressions).into(),
@@ -2010,7 +2006,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
         optional: bool,
     ) -> Argument {
         Argument::Expr(Expr::CallExpression(
@@ -2030,7 +2026,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
     ) -> Argument {
         Argument::Expr(Expr::NewExpression(
             self.new_expression(span, callee, type_arguments, arguments)
@@ -2078,7 +2074,7 @@ impl<'a> Ast<'a> {
     pub fn argument_expr_array_expression(
         &mut self,
         span: Span,
-        elements: TypedSubRange<Option<Argument>>,
+        elements: SubRange<Option<Argument>>,
     ) -> Argument {
         Argument::Expr(Expr::ArrayExpression(
             self.array_expression(span, elements).into(),
@@ -2088,7 +2084,7 @@ impl<'a> Ast<'a> {
     pub fn argument_expr_object_expression(
         &mut self,
         span: Span,
-        properties: TypedSubRange<ObjectPropertyKind>,
+        properties: SubRange<ObjectPropertyKind>,
     ) -> Argument {
         Argument::Expr(Expr::ObjectExpression(
             self.object_expression(span, properties).into(),
@@ -2137,12 +2133,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         class_type: ClassType,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         id: Option<BindingIdentifier>,
         type_parameters: Option<TsTypeParameterDeclaration>,
         super_class: Option<Expr>,
         super_type_arguments: Option<TsTypeParameterInstantiation>,
-        implements: TypedSubRange<TsClassImplements>,
+        implements: SubRange<TsClassImplements>,
         body: ClassBody,
         r#abstract: bool,
         declare: bool,
@@ -2264,7 +2260,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_element: JsxOpeningElement,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_element: Option<JsxClosingElement>,
     ) -> Argument {
         Argument::Expr(Expr::JsxElement(
@@ -2277,7 +2273,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_fragment: JsxOpeningFragment,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_fragment: JsxClosingFragment,
     ) -> Argument {
         Argument::Expr(Expr::JsxFragment(
@@ -2318,7 +2314,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: VariableKind,
-        declarators: TypedSubRange<VariableDeclarator>,
+        declarators: SubRange<VariableDeclarator>,
         declare: bool,
     ) -> ForStatementInit {
         ForStatementInit::VariableDeclaration(
@@ -2414,8 +2410,8 @@ impl<'a> Ast<'a> {
     pub fn for_statement_init_expr_template_literal(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        expressions: TypedSubRange<Expr>,
+        quasis: SubRange<TemplateElement>,
+        expressions: SubRange<Expr>,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::TemplateLiteral(
             self.template_literal(span, quasis, expressions).into(),
@@ -2499,7 +2495,7 @@ impl<'a> Ast<'a> {
     pub fn for_statement_init_expr_sequence_expression(
         &mut self,
         span: Span,
-        expressions: TypedSubRange<Expr>,
+        expressions: SubRange<Expr>,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::SequenceExpression(
             self.sequence_expression(span, expressions).into(),
@@ -2525,7 +2521,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
         optional: bool,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::CallExpression(
@@ -2549,7 +2545,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::NewExpression(
             self.new_expression(span, callee, type_arguments, arguments)
@@ -2597,7 +2593,7 @@ impl<'a> Ast<'a> {
     pub fn for_statement_init_expr_array_expression(
         &mut self,
         span: Span,
-        elements: TypedSubRange<Option<Argument>>,
+        elements: SubRange<Option<Argument>>,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::ArrayExpression(
             self.array_expression(span, elements).into(),
@@ -2607,7 +2603,7 @@ impl<'a> Ast<'a> {
     pub fn for_statement_init_expr_object_expression(
         &mut self,
         span: Span,
-        properties: TypedSubRange<ObjectPropertyKind>,
+        properties: SubRange<ObjectPropertyKind>,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::ObjectExpression(
             self.object_expression(span, properties).into(),
@@ -2656,12 +2652,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         class_type: ClassType,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         id: Option<BindingIdentifier>,
         type_parameters: Option<TsTypeParameterDeclaration>,
         super_class: Option<Expr>,
         super_type_arguments: Option<TsTypeParameterInstantiation>,
-        implements: TypedSubRange<TsClassImplements>,
+        implements: SubRange<TsClassImplements>,
         body: ClassBody,
         r#abstract: bool,
         declare: bool,
@@ -2791,7 +2787,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_element: JsxOpeningElement,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_element: Option<JsxClosingElement>,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::JsxElement(
@@ -2804,7 +2800,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_fragment: JsxOpeningFragment,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_fragment: JsxClosingFragment,
     ) -> ForStatementInit {
         ForStatementInit::Expr(Expr::JsxFragment(
@@ -2817,7 +2813,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: VariableKind,
-        declarators: TypedSubRange<VariableDeclarator>,
+        declarators: SubRange<VariableDeclarator>,
         declare: bool,
     ) -> ForStatementLeft {
         ForStatementLeft::VariableDeclaration(
@@ -2911,8 +2907,8 @@ impl<'a> Ast<'a> {
     pub fn for_statement_left_assignment_target_array_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
-        elements: TypedSubRange<Option<BindingPattern>>,
+        decorators: SubRange<Decorator>,
+        elements: SubRange<Option<BindingPattern>>,
         rest: Option<BindingRestElement>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -2926,8 +2922,8 @@ impl<'a> Ast<'a> {
     pub fn for_statement_left_assignment_target_object_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
-        properties: TypedSubRange<BindingProperty>,
+        decorators: SubRange<Decorator>,
+        properties: SubRange<BindingProperty>,
         rest: Option<BindingRestElement>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -2948,8 +2944,8 @@ impl<'a> Ast<'a> {
     pub fn arrow_function_body_function_body(
         &mut self,
         span: Span,
-        directives: TypedSubRange<Directive>,
-        body: TypedSubRange<Stmt>,
+        directives: SubRange<Directive>,
+        body: SubRange<Stmt>,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::FunctionBody(self.function_body(span, directives, body).into())
     }
@@ -3041,8 +3037,8 @@ impl<'a> Ast<'a> {
     pub fn arrow_function_body_expr_template_literal(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        expressions: TypedSubRange<Expr>,
+        quasis: SubRange<TemplateElement>,
+        expressions: SubRange<Expr>,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::TemplateLiteral(
             self.template_literal(span, quasis, expressions).into(),
@@ -3126,7 +3122,7 @@ impl<'a> Ast<'a> {
     pub fn arrow_function_body_expr_sequence_expression(
         &mut self,
         span: Span,
-        expressions: TypedSubRange<Expr>,
+        expressions: SubRange<Expr>,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::SequenceExpression(
             self.sequence_expression(span, expressions).into(),
@@ -3152,7 +3148,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
         optional: bool,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::CallExpression(
@@ -3176,7 +3172,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::NewExpression(
             self.new_expression(span, callee, type_arguments, arguments)
@@ -3224,7 +3220,7 @@ impl<'a> Ast<'a> {
     pub fn arrow_function_body_expr_array_expression(
         &mut self,
         span: Span,
-        elements: TypedSubRange<Option<Argument>>,
+        elements: SubRange<Option<Argument>>,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::ArrayExpression(
             self.array_expression(span, elements).into(),
@@ -3234,7 +3230,7 @@ impl<'a> Ast<'a> {
     pub fn arrow_function_body_expr_object_expression(
         &mut self,
         span: Span,
-        properties: TypedSubRange<ObjectPropertyKind>,
+        properties: SubRange<ObjectPropertyKind>,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::ObjectExpression(
             self.object_expression(span, properties).into(),
@@ -3283,12 +3279,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         class_type: ClassType,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         id: Option<BindingIdentifier>,
         type_parameters: Option<TsTypeParameterDeclaration>,
         super_class: Option<Expr>,
         super_type_arguments: Option<TsTypeParameterInstantiation>,
-        implements: TypedSubRange<TsClassImplements>,
+        implements: SubRange<TsClassImplements>,
         body: ClassBody,
         r#abstract: bool,
         declare: bool,
@@ -3418,7 +3414,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_element: JsxOpeningElement,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_element: Option<JsxClosingElement>,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::JsxElement(
@@ -3431,7 +3427,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_fragment: JsxOpeningFragment,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_fragment: JsxClosingFragment,
     ) -> ArrowFunctionBody {
         ArrowFunctionBody::Expr(Expr::JsxFragment(
@@ -3451,7 +3447,7 @@ impl<'a> Ast<'a> {
     pub fn formal_parameter_item_ts_parameter_property(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         parameter: BindingPattern,
         r#override: bool,
         readonly: bool,
@@ -3474,7 +3470,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         name: AstUtf8,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
     ) -> FormalParameterPattern {
@@ -3569,7 +3565,7 @@ impl<'a> Ast<'a> {
     pub fn formal_parameter_pattern_binding_pattern_assignment_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         left: BindingPattern,
         type_annotation: Option<TsTypeAnnotation>,
         right: Expr,
@@ -3584,7 +3580,7 @@ impl<'a> Ast<'a> {
     pub fn formal_parameter_pattern_binding_pattern_binding_rest_element(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         argument: BindingPattern,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -3598,8 +3594,8 @@ impl<'a> Ast<'a> {
     pub fn formal_parameter_pattern_binding_pattern_array_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
-        elements: TypedSubRange<Option<BindingPattern>>,
+        decorators: SubRange<Decorator>,
+        elements: SubRange<Option<BindingPattern>>,
         rest: Option<BindingRestElement>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -3613,8 +3609,8 @@ impl<'a> Ast<'a> {
     pub fn formal_parameter_pattern_binding_pattern_object_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
-        properties: TypedSubRange<BindingProperty>,
+        decorators: SubRange<Decorator>,
+        properties: SubRange<BindingProperty>,
         rest: Option<BindingRestElement>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
@@ -3645,7 +3641,7 @@ impl<'a> Ast<'a> {
     pub fn class_element_method_definition(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         key: PropertyKey,
         value: Function,
         kind: MethodDefinitionKind,
@@ -3677,7 +3673,7 @@ impl<'a> Ast<'a> {
     pub fn class_element_property_definition(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         key: PropertyKey,
         type_annotation: Option<TsTypeAnnotation>,
         value: Option<Expr>,
@@ -3714,18 +3710,14 @@ impl<'a> Ast<'a> {
         )
     }
     #[inline]
-    pub fn class_element_static_block(
-        &mut self,
-        span: Span,
-        body: TypedSubRange<Stmt>,
-    ) -> ClassElement {
+    pub fn class_element_static_block(&mut self, span: Span, body: SubRange<Stmt>) -> ClassElement {
         ClassElement::StaticBlock(self.static_block(span, body).into())
     }
     #[inline]
     pub fn class_element_ts_method_definition(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         key: PropertyKey,
         value: TsFunction,
         kind: MethodDefinitionKind,
@@ -3757,7 +3749,7 @@ impl<'a> Ast<'a> {
     pub fn class_element_ts_index_signature(
         &mut self,
         span: Span,
-        parameters: TypedSubRange<BindingIdentifier>,
+        parameters: SubRange<BindingIdentifier>,
         type_annotation: TsTypeAnnotation,
         readonly: bool,
         r#static: bool,
@@ -3899,8 +3891,8 @@ impl<'a> Ast<'a> {
     pub fn export_default_declaration_kind_expr_template_literal(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        expressions: TypedSubRange<Expr>,
+        quasis: SubRange<TemplateElement>,
+        expressions: SubRange<Expr>,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::TemplateLiteral(
             self.template_literal(span, quasis, expressions).into(),
@@ -3984,7 +3976,7 @@ impl<'a> Ast<'a> {
     pub fn export_default_declaration_kind_expr_sequence_expression(
         &mut self,
         span: Span,
-        expressions: TypedSubRange<Expr>,
+        expressions: SubRange<Expr>,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::SequenceExpression(
             self.sequence_expression(span, expressions).into(),
@@ -4010,7 +4002,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
         optional: bool,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::CallExpression(
@@ -4034,7 +4026,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::NewExpression(
             self.new_expression(span, callee, type_arguments, arguments)
@@ -4082,7 +4074,7 @@ impl<'a> Ast<'a> {
     pub fn export_default_declaration_kind_expr_array_expression(
         &mut self,
         span: Span,
-        elements: TypedSubRange<Option<Argument>>,
+        elements: SubRange<Option<Argument>>,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::ArrayExpression(
             self.array_expression(span, elements).into(),
@@ -4092,7 +4084,7 @@ impl<'a> Ast<'a> {
     pub fn export_default_declaration_kind_expr_object_expression(
         &mut self,
         span: Span,
-        properties: TypedSubRange<ObjectPropertyKind>,
+        properties: SubRange<ObjectPropertyKind>,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::ObjectExpression(
             self.object_expression(span, properties).into(),
@@ -4141,12 +4133,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         class_type: ClassType,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         id: Option<BindingIdentifier>,
         type_parameters: Option<TsTypeParameterDeclaration>,
         super_class: Option<Expr>,
         super_type_arguments: Option<TsTypeParameterInstantiation>,
-        implements: TypedSubRange<TsClassImplements>,
+        implements: SubRange<TsClassImplements>,
         body: ClassBody,
         r#abstract: bool,
         declare: bool,
@@ -4276,7 +4268,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_element: JsxOpeningElement,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_element: Option<JsxClosingElement>,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::JsxElement(
@@ -4289,7 +4281,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_fragment: JsxOpeningFragment,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_fragment: JsxClosingFragment,
     ) -> ExportDefaultDeclarationKind {
         ExportDefaultDeclarationKind::Expr(Expr::JsxFragment(
@@ -4330,12 +4322,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         class_type: ClassType,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         id: Option<BindingIdentifier>,
         type_parameters: Option<TsTypeParameterDeclaration>,
         super_class: Option<Expr>,
         super_type_arguments: Option<TsTypeParameterInstantiation>,
-        implements: TypedSubRange<TsClassImplements>,
+        implements: SubRange<TsClassImplements>,
         body: ClassBody,
         r#abstract: bool,
         declare: bool,
@@ -4389,7 +4381,7 @@ impl<'a> Ast<'a> {
         span: Span,
         id: BindingIdentifier,
         type_parameters: Option<TsTypeParameterDeclaration>,
-        extends: TypedSubRange<TsInterfaceHeritage>,
+        extends: SubRange<TsInterfaceHeritage>,
         body: TsInterfaceBody,
         declare: bool,
     ) -> ExportDefaultDeclarationKind {
@@ -4413,8 +4405,8 @@ impl<'a> Ast<'a> {
             NodeKind::StringLiteral,
             NodePayload(
                 0u128
-                    | ((value.to_extra_data(self).raw() as u128) << 0usize)
-                    | ((raw.to_extra_data(self).raw() as u128) << 64usize),
+                    | ((value.into_extra_data().raw() as u128) << 0usize)
+                    | ((raw.into_extra_data().raw() as u128) << 64usize),
             ),
         ))
     }
@@ -4430,8 +4422,8 @@ impl<'a> Ast<'a> {
             NodeKind::NumericLiteral,
             NodePayload(
                 0u128
-                    | ((value.to_extra_data(self).raw() as u128) << 0usize)
-                    | ((raw.to_extra_data(self).raw() as u128) << 64usize),
+                    | ((value.into_extra_data().raw() as u128) << 0usize)
+                    | ((raw.into_extra_data().raw() as u128) << 64usize),
             ),
         ))
     }
@@ -4440,7 +4432,7 @@ impl<'a> Ast<'a> {
         BigIntLiteral(self.add_node(
             span,
             NodeKind::BigIntLiteral,
-            NodePayload(0u128 | ((raw.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((raw.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -4467,8 +4459,8 @@ impl<'a> Ast<'a> {
             NodeKind::RegExpLiteral,
             NodePayload(
                 0u128
-                    | ((pattern.to_extra_data(self).raw() as u128) << 0usize)
-                    | ((flags.to_extra_data(self).raw() as u128) << 64usize),
+                    | ((pattern.into_extra_data().raw() as u128) << 0usize)
+                    | ((flags.into_extra_data().raw() as u128) << 64usize),
             ),
         ))
     }
@@ -4476,16 +4468,16 @@ impl<'a> Ast<'a> {
     pub fn template_literal(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        expressions: TypedSubRange<Expr>,
+        quasis: SubRange<TemplateElement>,
+        expressions: SubRange<Expr>,
     ) -> TemplateLiteral {
         TemplateLiteral(self.add_node(
             span,
             NodeKind::TemplateLiteral,
             NodePayload(
                 0u128
-                    | ((quasis.to_extra_data(self).raw() as u128) << 0usize)
-                    | ((expressions.to_extra_data(self).raw() as u128) << 64usize),
+                    | ((quasis.into_extra_data().raw() as u128) << 0usize)
+                    | ((expressions.into_extra_data().raw() as u128) << 64usize),
             ),
         ))
     }
@@ -4498,13 +4490,13 @@ impl<'a> Ast<'a> {
         tail: bool,
         is_cooked_undefined: bool,
     ) -> TemplateElement {
-        let _f0 = self.add_extra(raw.to_extra_data(self));
+        let _f0 = self.add_extra(raw);
         TemplateElement(self.add_node(
             span,
             NodeKind::TemplateElement,
             NodePayload(
                 0u128
-                    | ((cooked.to_extra_data(self).raw() as u128) << 16usize)
+                    | ((cooked.into_extra_data().raw() as u128) << 16usize)
                     | ((tail as u32 as u128) << 0usize)
                     | ((is_cooked_undefined as u32 as u128) << 8usize)
                     | ((_f0.index() as u128) << 96usize),
@@ -4516,7 +4508,7 @@ impl<'a> Ast<'a> {
         IdentifierReference(self.add_node(
             span,
             NodeKind::IdentifierReference,
-            NodePayload(0u128 | ((name.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((name.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -4524,7 +4516,7 @@ impl<'a> Ast<'a> {
         PrivateIdentifier(self.add_node(
             span,
             NodeKind::PrivateIdentifier,
-            NodePayload(0u128 | ((name.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((name.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -4532,12 +4524,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         name: AstUtf8,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
     ) -> BindingIdentifier {
-        let _extra_data = [name.to_extra_data(self), decorators.to_extra_data(self)];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data = [(name).into_extra_data(), (decorators).into_extra_data()];
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         BindingIdentifier(self.add_node(
             span,
             NodeKind::BindingIdentifier,
@@ -4547,7 +4539,7 @@ impl<'a> Ast<'a> {
                         as u128)
                         << 8usize)
                     | ((optional as u32 as u128) << 0usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -4556,7 +4548,7 @@ impl<'a> Ast<'a> {
         IdentifierName(self.add_node(
             span,
             NodeKind::IdentifierName,
-            NodePayload(0u128 | ((name.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((name.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -4564,21 +4556,21 @@ impl<'a> Ast<'a> {
         LabelIdentifier(self.add_node(
             span,
             NodeKind::LabelIdentifier,
-            NodePayload(0u128 | ((name.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((name.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
     pub fn assignment_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         left: BindingPattern,
         type_annotation: Option<TsTypeAnnotation>,
         right: Expr,
         optional: bool,
     ) -> AssignmentPattern {
-        let _extra_data = [decorators.to_extra_data(self), right.to_extra_data(self)];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data = [(decorators).into_extra_data(), (right).into_extra_data()];
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         AssignmentPattern(self.add_node(
             span,
             NodeKind::AssignmentPattern,
@@ -4589,7 +4581,7 @@ impl<'a> Ast<'a> {
                         as u128)
                         << 40usize)
                     | ((optional as u32 as u128) << 0usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -4597,12 +4589,12 @@ impl<'a> Ast<'a> {
     pub fn binding_rest_element(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         argument: BindingPattern,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
     ) -> BindingRestElement {
-        let _f0 = self.add_extra(decorators.to_extra_data(self));
+        let _f0 = self.add_extra(decorators);
         BindingRestElement(self.add_node(
             span,
             NodeKind::BindingRestElement,
@@ -4621,14 +4613,14 @@ impl<'a> Ast<'a> {
     pub fn array_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
-        elements: TypedSubRange<Option<BindingPattern>>,
+        decorators: SubRange<Decorator>,
+        elements: SubRange<Option<BindingPattern>>,
         rest: Option<BindingRestElement>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
     ) -> ArrayPattern {
-        let _extra_data = [decorators.to_extra_data(self), elements.to_extra_data(self)];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data = [(decorators).into_extra_data(), (elements).into_extra_data()];
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         ArrayPattern(self.add_node(
             span,
             NodeKind::ArrayPattern,
@@ -4640,7 +4632,7 @@ impl<'a> Ast<'a> {
                         as u128)
                         << 40usize)
                     | ((optional as u32 as u128) << 0usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -4648,17 +4640,17 @@ impl<'a> Ast<'a> {
     pub fn object_pattern(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
-        properties: TypedSubRange<BindingProperty>,
+        decorators: SubRange<Decorator>,
+        properties: SubRange<BindingProperty>,
         rest: Option<BindingRestElement>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
     ) -> ObjectPattern {
         let _extra_data = [
-            decorators.to_extra_data(self),
-            properties.to_extra_data(self),
+            (decorators).into_extra_data(),
+            (properties).into_extra_data(),
         ];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         ObjectPattern(self.add_node(
             span,
             NodeKind::ObjectPattern,
@@ -4670,7 +4662,7 @@ impl<'a> Ast<'a> {
                         as u128)
                         << 40usize)
                     | ((optional as u32 as u128) << 0usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -4812,7 +4804,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         kind: VariableKind,
-        declarators: TypedSubRange<VariableDeclarator>,
+        declarators: SubRange<VariableDeclarator>,
         declare: bool,
     ) -> VariableDeclaration {
         VariableDeclaration(self.add_node(
@@ -4821,7 +4813,7 @@ impl<'a> Ast<'a> {
             NodePayload(
                 0u128
                     | ((kind as u32 as u128) << 64usize)
-                    | ((declarators.to_extra_data(self).raw() as u128) << 0usize)
+                    | ((declarators.into_extra_data().raw() as u128) << 0usize)
                     | ((declare as u32 as u128) << 72usize),
             ),
         ))
@@ -4871,7 +4863,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         discriminant: Expr,
-        cases: TypedSubRange<SwitchCase>,
+        cases: SubRange<SwitchCase>,
     ) -> SwitchStatement {
         SwitchStatement(self.add_node(
             span,
@@ -4879,7 +4871,7 @@ impl<'a> Ast<'a> {
             NodePayload(
                 0u128
                     | ((discriminant.node_id().index() as u32 as u128) << 64usize)
-                    | ((cases.to_extra_data(self).raw() as u128) << 0usize),
+                    | ((cases.into_extra_data().raw() as u128) << 0usize),
             ),
         ))
     }
@@ -4888,7 +4880,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         test: Option<Expr>,
-        consequent: TypedSubRange<Stmt>,
+        consequent: SubRange<Stmt>,
     ) -> SwitchCase {
         SwitchCase(self.add_node(
             span,
@@ -4897,7 +4889,7 @@ impl<'a> Ast<'a> {
                 0u128
                     | ((test.map_or(u32::MAX, |node| node.node_id().index() as u32) as u128)
                         << 64usize)
-                    | ((consequent.to_extra_data(self).raw() as u128) << 0usize),
+                    | ((consequent.into_extra_data().raw() as u128) << 0usize),
             ),
         ))
     }
@@ -5102,7 +5094,7 @@ impl<'a> Ast<'a> {
             NodePayload(
                 0u128
                     | ((expression.node_id().index() as u32 as u128) << 64usize)
-                    | ((value.to_extra_data(self).raw() as u128) << 0usize),
+                    | ((value.into_extra_data().raw() as u128) << 0usize),
             ),
         ))
     }
@@ -5119,24 +5111,24 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         class_type: ClassType,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         id: Option<BindingIdentifier>,
         type_parameters: Option<TsTypeParameterDeclaration>,
         super_class: Option<Expr>,
         super_type_arguments: Option<TsTypeParameterInstantiation>,
-        implements: TypedSubRange<TsClassImplements>,
+        implements: SubRange<TsClassImplements>,
         body: ClassBody,
         r#abstract: bool,
         declare: bool,
     ) -> Class {
         let _extra_data = [
-            decorators.to_extra_data(self),
-            super_class.to_extra_data(self),
-            super_type_arguments.to_extra_data(self),
-            implements.to_extra_data(self),
-            body.to_extra_data(self),
+            (decorators).into_extra_data(),
+            (super_class).into_extra_data(),
+            (super_type_arguments).into_extra_data(),
+            (implements).into_extra_data(),
+            (body).into_extra_data(),
         ];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         Class(self.add_node(
             span,
             NodeKind::Class,
@@ -5150,23 +5142,23 @@ impl<'a> Ast<'a> {
                         << 56usize)
                     | ((r#abstract as u32 as u128) << 8usize)
                     | ((declare as u32 as u128) << 16usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
     #[inline]
-    pub fn class_body(&mut self, span: Span, body: TypedSubRange<ClassElement>) -> ClassBody {
+    pub fn class_body(&mut self, span: Span, body: SubRange<ClassElement>) -> ClassBody {
         ClassBody(self.add_node(
             span,
             NodeKind::ClassBody,
-            NodePayload(0u128 | ((body.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((body.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
     pub fn method_definition(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         key: PropertyKey,
         value: Function,
         kind: MethodDefinitionKind,
@@ -5177,8 +5169,8 @@ impl<'a> Ast<'a> {
         r#abstract: bool,
         accessibility: Accessibility,
     ) -> MethodDefinition {
-        let _extra_data = [decorators.to_extra_data(self), value.to_extra_data(self)];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data = [(decorators).into_extra_data(), (value).into_extra_data()];
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         MethodDefinition(self.add_node(
             span,
             NodeKind::MethodDefinition,
@@ -5192,7 +5184,7 @@ impl<'a> Ast<'a> {
                     | ((optional as u32 as u128) << 32usize)
                     | ((r#abstract as u32 as u128) << 40usize)
                     | ((accessibility as u32 as u128) << 48usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -5200,7 +5192,7 @@ impl<'a> Ast<'a> {
     pub fn property_definition(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         key: PropertyKey,
         type_annotation: Option<TsTypeAnnotation>,
         value: Option<Expr>,
@@ -5216,12 +5208,12 @@ impl<'a> Ast<'a> {
         accessibility: Accessibility,
     ) -> PropertyDefinition {
         let _extra_data = [
-            decorators.to_extra_data(self),
-            key.to_extra_data(self),
-            type_annotation.to_extra_data(self),
-            value.to_extra_data(self),
+            (decorators).into_extra_data(),
+            (key).into_extra_data(),
+            (type_annotation).into_extra_data(),
+            (value).into_extra_data(),
         ];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         PropertyDefinition(self.add_node(
             span,
             NodeKind::PropertyDefinition,
@@ -5237,16 +5229,16 @@ impl<'a> Ast<'a> {
                     | ((readonly as u32 as u128) << 56usize)
                     | ((r#abstract as u32 as u128) << 64usize)
                     | ((accessibility as u32 as u128) << 72usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
     #[inline]
-    pub fn static_block(&mut self, span: Span, body: TypedSubRange<Stmt>) -> StaticBlock {
+    pub fn static_block(&mut self, span: Span, body: SubRange<Stmt>) -> StaticBlock {
         StaticBlock(self.add_node(
             span,
             NodeKind::StaticBlock,
-            NodePayload(0u128 | ((body.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((body.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -5263,11 +5255,11 @@ impl<'a> Ast<'a> {
         r#async: bool,
     ) -> Function {
         let _extra_data = [
-            params.to_extra_data(self),
-            return_type.to_extra_data(self),
-            body.to_extra_data(self),
+            (params).into_extra_data(),
+            (return_type).into_extra_data(),
+            (body).into_extra_data(),
         ];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         Function(self.add_node(
             span,
             NodeKind::Function,
@@ -5281,7 +5273,7 @@ impl<'a> Ast<'a> {
                         << 56usize)
                     | ((generator as u32 as u128) << 8usize)
                     | ((r#async as u32 as u128) << 16usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -5289,25 +5281,25 @@ impl<'a> Ast<'a> {
     pub fn function_body(
         &mut self,
         span: Span,
-        directives: TypedSubRange<Directive>,
-        body: TypedSubRange<Stmt>,
+        directives: SubRange<Directive>,
+        body: SubRange<Stmt>,
     ) -> FunctionBody {
         FunctionBody(self.add_node(
             span,
             NodeKind::FunctionBody,
             NodePayload(
                 0u128
-                    | ((directives.to_extra_data(self).raw() as u128) << 0usize)
-                    | ((body.to_extra_data(self).raw() as u128) << 64usize),
+                    | ((directives.into_extra_data().raw() as u128) << 0usize)
+                    | ((body.into_extra_data().raw() as u128) << 64usize),
             ),
         ))
     }
     #[inline]
-    pub fn block_statement(&mut self, span: Span, body: TypedSubRange<Stmt>) -> BlockStatement {
+    pub fn block_statement(&mut self, span: Span, body: SubRange<Stmt>) -> BlockStatement {
         BlockStatement(self.add_node(
             span,
             NodeKind::BlockStatement,
-            NodePayload(0u128 | ((body.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((body.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -5350,7 +5342,7 @@ impl<'a> Ast<'a> {
     pub fn formal_parameters(
         &mut self,
         span: Span,
-        items: TypedSubRange<FormalParameterItem>,
+        items: SubRange<FormalParameterItem>,
         rest: Option<BindingRestElement>,
         kind: FormalParameterKind,
     ) -> FormalParameters {
@@ -5359,7 +5351,7 @@ impl<'a> Ast<'a> {
             NodeKind::FormalParameters,
             NodePayload(
                 0u128
-                    | ((items.to_extra_data(self).raw() as u128) << 0usize)
+                    | ((items.into_extra_data().raw() as u128) << 0usize)
                     | ((rest.map_or(u32::MAX, |node| node.node_id().index() as u32) as u128)
                         << 64usize)
                     | ((kind as u32 as u128) << 96usize),
@@ -5382,24 +5374,24 @@ impl<'a> Ast<'a> {
     pub fn array_expression(
         &mut self,
         span: Span,
-        elements: TypedSubRange<Option<Argument>>,
+        elements: SubRange<Option<Argument>>,
     ) -> ArrayExpression {
         ArrayExpression(self.add_node(
             span,
             NodeKind::ArrayExpression,
-            NodePayload(0u128 | ((elements.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((elements.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
     pub fn object_expression(
         &mut self,
         span: Span,
-        properties: TypedSubRange<ObjectPropertyKind>,
+        properties: SubRange<ObjectPropertyKind>,
     ) -> ObjectExpression {
         ObjectExpression(self.add_node(
             span,
             NodeKind::ObjectExpression,
-            NodePayload(0u128 | ((properties.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((properties.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -5458,8 +5450,8 @@ impl<'a> Ast<'a> {
         return_type: Option<TsTypeAnnotation>,
         body: ArrowFunctionBody,
     ) -> ArrowFunctionExpression {
-        let _extra_data = [return_type.to_extra_data(self), body.to_extra_data(self)];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data = [(return_type).into_extra_data(), (body).into_extra_data()];
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         ArrowFunctionExpression(self.add_node(
             span,
             NodeKind::ArrowFunctionExpression,
@@ -5471,7 +5463,7 @@ impl<'a> Ast<'a> {
                         as u128)
                         << 16usize)
                     | ((params.node_id().index() as u32 as u128) << 48usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -5479,12 +5471,12 @@ impl<'a> Ast<'a> {
     pub fn sequence_expression(
         &mut self,
         span: Span,
-        expressions: TypedSubRange<Expr>,
+        expressions: SubRange<Expr>,
     ) -> SequenceExpression {
         SequenceExpression(self.add_node(
             span,
             NodeKind::SequenceExpression,
-            NodePayload(0u128 | ((expressions.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((expressions.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -5514,10 +5506,10 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
         optional: bool,
     ) -> CallExpression {
-        let _f0 = self.add_extra(arguments.to_extra_data(self));
+        let _f0 = self.add_extra(arguments);
         CallExpression(self.add_node(
             span,
             NodeKind::CallExpression,
@@ -5567,7 +5559,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
     ) -> NewExpression {
         NewExpression(self.add_node(
             span,
@@ -5578,7 +5570,7 @@ impl<'a> Ast<'a> {
                     | ((type_arguments.map_or(u32::MAX, |node| node.node_id().index() as u32)
                         as u128)
                         << 96usize)
-                    | ((arguments.to_extra_data(self).raw() as u128) << 0usize),
+                    | ((arguments.into_extra_data().raw() as u128) << 0usize),
             ),
         ))
     }
@@ -5634,7 +5626,7 @@ impl<'a> Ast<'a> {
         phase: Option<ImportPhase>,
         sync: bool,
     ) -> ImportExpression {
-        let _f0 = self.add_extra(phase.to_extra_data(self));
+        let _f0 = self.add_extra(phase);
         ImportExpression(self.add_node(
             span,
             NodeKind::ImportExpression,
@@ -5652,18 +5644,18 @@ impl<'a> Ast<'a> {
     pub fn import_declaration(
         &mut self,
         span: Span,
-        specifiers: TypedSubRange<ImportDeclarationSpecifier>,
+        specifiers: SubRange<ImportDeclarationSpecifier>,
         source: StringLiteral,
-        attributes: TypedSubRange<ImportAttribute>,
+        attributes: SubRange<ImportAttribute>,
         phase: Option<ImportPhase>,
         import_kind: ImportOrExportKind,
     ) -> ImportDeclaration {
         let _extra_data = [
-            specifiers.to_extra_data(self),
-            attributes.to_extra_data(self),
-            phase.to_extra_data(self),
+            (specifiers).into_extra_data(),
+            (attributes).into_extra_data(),
+            (phase).into_extra_data(),
         ];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         ImportDeclaration(self.add_node(
             span,
             NodeKind::ImportDeclaration,
@@ -5671,7 +5663,7 @@ impl<'a> Ast<'a> {
                 0u128
                     | ((source.node_id().index() as u32 as u128) << 8usize)
                     | ((import_kind as u32 as u128) << 0usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -5740,16 +5732,16 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         declaration: Option<Decl>,
-        specifiers: TypedSubRange<ExportSpecifier>,
+        specifiers: SubRange<ExportSpecifier>,
         source: Option<StringLiteral>,
-        attributes: TypedSubRange<ImportAttribute>,
+        attributes: SubRange<ImportAttribute>,
         export_kind: ImportOrExportKind,
     ) -> ExportNamedDeclaration {
         let _extra_data = [
-            specifiers.to_extra_data(self),
-            attributes.to_extra_data(self),
+            (specifiers).into_extra_data(),
+            (attributes).into_extra_data(),
         ];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         ExportNamedDeclaration(self.add_node(
             span,
             NodeKind::ExportNamedDeclaration,
@@ -5761,7 +5753,7 @@ impl<'a> Ast<'a> {
                     | ((source.map_or(u32::MAX, |node| node.node_id().index() as u32) as u128)
                         << 40usize)
                     | ((export_kind as u32 as u128) << 0usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -5783,10 +5775,10 @@ impl<'a> Ast<'a> {
         span: Span,
         exported: Option<ModuleExportName>,
         source: StringLiteral,
-        attributes: TypedSubRange<ImportAttribute>,
+        attributes: SubRange<ImportAttribute>,
         export_kind: ImportOrExportKind,
     ) -> ExportAllDeclaration {
-        let _f0 = self.add_extra(attributes.to_extra_data(self));
+        let _f0 = self.add_extra(attributes);
         ExportAllDeclaration(self.add_node(
             span,
             NodeKind::ExportAllDeclaration,
@@ -5824,7 +5816,7 @@ impl<'a> Ast<'a> {
         Hashbang(self.add_node(
             span,
             NodeKind::Hashbang,
-            NodePayload(0u128 | ((value.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((value.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -5926,8 +5918,8 @@ impl<'a> Ast<'a> {
     pub fn ts_type_ts_template_literal_type(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        types: TypedSubRange<TsType>,
+        quasis: SubRange<TemplateElement>,
+        types: SubRange<TsType>,
     ) -> TsType {
         TsType::TsTemplateLiteralType(self.ts_template_literal_type(span, quasis, types).into())
     }
@@ -5951,7 +5943,7 @@ impl<'a> Ast<'a> {
     pub fn ts_type_ts_tuple_type(
         &mut self,
         span: Span,
-        element_types: TypedSubRange<TsTupleElement>,
+        element_types: SubRange<TsTupleElement>,
     ) -> TsType {
         TsType::TsTupleType(self.ts_tuple_type(span, element_types).into())
     }
@@ -5992,15 +5984,11 @@ impl<'a> Ast<'a> {
         TsType::TsJsDocUnknownType(self.ts_js_doc_unknown_type(span).into())
     }
     #[inline]
-    pub fn ts_type_ts_union_type(&mut self, span: Span, types: TypedSubRange<TsType>) -> TsType {
+    pub fn ts_type_ts_union_type(&mut self, span: Span, types: SubRange<TsType>) -> TsType {
         TsType::TsUnionType(self.ts_union_type(span, types).into())
     }
     #[inline]
-    pub fn ts_type_ts_intersection_type(
-        &mut self,
-        span: Span,
-        types: TypedSubRange<TsType>,
-    ) -> TsType {
+    pub fn ts_type_ts_intersection_type(&mut self, span: Span, types: SubRange<TsType>) -> TsType {
         TsType::TsIntersectionType(self.ts_intersection_type(span, types).into())
     }
     #[inline]
@@ -6081,7 +6069,7 @@ impl<'a> Ast<'a> {
     pub fn ts_type_ts_type_literal(
         &mut self,
         span: Span,
-        members: TypedSubRange<TsTypeElement>,
+        members: SubRange<TsTypeElement>,
     ) -> TsType {
         TsType::TsTypeLiteral(self.ts_type_literal(span, members).into())
     }
@@ -6143,7 +6131,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         name: AstUtf8,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
     ) -> TsQualifiedNameLeft {
@@ -6251,8 +6239,8 @@ impl<'a> Ast<'a> {
     pub fn ts_literal_template_literal(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        expressions: TypedSubRange<Expr>,
+        quasis: SubRange<TemplateElement>,
+        expressions: SubRange<Expr>,
     ) -> TsLiteral {
         TsLiteral::TemplateLiteral(self.template_literal(span, quasis, expressions).into())
     }
@@ -6382,8 +6370,8 @@ impl<'a> Ast<'a> {
     pub fn ts_tuple_element_ts_type_ts_template_literal_type(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        types: TypedSubRange<TsType>,
+        quasis: SubRange<TemplateElement>,
+        types: SubRange<TsType>,
     ) -> TsTupleElement {
         TsTupleElement::TsType(TsType::TsTemplateLiteralType(
             self.ts_template_literal_type(span, quasis, types).into(),
@@ -6415,7 +6403,7 @@ impl<'a> Ast<'a> {
     pub fn ts_tuple_element_ts_type_ts_tuple_type(
         &mut self,
         span: Span,
-        element_types: TypedSubRange<TsTupleElement>,
+        element_types: SubRange<TsTupleElement>,
     ) -> TsTupleElement {
         TsTupleElement::TsType(TsType::TsTupleType(
             self.ts_tuple_type(span, element_types).into(),
@@ -6478,7 +6466,7 @@ impl<'a> Ast<'a> {
     pub fn ts_tuple_element_ts_type_ts_union_type(
         &mut self,
         span: Span,
-        types: TypedSubRange<TsType>,
+        types: SubRange<TsType>,
     ) -> TsTupleElement {
         TsTupleElement::TsType(TsType::TsUnionType(self.ts_union_type(span, types).into()))
     }
@@ -6486,7 +6474,7 @@ impl<'a> Ast<'a> {
     pub fn ts_tuple_element_ts_type_ts_intersection_type(
         &mut self,
         span: Span,
-        types: TypedSubRange<TsType>,
+        types: SubRange<TsType>,
     ) -> TsTupleElement {
         TsTupleElement::TsType(TsType::TsIntersectionType(
             self.ts_intersection_type(span, types).into(),
@@ -6582,7 +6570,7 @@ impl<'a> Ast<'a> {
     pub fn ts_tuple_element_ts_type_ts_type_literal(
         &mut self,
         span: Span,
-        members: TypedSubRange<TsTypeElement>,
+        members: SubRange<TsTypeElement>,
     ) -> TsTupleElement {
         TsTupleElement::TsType(TsType::TsTypeLiteral(
             self.ts_type_literal(span, members).into(),
@@ -6696,7 +6684,7 @@ impl<'a> Ast<'a> {
     pub fn ts_type_element_ts_index_signature(
         &mut self,
         span: Span,
-        parameters: TypedSubRange<BindingIdentifier>,
+        parameters: SubRange<BindingIdentifier>,
         type_annotation: TsTypeAnnotation,
         readonly: bool,
         r#static: bool,
@@ -6739,8 +6727,8 @@ impl<'a> Ast<'a> {
     pub fn ts_enum_member_name_template_literal(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        expressions: TypedSubRange<Expr>,
+        quasis: SubRange<TemplateElement>,
+        expressions: SubRange<Expr>,
     ) -> TsEnumMemberName {
         TsEnumMemberName::TemplateLiteral(self.template_literal(span, quasis, expressions).into())
     }
@@ -6832,8 +6820,8 @@ impl<'a> Ast<'a> {
     pub fn ts_enum_member_name_expr_template_literal(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        expressions: TypedSubRange<Expr>,
+        quasis: SubRange<TemplateElement>,
+        expressions: SubRange<Expr>,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::TemplateLiteral(
             self.template_literal(span, quasis, expressions).into(),
@@ -6917,7 +6905,7 @@ impl<'a> Ast<'a> {
     pub fn ts_enum_member_name_expr_sequence_expression(
         &mut self,
         span: Span,
-        expressions: TypedSubRange<Expr>,
+        expressions: SubRange<Expr>,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::SequenceExpression(
             self.sequence_expression(span, expressions).into(),
@@ -6943,7 +6931,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
         optional: bool,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::CallExpression(
@@ -6967,7 +6955,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::NewExpression(
             self.new_expression(span, callee, type_arguments, arguments)
@@ -7015,7 +7003,7 @@ impl<'a> Ast<'a> {
     pub fn ts_enum_member_name_expr_array_expression(
         &mut self,
         span: Span,
-        elements: TypedSubRange<Option<Argument>>,
+        elements: SubRange<Option<Argument>>,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::ArrayExpression(
             self.array_expression(span, elements).into(),
@@ -7025,7 +7013,7 @@ impl<'a> Ast<'a> {
     pub fn ts_enum_member_name_expr_object_expression(
         &mut self,
         span: Span,
-        properties: TypedSubRange<ObjectPropertyKind>,
+        properties: SubRange<ObjectPropertyKind>,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::ObjectExpression(
             self.object_expression(span, properties).into(),
@@ -7074,12 +7062,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         class_type: ClassType,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         id: Option<BindingIdentifier>,
         type_parameters: Option<TsTypeParameterDeclaration>,
         super_class: Option<Expr>,
         super_type_arguments: Option<TsTypeParameterInstantiation>,
-        implements: TypedSubRange<TsClassImplements>,
+        implements: SubRange<TsClassImplements>,
         body: ClassBody,
         r#abstract: bool,
         declare: bool,
@@ -7209,7 +7197,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_element: JsxOpeningElement,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_element: Option<JsxClosingElement>,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::JsxElement(
@@ -7222,7 +7210,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_fragment: JsxOpeningFragment,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_fragment: JsxClosingFragment,
     ) -> TsEnumMemberName {
         TsEnumMemberName::Expr(Expr::JsxFragment(
@@ -7235,7 +7223,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         name: AstUtf8,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         type_annotation: Option<TsTypeAnnotation>,
         optional: bool,
     ) -> TsModuleName {
@@ -7266,8 +7254,8 @@ impl<'a> Ast<'a> {
     pub fn ts_module_body_ts_module_block(
         &mut self,
         span: Span,
-        directives: TypedSubRange<Directive>,
-        body: TypedSubRange<Stmt>,
+        directives: SubRange<Directive>,
+        body: SubRange<Stmt>,
     ) -> TsModuleBody {
         TsModuleBody::TsModuleBlock(self.ts_module_block(span, directives, body).into())
     }
@@ -7328,8 +7316,8 @@ impl<'a> Ast<'a> {
         r#async: bool,
         declare: bool,
     ) -> TsFunction {
-        let _extra_data = [params.to_extra_data(self), return_type.to_extra_data(self)];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data = [(params).into_extra_data(), (return_type).into_extra_data()];
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         TsFunction(self.add_node(
             span,
             NodeKind::TsFunction,
@@ -7343,7 +7331,7 @@ impl<'a> Ast<'a> {
                     | ((generator as u32 as u128) << 0usize)
                     | ((r#async as u32 as u128) << 8usize)
                     | ((declare as u32 as u128) << 16usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -7351,7 +7339,7 @@ impl<'a> Ast<'a> {
     pub fn ts_method_definition(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         key: PropertyKey,
         value: TsFunction,
         kind: MethodDefinitionKind,
@@ -7362,8 +7350,8 @@ impl<'a> Ast<'a> {
         r#abstract: bool,
         accessibility: Accessibility,
     ) -> TsMethodDefinition {
-        let _extra_data = [decorators.to_extra_data(self), value.to_extra_data(self)];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data = [(decorators).into_extra_data(), (value).into_extra_data()];
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         TsMethodDefinition(self.add_node(
             span,
             NodeKind::TsMethodDefinition,
@@ -7377,7 +7365,7 @@ impl<'a> Ast<'a> {
                     | ((optional as u32 as u128) << 32usize)
                     | ((r#abstract as u32 as u128) << 40usize)
                     | ((accessibility as u32 as u128) << 48usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -7556,24 +7544,24 @@ impl<'a> Ast<'a> {
     pub fn ts_type_parameter_declaration(
         &mut self,
         span: Span,
-        params: TypedSubRange<TsTypeParameter>,
+        params: SubRange<TsTypeParameter>,
     ) -> TsTypeParameterDeclaration {
         TsTypeParameterDeclaration(self.add_node(
             span,
             NodeKind::TsTypeParameterDeclaration,
-            NodePayload(0u128 | ((params.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((params.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
     pub fn ts_type_parameter_instantiation(
         &mut self,
         span: Span,
-        params: TypedSubRange<TsType>,
+        params: SubRange<TsType>,
     ) -> TsTypeParameterInstantiation {
         TsTypeParameterInstantiation(self.add_node(
             span,
             NodeKind::TsTypeParameterInstantiation,
-            NodePayload(0u128 | ((params.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((params.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -7588,16 +7576,16 @@ impl<'a> Ast<'a> {
     pub fn ts_template_literal_type(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        types: TypedSubRange<TsType>,
+        quasis: SubRange<TemplateElement>,
+        types: SubRange<TsType>,
     ) -> TsTemplateLiteralType {
         TsTemplateLiteralType(self.add_node(
             span,
             NodeKind::TsTemplateLiteralType,
             NodePayload(
                 0u128
-                    | ((quasis.to_extra_data(self).raw() as u128) << 0usize)
-                    | ((types.to_extra_data(self).raw() as u128) << 64usize),
+                    | ((quasis.into_extra_data().raw() as u128) << 0usize)
+                    | ((types.into_extra_data().raw() as u128) << 64usize),
             ),
         ))
     }
@@ -7630,12 +7618,12 @@ impl<'a> Ast<'a> {
     pub fn ts_tuple_type(
         &mut self,
         span: Span,
-        element_types: TypedSubRange<TsTupleElement>,
+        element_types: SubRange<TsTupleElement>,
     ) -> TsTupleType {
         TsTupleType(self.add_node(
             span,
             NodeKind::TsTupleType,
-            NodePayload(0u128 | ((element_types.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((element_types.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -7712,23 +7700,23 @@ impl<'a> Ast<'a> {
         TsJsDocUnknownType(self.add_node(span, NodeKind::TsJsDocUnknownType, NodePayload(0)))
     }
     #[inline]
-    pub fn ts_union_type(&mut self, span: Span, types: TypedSubRange<TsType>) -> TsUnionType {
+    pub fn ts_union_type(&mut self, span: Span, types: SubRange<TsType>) -> TsUnionType {
         TsUnionType(self.add_node(
             span,
             NodeKind::TsUnionType,
-            NodePayload(0u128 | ((types.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((types.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
     pub fn ts_intersection_type(
         &mut self,
         span: Span,
-        types: TypedSubRange<TsType>,
+        types: SubRange<TsType>,
     ) -> TsIntersectionType {
         TsIntersectionType(self.add_node(
             span,
             NodeKind::TsIntersectionType,
-            NodePayload(0u128 | ((types.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((types.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -7858,12 +7846,12 @@ impl<'a> Ast<'a> {
     pub fn ts_type_literal(
         &mut self,
         span: Span,
-        members: TypedSubRange<TsTypeElement>,
+        members: SubRange<TsTypeElement>,
     ) -> TsTypeLiteral {
         TsTypeLiteral(self.add_node(
             span,
             NodeKind::TsTypeLiteral,
-            NodePayload(0u128 | ((members.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((members.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -7878,10 +7866,10 @@ impl<'a> Ast<'a> {
         readonly: TsMappedTypeModifier,
     ) -> TsMappedType {
         let _extra_data = [
-            name_type.to_extra_data(self),
-            type_annotation.to_extra_data(self),
+            (name_type).into_extra_data(),
+            (type_annotation).into_extra_data(),
         ];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         TsMappedType(self.add_node(
             span,
             NodeKind::TsMappedType,
@@ -7891,7 +7879,7 @@ impl<'a> Ast<'a> {
                     | ((constraint.node_id().index() as u32 as u128) << 48usize)
                     | ((optional as u32 as u128) << 0usize)
                     | ((readonly as u32 as u128) << 8usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -7932,8 +7920,8 @@ impl<'a> Ast<'a> {
         computed: bool,
         optional: bool,
     ) -> TsMethodSignature {
-        let _extra_data = [params.to_extra_data(self), return_type.to_extra_data(self)];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data = [(params).into_extra_data(), (return_type).into_extra_data()];
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         TsMethodSignature(self.add_node(
             span,
             NodeKind::TsMethodSignature,
@@ -7946,7 +7934,7 @@ impl<'a> Ast<'a> {
                     | ((kind as u32 as u128) << 0usize)
                     | ((computed as u32 as u128) << 8usize)
                     | ((optional as u32 as u128) << 16usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -8000,7 +7988,7 @@ impl<'a> Ast<'a> {
     pub fn ts_index_signature(
         &mut self,
         span: Span,
-        parameters: TypedSubRange<BindingIdentifier>,
+        parameters: SubRange<BindingIdentifier>,
         type_annotation: TsTypeAnnotation,
         readonly: bool,
         r#static: bool,
@@ -8010,7 +7998,7 @@ impl<'a> Ast<'a> {
             NodeKind::TsIndexSignature,
             NodePayload(
                 0u128
-                    | ((parameters.to_extra_data(self).raw() as u128) << 0usize)
+                    | ((parameters.into_extra_data().raw() as u128) << 0usize)
                     | ((type_annotation.node_id().index() as u32 as u128) << 64usize)
                     | ((readonly as u32 as u128) << 96usize)
                     | ((r#static as u32 as u128) << 104usize),
@@ -8046,12 +8034,12 @@ impl<'a> Ast<'a> {
         span: Span,
         id: BindingIdentifier,
         type_parameters: Option<TsTypeParameterDeclaration>,
-        extends: TypedSubRange<TsInterfaceHeritage>,
+        extends: SubRange<TsInterfaceHeritage>,
         body: TsInterfaceBody,
         declare: bool,
     ) -> TsInterfaceDeclaration {
-        let _extra_data = [extends.to_extra_data(self), body.to_extra_data(self)];
-        let _extra_data_range = self.add_extra_data_sub_range(&_extra_data);
+        let _extra_data = [(extends).into_extra_data(), (body).into_extra_data()];
+        let _extra_data_start = self.add_extra_data_slice(&_extra_data);
         TsInterfaceDeclaration(self.add_node(
             span,
             NodeKind::TsInterfaceDeclaration,
@@ -8062,7 +8050,7 @@ impl<'a> Ast<'a> {
                         as u128)
                         << 40usize)
                     | ((declare as u32 as u128) << 0usize)
-                    | ((_extra_data_range.start.index() as u128) << 96usize),
+                    | ((_extra_data_start.index() as u128) << 96usize),
             ),
         ))
     }
@@ -8070,12 +8058,12 @@ impl<'a> Ast<'a> {
     pub fn ts_interface_body(
         &mut self,
         span: Span,
-        body: TypedSubRange<TsTypeElement>,
+        body: SubRange<TsTypeElement>,
     ) -> TsInterfaceBody {
         TsInterfaceBody(self.add_node(
             span,
             NodeKind::TsInterfaceBody,
-            NodePayload(0u128 | ((body.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((body.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -8138,11 +8126,11 @@ impl<'a> Ast<'a> {
         ))
     }
     #[inline]
-    pub fn ts_enum_body(&mut self, span: Span, members: TypedSubRange<TsEnumMember>) -> TsEnumBody {
+    pub fn ts_enum_body(&mut self, span: Span, members: SubRange<TsEnumMember>) -> TsEnumBody {
         TsEnumBody(self.add_node(
             span,
             NodeKind::TsEnumBody,
-            NodePayload(0u128 | ((members.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((members.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -8192,16 +8180,16 @@ impl<'a> Ast<'a> {
     pub fn ts_module_block(
         &mut self,
         span: Span,
-        directives: TypedSubRange<Directive>,
-        body: TypedSubRange<Stmt>,
+        directives: SubRange<Directive>,
+        body: SubRange<Stmt>,
     ) -> TsModuleBlock {
         TsModuleBlock(self.add_node(
             span,
             NodeKind::TsModuleBlock,
             NodePayload(
                 0u128
-                    | ((directives.to_extra_data(self).raw() as u128) << 0usize)
-                    | ((body.to_extra_data(self).raw() as u128) << 64usize),
+                    | ((directives.into_extra_data().raw() as u128) << 0usize)
+                    | ((body.into_extra_data().raw() as u128) << 64usize),
             ),
         ))
     }
@@ -8228,7 +8216,7 @@ impl<'a> Ast<'a> {
     pub fn ts_parameter_property(
         &mut self,
         span: Span,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         parameter: BindingPattern,
         r#override: bool,
         readonly: bool,
@@ -8239,7 +8227,7 @@ impl<'a> Ast<'a> {
             NodeKind::TsParameterProperty,
             NodePayload(
                 0u128
-                    | ((decorators.to_extra_data(self).raw() as u128) << 0usize)
+                    | ((decorators.into_extra_data().raw() as u128) << 0usize)
                     | ((parameter.node_id().index() as u32 as u128) << 64usize)
                     | ((r#override as u32 as u128) << 96usize)
                     | ((readonly as u32 as u128) << 104usize)
@@ -8492,7 +8480,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_element: JsxOpeningElement,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_element: Option<JsxClosingElement>,
     ) -> JsxAttributeValue {
         JsxAttributeValue::JsxElement(
@@ -8505,7 +8493,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_fragment: JsxOpeningFragment,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_fragment: JsxClosingFragment,
     ) -> JsxAttributeValue {
         JsxAttributeValue::JsxFragment(
@@ -8601,8 +8589,8 @@ impl<'a> Ast<'a> {
     pub fn jsx_expression_expr_template_literal(
         &mut self,
         span: Span,
-        quasis: TypedSubRange<TemplateElement>,
-        expressions: TypedSubRange<Expr>,
+        quasis: SubRange<TemplateElement>,
+        expressions: SubRange<Expr>,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::TemplateLiteral(
             self.template_literal(span, quasis, expressions).into(),
@@ -8686,7 +8674,7 @@ impl<'a> Ast<'a> {
     pub fn jsx_expression_expr_sequence_expression(
         &mut self,
         span: Span,
-        expressions: TypedSubRange<Expr>,
+        expressions: SubRange<Expr>,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::SequenceExpression(
             self.sequence_expression(span, expressions).into(),
@@ -8712,7 +8700,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
         optional: bool,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::CallExpression(
@@ -8736,7 +8724,7 @@ impl<'a> Ast<'a> {
         span: Span,
         callee: Expr,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        arguments: TypedSubRange<Argument>,
+        arguments: SubRange<Argument>,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::NewExpression(
             self.new_expression(span, callee, type_arguments, arguments)
@@ -8784,7 +8772,7 @@ impl<'a> Ast<'a> {
     pub fn jsx_expression_expr_array_expression(
         &mut self,
         span: Span,
-        elements: TypedSubRange<Option<Argument>>,
+        elements: SubRange<Option<Argument>>,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::ArrayExpression(
             self.array_expression(span, elements).into(),
@@ -8794,7 +8782,7 @@ impl<'a> Ast<'a> {
     pub fn jsx_expression_expr_object_expression(
         &mut self,
         span: Span,
-        properties: TypedSubRange<ObjectPropertyKind>,
+        properties: SubRange<ObjectPropertyKind>,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::ObjectExpression(
             self.object_expression(span, properties).into(),
@@ -8843,12 +8831,12 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         class_type: ClassType,
-        decorators: TypedSubRange<Decorator>,
+        decorators: SubRange<Decorator>,
         id: Option<BindingIdentifier>,
         type_parameters: Option<TsTypeParameterDeclaration>,
         super_class: Option<Expr>,
         super_type_arguments: Option<TsTypeParameterInstantiation>,
-        implements: TypedSubRange<TsClassImplements>,
+        implements: SubRange<TsClassImplements>,
         body: ClassBody,
         r#abstract: bool,
         declare: bool,
@@ -8978,7 +8966,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_element: JsxOpeningElement,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_element: Option<JsxClosingElement>,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::JsxElement(
@@ -8991,7 +8979,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_fragment: JsxOpeningFragment,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_fragment: JsxClosingFragment,
     ) -> JsxExpression {
         JsxExpression::Expr(Expr::JsxFragment(
@@ -9024,7 +9012,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_element: JsxOpeningElement,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_element: Option<JsxClosingElement>,
     ) -> JsxChild {
         JsxChild::JsxElement(
@@ -9037,7 +9025,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_fragment: JsxOpeningFragment,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_fragment: JsxClosingFragment,
     ) -> JsxChild {
         JsxChild::JsxFragment(
@@ -9050,7 +9038,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_element: JsxOpeningElement,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_element: Option<JsxClosingElement>,
     ) -> JsxElement {
         JsxElement(self.add_node(
@@ -9059,7 +9047,7 @@ impl<'a> Ast<'a> {
             NodePayload(
                 0u128
                     | ((opening_element.node_id().index() as u32 as u128) << 64usize)
-                    | ((children.to_extra_data(self).raw() as u128) << 0usize)
+                    | ((children.into_extra_data().raw() as u128) << 0usize)
                     | ((closing_element.map_or(u32::MAX, |node| node.node_id().index() as u32)
                         as u128)
                         << 96usize),
@@ -9072,10 +9060,10 @@ impl<'a> Ast<'a> {
         span: Span,
         name: JsxElementName,
         type_arguments: Option<TsTypeParameterInstantiation>,
-        attributes: TypedSubRange<JsxAttributeItem>,
+        attributes: SubRange<JsxAttributeItem>,
         self_closing: bool,
     ) -> JsxOpeningElement {
-        let _f0 = self.add_extra(attributes.to_extra_data(self));
+        let _f0 = self.add_extra(attributes);
         JsxOpeningElement(self.add_node(
             span,
             NodeKind::JsxOpeningElement,
@@ -9103,7 +9091,7 @@ impl<'a> Ast<'a> {
         &mut self,
         span: Span,
         opening_fragment: JsxOpeningFragment,
-        children: TypedSubRange<JsxChild>,
+        children: SubRange<JsxChild>,
         closing_fragment: JsxClosingFragment,
     ) -> JsxFragment {
         JsxFragment(self.add_node(
@@ -9112,7 +9100,7 @@ impl<'a> Ast<'a> {
             NodePayload(
                 0u128
                     | ((opening_fragment.node_id().index() as u32 as u128) << 64usize)
-                    | ((children.to_extra_data(self).raw() as u128) << 0usize)
+                    | ((children.into_extra_data().raw() as u128) << 0usize)
                     | ((closing_fragment.node_id().index() as u32 as u128) << 96usize),
             ),
         ))
@@ -9130,7 +9118,7 @@ impl<'a> Ast<'a> {
         JsxIdentifier(self.add_node(
             span,
             NodeKind::JsxIdentifier,
-            NodePayload(0u128 | ((name.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((name.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]
@@ -9214,7 +9202,7 @@ impl<'a> Ast<'a> {
         JsxText(self.add_node(
             span,
             NodeKind::JsxText,
-            NodePayload(0u128 | ((value.to_extra_data(self).raw() as u128) << 0usize)),
+            NodePayload(0u128 | ((value.into_extra_data().raw() as u128) << 0usize)),
         ))
     }
     #[inline]

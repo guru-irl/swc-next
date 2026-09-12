@@ -1,4 +1,4 @@
-use std::mem::{align_of, offset_of, size_of};
+use std::mem::{align_of, size_of};
 
 use crate::{Expr, ExtraData, ExtraDataId, NodeId, NodePayload, Program, Stmt, SubRange};
 
@@ -7,10 +7,8 @@ const _: () = {
     assert!(align_of::<NodeId>() == align_of::<u32>());
     assert!(size_of::<ExtraDataId>() == size_of::<u32>());
     assert!(align_of::<ExtraDataId>() == align_of::<u32>());
-    assert!(size_of::<SubRange>() == 8);
-    assert!(align_of::<SubRange>() == align_of::<u32>());
-    assert!(offset_of!(SubRange, start) == 0);
-    assert!(offset_of!(SubRange, end) == 4);
+    assert!(size_of::<SubRange<()>>() == 8);
+    assert!(align_of::<SubRange<()>>() == align_of::<u32>());
     assert!(size_of::<NodePayload>() == 16);
     assert!(align_of::<NodePayload>() == align_of::<u128>());
     assert!(size_of::<ExtraData>() == 8);

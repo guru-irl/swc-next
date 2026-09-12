@@ -13,23 +13,21 @@ mod visit;
 mod generated {
     mod ast_builder;
     mod ast_clone_in;
-    pub(crate) mod ast_extra_compact;
     pub mod ast_node;
     mod ast_property;
     pub(crate) mod ast_visitor;
 }
 
 use oxc_index::Idx;
-use std::marker::PhantomData;
 use swc_next_allocator::{Allocator, hash_map::HashMap as ArenaHashMap, vec::Vec as ArenaVec};
 
 pub use ast::*;
 pub use comment::*;
 pub use derive::*;
 pub use diagnostic::*;
-pub use generated::ast_node::{NodeKind, NodeKindData};
+pub use generated::ast_node::*;
 pub use generated::ast_visitor::*;
-pub use node_id::{AstNode, ExtraDataCompact, ExtraDataId, NodeId, SubRange, TypedSubRange};
+pub use node_id::{AstNode, ExtraDataId, ExtraDataValue, NodeId, SubRange};
 pub use semantic::{ReferenceId, ScopeId, SymbolId};
 pub use strings::{AstUtf8, AstWtf8};
 pub use syntax::*;
@@ -81,26 +79,16 @@ pub struct NodePayload(pub(crate) u128);
 
 /// Compact values stored in the flattening AST's extra-data table.
 ///
-/// The AST schema determines the logical type of each value, so no runtime
-/// discriminant is stored. Little-endian targets retain the original native
-/// typed views used by hot traversal paths.
-#[cfg(target_endian = "little")]
+/// The AST schema supplies the type information, so the table stores only its
+/// 64-bit representation without a runtime discriminant. The low and high
+/// words are stored in that order, each in native byte order.
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub union ExtraData {
     node_id: NodeId,
-    sub_range: SubRange,
-    other: u64,
+    sub_range: SubRange<()>,
+    alignment: u64,
 }
-
-/// Compact values stored in the flattening AST's extra-data table.
-///
-/// On big-endian targets, numeric bit positions match the fixed little-endian
-/// FFI format. The AST schema determines the logical type of each value, so no
-/// runtime discriminant is stored.
-#[cfg(target_endian = "big")]
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct ExtraData(u64);
 
 impl<'a> Ast<'a> {
     #[inline]
@@ -217,50 +205,23 @@ impl<'a> Ast<'a> {
     }
 
     #[inline]
-    fn add_extra(&mut self, extra: ExtraData) -> ExtraDataId {
-        let id = self.next_extra_data_id();
-        self.extra_data.push(extra);
-        id
-    }
-
-    #[inline]
-    fn next_extra_data_id(&self) -> ExtraDataId {
-        let index = self.extra_data.len();
-        assert!(
-            index <= ExtraDataId::MAX,
-            "extra data index exceeds ExtraDataId range"
-        );
-        ExtraDataId::from_usize_unchecked(index)
-    }
-
-    #[inline]
-    pub fn add_typed_sub_range<N: ExtraDataCompact<'a>, I: IntoIterator<Item = N>>(
+    pub fn add_sub_range<N: ExtraDataValue, I: IntoIterator<Item = N>>(
         &mut self,
         iter: I,
-    ) -> TypedSubRange<N> {
+    ) -> SubRange<N> {
         let start = self.next_extra_data_id();
         for node in iter {
-            let data = node.to_extra_data(self);
+            let data = node.into_extra_data();
             self.extra_data.push(data);
         }
-        TypedSubRange {
-            inner: SubRange {
-                start,
-                end: self.next_extra_data_id(),
-            },
-            _phantom: PhantomData,
-        }
+        SubRange::new(start, self.next_extra_data_id())
     }
 
-    /// Append pre-encoded extra data as a single contiguous range.
-    pub fn add_extra_data_sub_range(&mut self, data: &[ExtraData]) -> SubRange {
+    /// Append pre-encoded extra data and return its starting index.
+    fn add_extra_data_slice(&mut self, data: &[ExtraData]) -> ExtraDataId {
         let start = self.next_extra_data_id();
-        let end = start.index() + data.len();
         self.extra_data.extend_from_slice_copy(data);
-        SubRange {
-            start,
-            end: ExtraDataId::from_usize_unchecked(end),
-        }
+        start
     }
 
     #[inline]
@@ -461,6 +422,26 @@ impl<'a> Ast<'a> {
         assert!(extra_data_len <= self.extra_data.len());
         self.nodes.truncate(nodes_len);
         self.extra_data.truncate(extra_data_len);
+    }
+}
+
+#[doc(hidden)]
+impl Ast<'_> {
+    #[inline]
+    fn add_extra<T: ExtraDataValue>(&mut self, value: T) -> ExtraDataId {
+        let id = self.next_extra_data_id();
+        self.extra_data.push(value.into_extra_data());
+        id
+    }
+
+    #[inline]
+    fn next_extra_data_id(&self) -> ExtraDataId {
+        let index = self.extra_data.len();
+        assert!(
+            index <= ExtraDataId::MAX,
+            "extra data index exceeds ExtraDataId range"
+        );
+        ExtraDataId::from_usize_unchecked(index)
     }
 }
 

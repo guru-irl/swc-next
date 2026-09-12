@@ -1,7 +1,5 @@
 use swc_next_ast_macros::ast;
 
-use super::js::*;
-
 #[ast(repr)]
 pub enum JsxElementName {
     JsxIdentifier(JsxIdentifier),
@@ -66,7 +64,7 @@ pub struct JsxElement {
     /// `jsx_opening_element`
     opening_element: JsxOpeningElement,
     /// `jsx_text`, `jsx_expression_container`, `jsx_spread_child`, `jsx_element`, or `jsx_fragment`
-    children: Vec<JsxChild>,
+    children: SubRange<JsxChild>,
     /// `jsx_closing_element`. `None` for self-closing tags like `<Foo />`.
     closing_element: Option<JsxClosingElement>,
 }
@@ -89,7 +87,7 @@ pub struct JsxOpeningElement {
     /// `ts_type_parameter_instantiation`. `None` when absent.
     type_arguments: Option<TsTypeParameterInstantiation>,
     /// `jsx_attribute` or `jsx_spread_attribute`.
-    attributes: Vec<JsxAttributeItem>,
+    attributes: SubRange<JsxAttributeItem>,
     self_closing: bool,
 }
 
@@ -122,7 +120,7 @@ pub struct JsxFragment {
     /// `jsx_opening_fragment`
     opening_fragment: JsxOpeningFragment,
     /// `jsx_text`, `jsx_expression_container`, `jsx_spread_child`, `jsx_element`, or `jsx_fragment`
-    children: Vec<JsxChild>,
+    children: SubRange<JsxChild>,
     /// `jsx_closing_fragment`
     closing_fragment: JsxClosingFragment,
 }

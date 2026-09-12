@@ -1,57 +1,42 @@
-use std::{marker::PhantomData, ops::Deref};
+use std::marker::PhantomData;
 
 use crate::{
     Ast,
-    node_id::{ExtraDataCompact, ExtraDataId},
+    node_id::{ExtraDataId, ExtraDataValue},
 };
 
-pub const EMPTY_SUB_RANGE: SubRange = SubRange {
-    start: ExtraDataId::from_raw(0),
-    end: ExtraDataId::from_raw(0),
-};
-
-/// [SubRange] is a cheap way to represent a undetermined range of nodes in an arena, just like a [std::vec::Vec].
+/// A typed range of values in the AST extra-data arena.
 ///
 /// It only contains the start and end of the range in [crate::ast_list::NodeList].
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Hash)]
-pub struct SubRange {
-    pub start: ExtraDataId,
-    pub end: ExtraDataId,
+#[derive(Debug, Hash)]
+pub struct SubRange<T> {
+    pub(crate) start: ExtraDataId,
+    pub(crate) end: ExtraDataId,
+    _phantom: PhantomData<T>,
 }
 
-impl SubRange {
-    /// # Safety:
-    /// 1. The caller should make sure that the nodes in the range are all of type `T`.
-    pub(crate) unsafe fn cast_to_typed<T>(self) -> TypedSubRange<T> {
-        TypedSubRange {
-            inner: self,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-/// A typed sub range of nodes in an arena.
-///
-/// See [SubRange]
-#[derive(Debug)]
-pub struct TypedSubRange<T> {
-    pub(crate) inner: SubRange,
-    pub(crate) _phantom: PhantomData<T>,
-}
-
-impl<T> Clone for TypedSubRange<T> {
+impl<T> Clone for SubRange<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T> Copy for TypedSubRange<T> {}
+impl<T> Copy for SubRange<T> {}
 
-impl<T> TypedSubRange<T> {
+impl<T> SubRange<T> {
+    pub(crate) fn new(start: ExtraDataId, end: ExtraDataId) -> Self {
+        Self {
+            start,
+            end,
+            _phantom: PhantomData,
+        }
+    }
+
     pub fn empty() -> Self {
         Self {
-            inner: EMPTY_SUB_RANGE,
+            start: ExtraDataId::from_raw(0),
+            end: ExtraDataId::from_raw(0),
             _phantom: PhantomData,
         }
     }
@@ -64,11 +49,11 @@ impl<T> TypedSubRange<T> {
         self.len() == 0
     }
 
-    /// Similar to `Vec::remove(0)`
+    /// Similar to `Vec::remove(0)`.
     pub fn remove_first(&mut self) -> NodeExtraDataId<T> {
         assert!(!self.is_empty());
         let start = self.start;
-        self.inner.start += 1;
+        self.start += 1;
         NodeExtraDataId {
             inner: start,
             _phantom: PhantomData,
@@ -108,8 +93,8 @@ impl<T> TypedSubRange<T> {
         })
     }
 
-    pub fn iter(self) -> TypedSubRangeIterator<T> {
-        TypedSubRangeIterator {
+    pub fn iter(self) -> SubRangeIterator<T> {
+        SubRangeIterator {
             cur: self.start,
             end: self.end,
             _phantom: PhantomData,
@@ -126,53 +111,44 @@ impl<T> TypedSubRange<T> {
         }
 
         let at = self.start + at;
-        let original_end = self.inner.end;
-
-        self.inner.end = at;
-        TypedSubRange {
-            inner: SubRange {
-                start: at,
-                end: original_end,
-            },
+        let original_end = self.end;
+        self.end = at;
+        Self {
+            start: at,
+            end: original_end,
             _phantom: PhantomData,
         }
     }
-}
 
-impl<T> TypedSubRange<T> {
     #[inline]
     pub fn replace_slot<'a>(self, ast: &mut Ast<'a>, at: NodeExtraDataId<T>, new: T)
     where
-        T: ExtraDataCompact<'a>,
+        T: ExtraDataValue,
     {
-        let data = new.to_extra_data(ast);
-        ast.extra_data[at.inner.index()] = data;
+        // SAFETY: A typed sub-range index identifies a slot assigned to `T`.
+        unsafe {
+            *ast.extra_data
+                .as_mut_slice()
+                .get_unchecked_mut(at.inner.index()) = new.into_extra_data();
+        };
     }
 
     #[inline]
     pub fn get_node<'a>(self, ast: &Ast<'a>, index: usize) -> Option<T>
     where
-        T: ExtraDataCompact<'a>,
+        T: ExtraDataValue,
     {
         self.get(index).map(|id| ast.get_node_in_sub_range(id))
     }
 }
 
-impl<T> Deref for TypedSubRange<T> {
-    type Target = SubRange;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-pub struct TypedSubRangeIterator<T> {
+pub struct SubRangeIterator<T> {
     cur: ExtraDataId,
     end: ExtraDataId,
     _phantom: PhantomData<T>,
 }
 
-impl<T> Iterator for TypedSubRangeIterator<T> {
+impl<T> Iterator for SubRangeIterator<T> {
     type Item = NodeExtraDataId<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -193,7 +169,7 @@ impl<T> Iterator for TypedSubRangeIterator<T> {
     }
 }
 
-impl<T> DoubleEndedIterator for TypedSubRangeIterator<T> {
+impl<T> DoubleEndedIterator for SubRangeIterator<T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.cur == self.end {
             return None;
@@ -212,8 +188,7 @@ impl<T> DoubleEndedIterator for TypedSubRangeIterator<T> {
     }
 }
 
-/// This is a wrapper around `ExtraDataId` that is used to represent a node in a sub-range.
-/// It's type safe and can be used to access nodes in the AST context.
+/// A typed index for a value inside a [`SubRange`].
 #[derive(Debug, Clone, Copy)]
 pub struct NodeExtraDataId<T> {
     inner: ExtraDataId,
@@ -221,13 +196,8 @@ pub struct NodeExtraDataId<T> {
 }
 
 impl<'a> Ast<'a> {
-    pub fn get_node_in_sub_range<T: ExtraDataCompact<'a>>(&self, id: NodeExtraDataId<T>) -> T {
-        // Safety: `NodeExtraDataId<T>` should always be valid
-        unsafe {
-            T::from_extra_data(
-                *self.extra_data.as_slice().get_unchecked(id.inner.index()),
-                self,
-            )
-        }
+    pub fn get_node_in_sub_range<T: ExtraDataValue>(&self, id: NodeExtraDataId<T>) -> T {
+        // SAFETY: A typed sub-range index identifies a slot containing `T`.
+        unsafe { T::from_extra_data(self.extra_data.as_slice().get_unchecked(id.inner.index())) }
     }
 }

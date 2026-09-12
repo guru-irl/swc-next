@@ -27,14 +27,14 @@ pub fn field_byte_size(ty: &AstType, schema: &Schema) -> Option<usize> {
         AstType::Struct(_) => Some(4),
         // All typed AST values are represented by a NodeId wrapper.
         AstType::Enum(_) => Some(4),
-        // Vec is represented by an 8-byte SubRange.
-        AstType::Vec(_) => Some(8),
+        // SubRange stores an 8-byte SubRange.
+        AstType::SubRange(_) => Some(8),
         // Optional typed inline AST IDs are 4 bytes.
         AstType::Option(ast_option) => {
             let inner_ty = &schema.types[ast_option.inner_type_id];
             match inner_ty {
-                // Option<Vec<T>> is represented by an 8-byte OptionalSubRange.
-                AstType::Vec(_) => Some(8),
+                // Option<SubRange<T>> has an 8-byte compact representation.
+                AstType::SubRange(_) => Some(8),
                 // Option<Struct> uses u32::MAX as its absent sentinel.
                 AstType::Struct(_) => Some(4),
                 // Option<Enum> uses u32::MAX as its absent sentinel.
@@ -211,17 +211,16 @@ pub fn generate_field_to_u32(
 pub fn generate_field_to_u64(
     field_ty: &AstType,
     field_name: &syn::Ident,
-    ast: TokenStream,
     _schema: &Schema,
 ) -> TokenStream {
     debug_assert!(matches!(
         field_ty,
-        AstType::Enum(_) | AstType::Vec(_) | AstType::Option(_) | AstType::Primitive(_)
+        AstType::Enum(_) | AstType::SubRange(_) | AstType::Option(_) | AstType::Primitive(_)
     ));
 
-    // Every eight-byte representation is defined by ExtraDataCompact and uses
+    // Every eight-byte representation is defined by `ExtraDataValue` and uses
     // the same canonical numeric word in inline and out-of-line storage.
-    quote!(#field_name.to_extra_data(#ast).raw())
+    quote!(#field_name.into_extra_data().raw())
 }
 
 /// Generate expression to convert u32 to a field type (for inline storage)
@@ -292,6 +291,6 @@ pub fn generate_u32_to_field(field_ty: &AstType, schema: &Schema) -> TokenStream
 /// Generate an expression that reconstructs an eight-byte field from inline data.
 pub fn generate_u64_to_field(_field_ty: &AstType, _schema: &Schema) -> TokenStream {
     quote! {
-        unsafe { ExtraDataCompact::from_extra_data(ExtraData::from_raw(raw), ast) }
+        unsafe { ExtraDataValue::from_extra_data(&ExtraData::from_raw(raw)) }
     }
 }

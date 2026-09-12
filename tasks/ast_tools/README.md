@@ -21,9 +21,10 @@ The input list is defined in `src/main.rs` and currently contains:
 - [`jsx.rs`](../../crates/swc_ecma_ast/src/ast/jsx.rs)
 
 Only structs and enums marked with `#[ast]` become AST schema types. The schema
-also records field types, enum variants, `Option<T>`/`Vec<T>` wrappers, and
-integer `#[repr(uN)]` sizes needed to lay values out in the compact node
-payload.
+also records field types, enum variants, `Option<T>`/`SubRange<T>` wrappers,
+and integer `#[repr(uN)]` sizes needed to lay values out in the compact node
+payload. Field declarations use their actual storage types; the generator does
+not translate collection types.
 
 ## Generated outputs
 
@@ -34,10 +35,9 @@ All output is written under
 | ---------------------- | ------------------------------------------------------------------------------------------ |
 | `ast_builder.rs`       | `Ast` constructors that encode node fields into inline payload bits and extra-data storage |
 | `ast_property.rs`      | Typed field getters/setters and enum variant accessors                                     |
-| `ast_node.rs`          | `NodeKind`, typed/untyped node conversion, node IDs, spans, and kind data                  |
+| `ast_node.rs`          | AST enum data, constructors, `NodeKind`, typed/untyped node conversion, node IDs, and spans |
 | `ast_clone_in.rs`      | Arena-aware `CloneIn` implementations for AST nodes                                        |
 | `ast_visitor.rs`       | Immutable, mutable, and transforming visitor traits and child traversal                    |
-| `ast_extra_compact.rs` | `ExtraDataCompact` conversions used by out-of-line compact storage                         |
 
 The generator formats Rust output with `rustfmt` and avoids rewriting a file
 when its bytes have not changed.
