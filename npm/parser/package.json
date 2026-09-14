@@ -28,7 +28,7 @@
   },
   "scripts": {
     "build": "napi build --platform --no-js --dts binding.d.ts --output-dir src-js",
-    "build:wasm": "node ../../scripts/build-wasm.mjs parser --output-dir src-js"
+    "build:wasm": "cargo run --quiet --locked -p bridge_cli -- build parser --output-dir src-js"
   },
   "keywords": [
     "ast",
@@ -61,7 +61,6 @@
     "@swc-next/decoder": "workspace:*"
   },
   "wasm": {
-    "target": "wasm32-unknown-unknown",
     "binaryName": "swc-next-parser",
     "packageName": "@swc-next/parser-binding-wasm"
   },

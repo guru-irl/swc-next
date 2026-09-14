@@ -28,7 +28,7 @@
   },
   "scripts": {
     "build": "napi build --platform --no-js --dts binding.d.ts --output-dir src-js",
-    "build:wasm": "node ../../scripts/build-wasm.mjs codegen --output-dir src-js"
+    "build:wasm": "cargo run --quiet --locked -p bridge_cli -- build codegen --output-dir src-js"
   },
   "keywords": [
     "ast",
@@ -61,7 +61,6 @@
     "@swc-next/encoder": "workspace:*"
   },
   "wasm": {
-    "target": "wasm32-unknown-unknown",
     "binaryName": "swc-next-codegen",
     "packageName": "@swc-next/codegen-binding-wasm"
   },

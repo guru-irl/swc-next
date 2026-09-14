@@ -103,7 +103,9 @@ jobs:
       - name: Install Node.js dependencies
         run: pnpm install --frozen-lockfile
       - name: Build WebAssembly bindings
-        run: pnpm build:wasm --release
+        run: pnpm build:wasm --profile wasm-release
+      - name: Prepare browser package
+        run: node scripts/wasm-package/cli.mjs prepare-browser --source-dir npm/core/src-js
       - name: Run Node.js WebAssembly tests
         run: pnpm test:wasm
       - name: Install Chromium Headless Shell

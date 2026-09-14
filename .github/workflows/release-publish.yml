@@ -229,7 +229,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build WebAssembly bindings
-        run: pnpm build:wasm --release
+        run: pnpm build:wasm --profile wasm-release
 
       - name: Upload WebAssembly bindings
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -239,6 +239,10 @@ jobs:
           path: |
             npm/*/src-js/*.wasm
             npm/*/src-js/*.bridge.mjs
+            npm/*/src-js/*.node.mjs
+            npm/*/src-js/*.browser.mjs
+            npm/*/src-js/*.module.mjs
+            npm/*/src-js/*.runtime.mjs
 
   release_npm:
     name: Release NPM packages
@@ -297,7 +301,7 @@ jobs:
             node "$wasm_cli" pre-publish --package-json-path "$package_json" --npm-dir "$npm_dir" --tag-style npm --no-gh-release --skip-optional-publish
           done < <(node .github/scripts/release/version.mjs wasm-packages)
 
-          node .github/scripts/release/prepare-browser-package.mjs
+          node "$wasm_cli" prepare-browser --source-dir release-dir/core/wasm32-unknown-unknown
 
       - name: Publish NPM packages
         run: node .github/scripts/release/publish-npm.mjs release-dir ${{ inputs.dry_run && '--dry-run' || '' }}
