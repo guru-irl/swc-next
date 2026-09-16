@@ -8381,7 +8381,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         if self.lang.is_typescript() && CAN_BE_ARROW {
             match self.classify_arrow_head() {
                 ArrowHead::Yes => {
-                    return self.parse_arrow(false, start);
+                    return self.parse_arrow(false, start, true);
                 }
                 ArrowHead::Maybe => {
                     if let Some(arrow) = self.try_parse_arrow(false, start)? {
@@ -8750,7 +8750,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
     ) -> Option<Expr> {
         if self.lang.is_typescript() && minimum <= Precedence::Assignment {
             let arrow = match self.classify_arrow_head() {
-                ArrowHead::Yes => Some(self.parse_arrow(true, async_span.start)?),
+                ArrowHead::Yes => Some(self.parse_arrow(true, async_span.start, true)?),
                 ArrowHead::Maybe => self.try_parse_arrow(true, async_span.start)?,
                 ArrowHead::No => None,
             };
@@ -8773,7 +8773,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             if escaped_async {
                 self.report_escaped_keyword(async_span);
             }
-            return self.parse_arrow(true, async_span.start);
+            return self.parse_arrow(true, async_span.start, true);
         }
         self.cover_to_call_expression(cover, async_identifier)
     }
@@ -8887,7 +8887,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
 
         let checkpoint = self.checkpoint();
-        let arrow = match self.parse_arrow(is_async, start) {
+        let arrow = match self.parse_arrow(is_async, start, false) {
             Some(arrow) => arrow,
             None => {
                 self.rewind(checkpoint);
@@ -8919,7 +8919,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.try_parse_arrow(is_async, start)
     }
 
-    fn parse_arrow(&mut self, is_async: bool, start: u32) -> Option<Expr> {
+    fn parse_arrow(&mut self, is_async: bool, start: u32, need_diagnostics: bool) -> Option<Expr> {
         let context = if is_async {
             enter_grammar_context![&mut self.context, ?Yield, +Await]
         } else {
@@ -8935,13 +8935,18 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             commonjs_sensitive_new_target,
         );
         let boundary_context = mem::replace(&mut self.boundary_context, arrow_boundary_context);
-        let result = self.parse_arrow_inner(is_async, start);
+        let result = self.parse_arrow_inner(is_async, start, need_diagnostics);
         self.context = context;
         self.boundary_context = boundary_context;
         result
     }
 
-    fn parse_arrow_inner(&mut self, is_async: bool, start: u32) -> Option<Expr> {
+    fn parse_arrow_inner(
+        &mut self,
+        is_async: bool,
+        start: u32,
+        need_diagnostics: bool,
+    ) -> Option<Expr> {
         let type_parameters = if is_angle_open(self.current_token.tag) {
             Some(self.parse_type_parameters()?)
         } else {
@@ -8958,9 +8963,25 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         } else {
             None
         };
-        if self.current_token.tag != TokenTag::Arrow
-            || self.current_token.has_line_terminator_before()
-        {
+        if self.current_token.tag != TokenTag::Arrow {
+            if need_diagnostics {
+                // The speculative `try_parse_arrow` path skips diagnostic formatting for performance.
+                self.report_expected(
+                    self.current_token.span,
+                    "Expected '=>' in arrow function",
+                    ReportOptions::default(),
+                );
+            }
+            return None;
+        }
+        if self.current_token.has_line_terminator_before() {
+            if need_diagnostics {
+                self.report(
+                    self.current_token.span,
+                    "A line terminator is not allowed before '=>'",
+                    ReportOptions::default(),
+                );
+            }
             return None;
         }
         self.build_arrow_function(start, params, is_async, type_parameters, return_type)
