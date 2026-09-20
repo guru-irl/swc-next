@@ -300,16 +300,13 @@ impl<'a> CloneIn<'a> for PropertyKey {
         let kind = unsafe { *ast.nodes.kind_unchecked(self.0) };
         match kind {
             NodeKind::IdentifierName => Self::IdentifierName(IdentifierName(self.0).clone_in(ast)),
-            NodeKind::PrivateIdentifier => {
-                Self::PrivateIdentifier(PrivateIdentifier(self.0).clone_in(ast))
-            }
-            NodeKind::StringLiteral => Self::StringLiteral(StringLiteral(self.0).clone_in(ast)),
-            NodeKind::NumericLiteral => Self::NumericLiteral(NumericLiteral(self.0).clone_in(ast)),
-            NodeKind::BigIntLiteral => Self::BigIntLiteral(BigIntLiteral(self.0).clone_in(ast)),
             NodeKind::IdentifierReference
             | NodeKind::ThisExpression
             | NodeKind::Super
             | NodeKind::MetaProperty
+            | NodeKind::StringLiteral
+            | NodeKind::NumericLiteral
+            | NodeKind::BigIntLiteral
             | NodeKind::BooleanLiteral
             | NodeKind::NullLiteral
             | NodeKind::RegExpLiteral
@@ -335,6 +332,7 @@ impl<'a> CloneIn<'a> for PropertyKey {
             | NodeKind::ImportExpression
             | NodeKind::AwaitExpression
             | NodeKind::YieldExpression
+            | NodeKind::PrivateIdentifier
             | NodeKind::TsAsExpression
             | NodeKind::TsSatisfiesExpression
             | NodeKind::TsTypeAssertion
@@ -1948,44 +1946,6 @@ impl<'a> CloneIn<'a> for TsEnumMemberName {
             NodeKind::TemplateLiteral => {
                 Self::TemplateLiteral(TemplateLiteral(self.0).clone_in(ast))
             }
-            NodeKind::IdentifierReference
-            | NodeKind::ThisExpression
-            | NodeKind::Super
-            | NodeKind::MetaProperty
-            | NodeKind::NumericLiteral
-            | NodeKind::BigIntLiteral
-            | NodeKind::BooleanLiteral
-            | NodeKind::NullLiteral
-            | NodeKind::RegExpLiteral
-            | NodeKind::BinaryExpression
-            | NodeKind::LogicalExpression
-            | NodeKind::UnaryExpression
-            | NodeKind::UpdateExpression
-            | NodeKind::AssignmentExpression
-            | NodeKind::ConditionalExpression
-            | NodeKind::SequenceExpression
-            | NodeKind::MemberExpression
-            | NodeKind::CallExpression
-            | NodeKind::ChainExpression
-            | NodeKind::NewExpression
-            | NodeKind::TaggedTemplateExpression
-            | NodeKind::ArrowFunctionExpression
-            | NodeKind::ArrayExpression
-            | NodeKind::ObjectExpression
-            | NodeKind::ParenthesizedExpression
-            | NodeKind::Function
-            | NodeKind::Class
-            | NodeKind::ImportExpression
-            | NodeKind::AwaitExpression
-            | NodeKind::YieldExpression
-            | NodeKind::PrivateIdentifier
-            | NodeKind::TsAsExpression
-            | NodeKind::TsSatisfiesExpression
-            | NodeKind::TsTypeAssertion
-            | NodeKind::TsNonNullExpression
-            | NodeKind::TsInstantiationExpression
-            | NodeKind::JsxElement
-            | NodeKind::JsxFragment => Self::Expr(Expr(self.0).clone_in(ast)),
             _ => unsafe { std::hint::unreachable_unchecked() },
         }
     }

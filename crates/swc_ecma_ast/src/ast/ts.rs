@@ -180,12 +180,11 @@ pub enum TsTypePredicateName {
     TsThisType(TsThisType),
 }
 
-#[ast(repr, nested)]
+#[ast(repr)]
 pub enum TsEnumMemberName {
     IdentifierName(IdentifierName),
     StringLiteral(StringLiteral),
     TemplateLiteral(TemplateLiteral),
-    Expr(Expr),
 }
 
 #[ast(repr)]
@@ -1415,8 +1414,8 @@ pub struct TsEnumBody {
 }
 
 /// A single member in an enum body. The name is an identifier, a string
-/// literal, or a template literal (with or without a computed `[...]`
-/// wrapper). The value is an optional initializer expression.
+/// literal, or a no-substitution template literal. Literal names may have
+/// a computed `[...]` wrapper. The value is an optional initializer expression.
 ///
 /// ## Example
 /// ```ts

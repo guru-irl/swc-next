@@ -2261,10 +2261,12 @@ impl<'a> Printer<'a> {
                 let name = self.ast.get_utf8(identifier.name(self.ast));
                 (Some(name), Some(Wtf8::from_str(name)))
             }
-            PropertyKeyData::StringLiteral(string) => {
-                (None, Some(self.ast.get_wtf8(string.value(self.ast))))
-            }
-            _ => (None, None),
+            PropertyKeyData::Expr(expression) => match self.ast.expr_data(expression) {
+                ExprData::StringLiteral(string) => {
+                    (None, Some(self.ast.get_wtf8(string.value(self.ast))))
+                }
+                _ => (None, None),
+            },
         };
         let force_computed = !computed
             && match identifier_text {
@@ -2644,6 +2646,7 @@ impl<'a> Printer<'a> {
         self.add_source_mapping(key.span(self.ast).start);
         if computed {
             self.print("[");
+            self.print_comments_before(key.span(self.ast).start, false, true);
             self.print_property_key_expr(key);
             self.print("]");
         } else {
@@ -2656,25 +2659,29 @@ impl<'a> Printer<'a> {
             PropertyKeyData::IdentifierName(e) => {
                 self.print_identifier(self.ast.get_utf8(e.name(self.ast)))
             }
-            PropertyKeyData::PrivateIdentifier(e) => {
-                self.print("#");
-                self.print_identifier(self.ast.get_utf8(e.name(self.ast)));
-            }
-            PropertyKeyData::StringLiteral(e) => {
-                self.print_quoted(self.ast.get_wtf8(e.value(self.ast)), true)
-            }
-            PropertyKeyData::NumericLiteral(e) => {
-                self.print_number_expr(e, Precedence::Lowest);
-            }
-            PropertyKeyData::BigIntLiteral(e) => {
-                for byte in self.ast.get_utf8(e.raw(self.ast)).bytes() {
-                    if byte != b'_' {
-                        self.js.push(byte);
-                    }
+            // Literal and private keys must not consume expression-leading comments
+            // after a property's modifiers have already been printed.
+            PropertyKeyData::Expr(expression) => match self.ast.expr_data(expression) {
+                ExprData::PrivateIdentifier(e) => {
+                    self.print("#");
+                    self.print_identifier(self.ast.get_utf8(e.name(self.ast)));
                 }
-                self.print("n");
-            }
-            PropertyKeyData::Expr(e) => self.print_expr(e, Precedence::Assignment),
+                ExprData::StringLiteral(e) => {
+                    self.print_quoted(self.ast.get_wtf8(e.value(self.ast)), true)
+                }
+                ExprData::NumericLiteral(e) => {
+                    self.print_number_expr(e, Precedence::Lowest);
+                }
+                ExprData::BigIntLiteral(e) => {
+                    for byte in self.ast.get_utf8(e.raw(self.ast)).bytes() {
+                        if byte != b'_' {
+                            self.js.push(byte);
+                        }
+                    }
+                    self.print("n");
+                }
+                _ => self.print_expr(expression, Precedence::Assignment),
+            },
         }
     }
 
@@ -2694,8 +2701,10 @@ impl<'a> Printer<'a> {
                     self.print_quoted(Wtf8::from_str(name), true);
                 }
             }
-            PropertyKeyData::NumericLiteral(value) => self.print_number_property_key(value),
-            _ => self.print_property_key_expr(key),
+            PropertyKeyData::Expr(expression) => match self.ast.expr_data(expression) {
+                ExprData::NumericLiteral(value) => self.print_number_property_key(value),
+                _ => self.print_property_key_expr(key),
+            },
         }
     }
 
@@ -3077,10 +3086,12 @@ impl<'a> Printer<'a> {
                             PropertyKeyData::IdentifierName(identifier) => {
                                 ast.get_utf8(identifier.name(ast))
                             }
-                            PropertyKeyData::PrivateIdentifier(identifier) => {
-                                ast.get_utf8(identifier.name(ast))
-                            }
-                            _ => return true,
+                            PropertyKeyData::Expr(expression) => match ast.expr_data(expression) {
+                                ExprData::PrivateIdentifier(identifier) => {
+                                    ast.get_utf8(identifier.name(ast))
+                                }
+                                _ => return true,
+                            },
                         };
                         if !is_identifier_es5_and_esnext(name.as_bytes()) {
                             return true;
@@ -4451,6 +4462,7 @@ impl<'a> Printer<'a> {
     fn print_ts_enum_name(&mut self, n: TsEnumMemberName, computed: bool) {
         if computed {
             self.print("[");
+            self.print_comments_before(n.span(self.ast).start, false, true);
         }
         match self.ast.ts_enum_member_name_data(n) {
             TsEnumMemberNameData::IdentifierName(i) => {
@@ -4463,7 +4475,6 @@ impl<'a> Printer<'a> {
                 self.print_quoted(self.ast.get_wtf8(s.value(self.ast)), true)
             }
             TsEnumMemberNameData::TemplateLiteral(t) => self.print_template(t, false),
-            TsEnumMemberNameData::Expr(e) => self.print_expr(e, Precedence::Lowest),
         }
         if computed {
             self.print("]");

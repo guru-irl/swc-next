@@ -164,7 +164,7 @@ fn synthesized_number_property_keys() {
 fn print_synthesized_number_property_key(key_value: f64, computed: bool, minify: bool) -> String {
     let allocator = Allocator::new();
     let mut ast = Ast::new("", &allocator);
-    let key = ast.property_key_numeric_literal(DUMMY_SP, key_value, None);
+    let key = ast.property_key_expr_numeric_literal(DUMMY_SP, key_value, None);
     let value = ast.expr_numeric_literal(DUMMY_SP, 0.0, None);
     let property = ast.object_property(
         DUMMY_SP,
@@ -253,6 +253,29 @@ fn test_directive_string_value() {
         "function f() {\n  \"\\0\";\n}\n",
     );
     expect_printed_minify(r#"'use\x20strict';"#, "'use\\x20strict';");
+}
+
+#[test]
+fn test_computed_key_comments() {
+    expect_printed(
+        "({ [/* @__PURE__ */ 'x']: make() })",
+        "({ [ /* @__PURE__ */ \"x\"]: make() });\n",
+    );
+
+    expect_printed_minify(
+        "({ [/* @__PURE__ */ 'x']: make() })",
+        "({[ /* @__PURE__ */ \"x\"]:make()});",
+    );
+
+    expect_printed_minify(
+        "({ [/* @__PURE__ */ 1]: make() })",
+        "({[ /* @__PURE__ */ 1]:make()});",
+    );
+
+    expect_printed_minify(
+        "({ [/* @__PURE__ */ 1n]: make() })",
+        "({[ /* @__PURE__ */ 1n]:make()});",
+    );
 }
 
 #[test]
