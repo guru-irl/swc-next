@@ -198,6 +198,7 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         }
     }
 
+    #[inline]
     pub fn next_token(&mut self, target: &mut Token) -> Result<(), LexicalError> {
         self.read_next_token(target)?;
         self.handle_token(*target, HandleTokenMode::Append);
@@ -206,7 +207,7 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
 
     /// Reads common tokens without entering the full trivia and token scanner.
     /// On failure, the cursor is unchanged so trivia keeps its original context.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn try_next_token(&mut self, target: &mut Token) -> bool {
         if self.mode != LexerMode::Normal {
             return false;
@@ -256,6 +257,8 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         true
     }
 
+    // INLINE: Keep scanning and token construction in the caller to eliminate the
+    // Option<Token> stack return and fold the already-cleared token flags.
     #[inline(always)]
     fn scan_ascii_identifier(&mut self, start: u32) -> Option<Token> {
         let pos = scan_ascii_identifier_continue(self.source, start + 1);
@@ -272,6 +275,7 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         ))
     }
 
+    #[inline]
     fn read_next_token(&mut self, target: &mut Token) -> Result<(), LexicalError> {
         debug_assert!((self.cursor as usize) <= self.source.len());
         self.clear_token_flags();
@@ -308,7 +312,8 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         Ok(())
     }
 
-    #[inline]
+    // Make sure `mode` is always inlined to eliminate the branch.
+    #[inline(always)]
     pub(crate) fn handle_token(&mut self, token: Token, mode: HandleTokenMode) {
         if self.config.tokens() {
             match mode {
@@ -355,7 +360,7 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn scan_simple_punctuation(&mut self) -> Token {
         debug_assert!((self.cursor as usize) < self.source.len());
         let start = self.cursor;
@@ -492,6 +497,8 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         }
     }
 
+    // Inline `context` to eliminate the branch
+    #[inline(always)]
     fn consume_escape(&mut self, context: EscapeContext) -> Result<(), LexicalError> {
         if context == EscapeContext::Template {
             match self.consume_escape_impl(context) {
@@ -608,6 +615,8 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         }
     }
 
+    // Inline `consume_unicode_escape` to eliminate the branches
+    #[inline(always)]
     fn consume_unicode_escape(
         &mut self,
         context: ConsumeUnicodeContext,
@@ -1028,7 +1037,7 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         Ok(token)
     }
 
-    #[inline(always)]
+    #[inline]
     fn punc_token(&mut self, len: u32, tag: TokenTag, start: u32) -> Token {
         debug_assert!(len > 0);
         debug_assert_eq!(start, self.cursor);
@@ -1037,23 +1046,28 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         self.create_token(tag, start, self.cursor)
     }
 
+    #[inline]
     fn peek(&self, offset: u32) -> u8 {
         let idx = (self.cursor + offset) as usize;
         self.source.get(idx).copied().unwrap_or(0)
     }
 
+    #[inline]
     fn set_token_flag(&mut self, flag: TokenFlag) {
         self.state.token_flags |= flag_mask(flag);
     }
 
+    #[inline]
     fn has_token_flag(&self, flag: TokenFlag) -> bool {
         (self.state.token_flags & flag_mask(flag)) != 0
     }
 
+    #[inline]
     fn clear_token_flags(&mut self) {
         self.state.token_flags = 0;
     }
 
+    #[inline]
     fn consume_token_flags(&mut self) -> u8 {
         let flags = self.state.token_flags;
         self.state.token_flags = 0;
@@ -1210,6 +1224,7 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         Err(LexicalError::UnterminatedRegexLiteral)
     }
 
+    #[inline]
     fn is_line_terminator(&self, c: u8) -> bool {
         c == b'\n'
             || c == b'\r'
@@ -1445,6 +1460,8 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         Err(LexicalError::UnterminatedMultiLineComment)
     }
 
+    #[cold]
+    #[inline(never)]
     fn scan_html_comment(&mut self) -> Result<(), LexicalError> {
         debug_assert!(self.allow_html_like_comments);
         debug_assert!(((self.cursor + 3) as usize) < self.source.len());
@@ -1473,6 +1490,8 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         Ok(())
     }
 
+    #[cold]
+    #[inline(never)]
     fn scan_html_close_comment(&mut self) -> Result<(), LexicalError> {
         debug_assert!(self.allow_html_like_comments);
         debug_assert!(((self.cursor + 2) as usize) < self.source.len());
@@ -1494,6 +1513,7 @@ impl<'a, C: ParserConfig> Lexer<'a, C> {
         Ok(())
     }
 
+    #[inline]
     pub fn create_token(&mut self, tag: TokenTag, start: u32, end: u32) -> Token {
         Token::new(start, end, tag, self.consume_token_flags())
     }
@@ -1539,6 +1559,9 @@ const NOT_ASCII_IDENTIFIER_CONTINUE: [bool; 256] = {
     table
 };
 
+// This is a very hot path. Inline this loop too
+// to avoid losing the single-call-site bonus and
+// introducing a new helper call.
 #[inline(always)]
 fn scan_ascii_identifier_continue(source: &[u8], start: u32) -> u32 {
     debug_assert!(u32::try_from(source.len()).is_ok());
@@ -1563,10 +1586,12 @@ fn scan_ascii_identifier_continue(source: &[u8], start: u32) -> u32 {
     position as u32
 }
 
+#[inline]
 fn is_surrogate_codepoint(cp: u32) -> bool {
     (0xD800..=0xDFFF).contains(&cp)
 }
 
+#[inline]
 fn is_utf16_high_surrogate(cp: u32) -> bool {
     (0xD800..=0xDBFF).contains(&cp)
 }
@@ -1744,6 +1769,9 @@ pub fn lexical_error_help(error_type: LexicalError) -> &'static str {
     }
 }
 
+// INLINE: This is a very hot path. Reuse identifier bytes
+// already loaded by the caller and avoid preserving
+// token state across a separate keyword-lookup call.
 #[inline(always)]
 fn get_keyword_type(lexeme: &[u8]) -> TokenTag {
     match lexeme {

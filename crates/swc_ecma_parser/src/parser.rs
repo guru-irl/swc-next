@@ -457,12 +457,6 @@ struct ParenthesizedCover {
     has_trailing_comma: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct ParseVariableDeclarationOpts {
-    await_using: bool,
-    is_declare: bool,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DeclaratorCtx {
     Normal,
@@ -1627,9 +1621,12 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
         match self.current_token.tag() {
             TokenTag::Await => self.parse_await_using_or_expression(),
-            TokenTag::Var => self
-                .parse_variable_declaration(ParseVariableDeclarationOpts::default(), None)
-                .map(|declaration| Stmt::Declaration(Decl::VariableDeclaration(declaration))),
+            TokenTag::Var => {
+                let start = self.current_token.start();
+                self.advance()?;
+                self.parse_variable_declaration(VariableKind::Var, false, start)
+                    .map(|declaration| Stmt::Declaration(Decl::VariableDeclaration(declaration)))
+            }
             TokenTag::Const => self.parse_const_or_const_enum(),
             TokenTag::Let if !self.current_token.is_escaped() => self.parse_let(),
             TokenTag::Using => self.parse_using_or_expression(),
@@ -1711,8 +1708,10 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
     fn parse_let(&mut self) -> Option<Stmt> {
         debug_assert_eq!(self.current_token.tag(), TokenTag::Let);
         if !self.is_let_identifier()? {
+            let start = self.current_token.start();
+            self.advance()?;
             return self
-                .parse_variable_declaration(ParseVariableDeclarationOpts::default(), None)
+                .parse_variable_declaration(VariableKind::Let, false, start)
                 .map(|declaration| Stmt::Declaration(Decl::VariableDeclaration(declaration)));
         }
         self.parse_expression_statement()
@@ -1721,8 +1720,10 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
     fn parse_using_or_expression(&mut self) -> Option<Stmt> {
         debug_assert_eq!(self.current_token.tag(), TokenTag::Using);
         if !self.is_using_identifier()? {
+            let start = self.current_token.start();
+            self.advance()?;
             return self
-                .parse_variable_declaration(ParseVariableDeclarationOpts::default(), None)
+                .parse_variable_declaration(VariableKind::Using, false, start)
                 .map(|declaration| Stmt::Declaration(Decl::VariableDeclaration(declaration)));
         }
         self.parse_expression_statement()
@@ -1737,14 +1738,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             self.advance()?;
             if !self.is_using_identifier()? {
                 self.report_await_using_if_disallowed(await_span);
+                self.advance()?;
                 return self
-                    .parse_variable_declaration(
-                        ParseVariableDeclarationOpts {
-                            await_using: true,
-                            ..ParseVariableDeclarationOpts::default()
-                        },
-                        Some(start),
-                    )
+                    .parse_variable_declaration(VariableKind::AwaitUsing, false, start)
                     .map(|declaration| Stmt::Declaration(Decl::VariableDeclaration(declaration)));
             }
             self.report_await_using_if_disallowed(await_span);
@@ -1785,7 +1781,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 return self.parse_ts_declaration();
             }
         }
-        self.parse_variable_declaration(ParseVariableDeclarationOpts::default(), None)
+        let start = self.current_token.start();
+        self.advance()?;
+        self.parse_variable_declaration(VariableKind::Const, false, start)
             .map(|declaration| Stmt::Declaration(Decl::VariableDeclaration(declaration)))
     }
 
@@ -2220,19 +2218,11 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
     //   LexicalDeclaration[+In, ?Yield, ?Await]
     fn parse_variable_declaration(
         &mut self,
-        opts: ParseVariableDeclarationOpts,
-        start_from_param: Option<u32>,
+        kind: VariableKind,
+        is_declare: bool,
+        declaration_start: u32,
     ) -> Option<VariableDeclaration> {
-        debug_assert!(
-            start_from_param.is_some()
-                || matches!(
-                    self.current_token.tag(),
-                    TokenTag::Var | TokenTag::Let | TokenTag::Const | TokenTag::Using
-                )
-        );
-        let declaration_start = start_from_param.unwrap_or(self.current_token.start());
-        let kind = self.parse_variable_kind(opts.await_using)?;
-        let context = if opts.is_declare || self.ts_context.ambient() {
+        let context = if is_declare || self.ts_context.ambient() {
             DeclaratorCtx::Declare
         } else {
             DeclaratorCtx::Normal
@@ -2272,27 +2262,21 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 Span::new(declaration_start, end),
                 kind,
                 declarators,
-                opts.is_declare,
+                is_declare,
             ))
         })();
         self.scratch_a.reset(checkpoint);
         result
     }
 
-    fn parse_variable_kind(&mut self, await_using: bool) -> Option<VariableKind> {
+    #[inline]
+    fn parse_variable_kind(&mut self) -> Option<VariableKind> {
         let tag = self.current_token.tag();
         self.advance()?;
         match tag {
             TokenTag::Var => Some(VariableKind::Var),
             TokenTag::Let => Some(VariableKind::Let),
             TokenTag::Const => Some(VariableKind::Const),
-            TokenTag::Using => {
-                if await_using {
-                    Some(VariableKind::AwaitUsing)
-                } else {
-                    Some(VariableKind::Using)
-                }
-            }
             _ => None,
         }
     }
@@ -4570,8 +4554,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             self.current_token.tag(),
             TokenTag::Var | TokenTag::Let | TokenTag::Const
         ) {
-            let declaration =
-                self.parse_variable_declaration(ParseVariableDeclarationOpts::default(), None)?;
+            let declaration_start = self.current_token.start();
+            let kind = self.parse_variable_kind()?;
+            let declaration = self.parse_variable_declaration(kind, false, declaration_start)?;
             let end = declaration.span(&self.ast).end;
             let specifiers = SubRange::empty();
             let attributes = SubRange::empty();
@@ -4630,6 +4615,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.report_missing_export_declaration()
     }
 
+    #[cold]
+    #[inline(never)]
     fn report_missing_export_declaration(&mut self) -> Option<Stmt> {
         self.report_expected(
             self.current_token.span(),
@@ -4639,6 +4626,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         None
     }
 
+    #[inline]
     fn export_kind_for_declaration(&self, declaration: Decl) -> ImportOrExportKind {
         match self.ast.decl_data(declaration) {
             DeclData::TsInterfaceDeclaration(_) | DeclData::TsTypeAliasDeclaration(_) => {
@@ -5018,13 +5006,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
                 self.parse_enum_declaration(start, modifiers.is_const, modifiers.declare)
             }
             TokenTag::Var | TokenTag::Let | TokenTag::Const => {
-                let declaration = self.parse_variable_declaration(
-                    ParseVariableDeclarationOpts {
-                        is_declare: modifiers.declare,
-                        ..ParseVariableDeclarationOpts::default()
-                    },
-                    Some(start),
-                )?;
+                let kind = self.parse_variable_kind()?;
+                let declaration =
+                    self.parse_variable_declaration(kind, modifiers.declare, start)?;
                 Some(Stmt::Declaration(Decl::VariableDeclaration(declaration)))
             }
             TokenTag::Function => Some(Stmt::Declaration(
@@ -7253,7 +7237,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         let declaration_start = self.current_token.start();
         match self.current_token.tag() {
             TokenTag::Var | TokenTag::Const => {
-                let kind = self.parse_variable_kind(false)?;
+                let kind = self.parse_variable_kind()?;
                 self.parse_for_with_declaration(start, is_for_await, kind, declaration_start)
             }
             TokenTag::Let if !self.current_token.is_escaped() => {
@@ -7814,6 +7798,10 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
     // Expression[In, Yield, Await] :
     //   AssignmentExpression[?In, ?Yield, ?Await]
     //   Expression[?In, ?Yield, ?Await] `,` AssignmentExpression[?In, ?Yield, ?Await]
+    //
+    // INLINE: This is a small and hot function.
+    // Propagate the caller's minimum/in_cover constants into expression parsing.
+    // Keep this wrapper inline when the larger Pratt loop below is forced inline.
     #[inline(always)]
     fn parse_expr(&mut self, minimum: Precedence, opts: ParseExpressionOpts) -> Option<Expr> {
         let left = if self.current_token.tag() == TokenTag::Identifier {
@@ -7824,6 +7812,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.parse_expr_from_left(left, minimum)
     }
 
+    // Keep the stripped_paren save/restore around the inlined expression parser
+    // without a separate wrapper call; restoration is still required on None.
     #[inline(always)]
     fn parse_expr_preserving_stripped_paren(
         &mut self,
@@ -7838,10 +7828,14 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
 
     // RelationalExpression[In, Yield, Await] :
     //   [+In] RelationalExpression[+In, ?Yield, ?Await] `in` ShiftExpression[?Yield, ?Await]
+    //
+    // Specialize the Pratt loop for the caller's minimum precedence instead of
+    // passing and preserving a runtime minimum across expression-parser calls.
+    //
+    // TODO: this bloats binary size a lot
     #[inline(always)]
     fn parse_expr_from_left(&mut self, mut left: Expr, minimum: Precedence) -> Option<Expr> {
         let is_ts = self.lang.is_typescript();
-
         loop {
             let token = self.current_token;
             if is_ts
@@ -7886,6 +7880,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.parse_expression_in_cover(Precedence::Assignment)
     }
 
+    #[inline]
     fn infix_precedence(&self, token: Token) -> Precedence {
         match token.tag() {
             TokenTag::Increment | TokenTag::Decrement | TokenTag::As | TokenTag::Satisfies
@@ -7904,7 +7899,6 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
 
     fn parse_infix(&mut self, precedence: Precedence, left: Expr) -> Option<Expr> {
         let token = self.current_token;
-
         match token.tag() {
             TokenTag::As | TokenTag::Satisfies if self.lang.is_typescript() => {
                 return self.parse_as_or_satisfies_expression(left, token.tag());
@@ -8141,6 +8135,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.parse_await_expression(token.start())
     }
 
+    // INLINE: This is a small and hot function.
+    // Carry the current token into identifier construction without leaving a
+    // wrapper call when parse_identifier_from_token is forced inline.
     #[inline(always)]
     fn parse_plain_identifier(&mut self) -> Option<Expr> {
         let token = self.current_token;
@@ -8148,6 +8145,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.parse_identifier_from_token(token)
     }
 
+    // INLINE: This is a small and hot function.
+    // Combine token advancement and identifier construction in the caller,
+    // removing this helper's call/return and register save/restore overhead.
     #[inline(always)]
     fn parse_identifier_from_token(&mut self, token: Token) -> Option<Expr> {
         self.advance_without_escape_check()?;
@@ -8163,6 +8163,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         Some(self.ast.private_identifier(token.span(), name))
     }
 
+    // INLINE: This is a small and hot function.
+    // Let member parsing reuse token fields across property-name and member-node
+    // construction instead of crossing a separate identifier-name helper call.
     #[inline(always)]
     fn parse_identifier_name(&mut self) -> Option<IdentifierName> {
         debug_assert!(self.current_token.tag().is_identifier_like());
@@ -10590,6 +10593,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.parse_member_property(object, optional)
     }
 
+    // Keep property and member-node construction together and expose the caller's
+    // optional flag to node construction without a separate helper call.
     #[inline(always)]
     fn parse_member_property(&mut self, object: Expr, optional: bool) -> Option<Expr> {
         let start = object.span(&self.ast).start;
@@ -12313,6 +12318,9 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
     }
 
+    // INLINE: This is a small and hot function.
+    // Combine validation, token advancement and binding construction in the
+    // caller, avoiding a helper call and another load of current_token.
     #[inline(always)]
     fn parse_binding_identifier(&mut self) -> Option<BindingIdentifier> {
         let token = self.current_token;
@@ -12390,6 +12398,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
     }
 
+    #[inline]
     fn next_token(&mut self) -> Option<()> {
         match self.lexer.next_token(&mut self.current_token) {
             Ok(()) => Some(()),
@@ -12419,7 +12428,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
     ///
     /// Reports an error when an escaped keyword is consumed in a keyword
     /// position.
-    #[inline(always)]
+    #[inline]
     fn advance(&mut self) -> Option<()> {
         self.check_escaped_keyword();
         self.lexer.state.prev_token_end = self.current_token.end();
@@ -12441,6 +12450,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
 
     /// Advances without checking whether the current token is an escaped
     /// keyword.
+    #[inline]
     fn advance_without_escape_check(&mut self) -> Option<()> {
         self.lexer.state.prev_token_end = self.current_token.end();
         if self.lexer.try_next_token(&mut self.current_token) {
@@ -12450,6 +12460,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
     }
 
+    #[inline]
     fn check_escaped_keyword(&mut self) {
         let current_token = self.current_token;
         if !current_token.is_escaped() {
@@ -12460,6 +12471,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn report_escaped_keyword(&mut self, span: Span) {
         self.diagnostics.push(Diagnostic {
             severity: Severity::Error,
@@ -12558,6 +12571,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         Some(end)
     }
 
+    #[cold]
+    #[inline(never)]
     fn report(
         &mut self,
         span: Span,
@@ -12573,6 +12588,8 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         });
     }
 
+    #[cold]
+    #[inline(never)]
     fn report_expected(&mut self, span: Span, message: &str, options: ReportOptions) {
         let found = self.describe_token(self.current_token);
         self.report(
@@ -12651,6 +12668,7 @@ fn is_import_expression_or_member_access_on_import_expression(
     }
 }
 
+#[inline]
 fn max_left_precedence(expression: Expr, ast: &Ast<'_>) -> Precedence {
     match ast.node_kind(expression.node_id()) {
         NodeKind::ArrowFunctionExpression | NodeKind::YieldExpression => Precedence::Comma,
@@ -12668,6 +12686,7 @@ fn max_left_precedence(expression: Expr, ast: &Ast<'_>) -> Precedence {
     }
 }
 
+#[inline]
 fn assertion_erasure_changes_binary_grouping(
     mut expression: Expr,
     next_operator: TokenTag,
@@ -12695,10 +12714,12 @@ fn assertion_erasure_changes_binary_grouping(
         || (next_precedence == current_precedence && next_operator == TokenTag::Exponent)
 }
 
+#[inline]
 fn is_angle_open(tag: TokenTag) -> bool {
     matches!(tag, TokenTag::LessThan | TokenTag::LeftShift)
 }
 
+#[inline]
 fn is_angle_close(tag: TokenTag) -> bool {
     matches!(
         tag,
@@ -12711,6 +12732,7 @@ fn is_angle_close(tag: TokenTag) -> bool {
     )
 }
 
+#[inline]
 fn continues_type(tag: TokenTag) -> bool {
     matches!(
         tag,
@@ -12726,6 +12748,7 @@ fn continues_type(tag: TokenTag) -> bool {
     )
 }
 
+#[inline]
 fn is_start_of_type(tag: TokenTag) -> bool {
     matches!(
         tag,
@@ -12785,6 +12808,7 @@ fn tuple_element_as_type(element: TsTupleElement, ast: &Ast<'_>) -> TsType {
     }
 }
 
+#[inline]
 fn can_follow_accessor_keyword(tag: TokenTag) -> bool {
     tag == TokenTag::LeftBracket
         || tag.is_identifier_like()
@@ -12792,23 +12816,28 @@ fn can_follow_accessor_keyword(tag: TokenTag) -> bool {
         || tag.is_numeric_literal()
 }
 
+#[inline]
 fn can_follow_readonly_modifier(tag: TokenTag) -> bool {
     can_follow_accessor_keyword(tag)
         || matches!(tag, TokenTag::LeftBrace | TokenTag::Star | TokenTag::Spread)
 }
 
+#[inline]
 fn can_start_binding(tag: TokenTag) -> bool {
     tag.is_identifier_like() || matches!(tag, TokenTag::LeftBracket | TokenTag::LeftBrace)
 }
 
+#[inline]
 fn can_start_binding_identifier(tag: TokenTag) -> bool {
     tag.is_identifier_like() && !tag.is_unconditionally_reserved()
 }
 
+#[inline]
 fn can_start_let_binding(tag: TokenTag) -> bool {
     matches!(tag, TokenTag::LeftBracket | TokenTag::LeftBrace) || can_start_binding_identifier(tag)
 }
 
+#[inline]
 fn is_parameter_property_modifier_tag(tag: TokenTag) -> bool {
     matches!(
         tag,
@@ -12820,6 +12849,7 @@ fn is_parameter_property_modifier_tag(tag: TokenTag) -> bool {
     )
 }
 
+#[inline]
 fn is_modifier(tag: TokenTag, is_ts: bool) -> bool {
     match tag {
         TokenTag::Static | TokenTag::Async | TokenTag::Get | TokenTag::Set | TokenTag::Accessor => {
@@ -12836,6 +12866,7 @@ fn is_modifier(tag: TokenTag, is_ts: bool) -> bool {
     }
 }
 
+#[inline]
 fn can_start_element_key(tag: TokenTag) -> bool {
     tag.is_identifier_like()
         || tag.is_numeric_literal()
@@ -12848,14 +12879,17 @@ fn can_start_element_key(tag: TokenTag) -> bool {
         )
 }
 
+#[inline]
 fn requires_same_line(tag: TokenTag) -> bool {
     !matches!(tag, TokenTag::Static | TokenTag::Get | TokenTag::Set)
 }
 
+#[inline]
 fn is_const_enum_head(after_const: Token) -> bool {
     after_const.tag() == TokenTag::Enum && !after_const.has_line_terminator_before()
 }
 
+#[inline]
 fn is_type_keyword(tag: TokenTag) -> bool {
     matches!(
         tag,
@@ -12874,6 +12908,7 @@ fn is_type_keyword(tag: TokenTag) -> bool {
     )
 }
 
+#[inline]
 fn can_follow_parameter_property_modifier(tag: TokenTag) -> bool {
     tag.is_identifier_like()
         || matches!(
@@ -12882,12 +12917,14 @@ fn can_follow_parameter_property_modifier(tag: TokenTag) -> bool {
         )
 }
 
+#[inline]
 fn is_declaration_name(token: Token) -> bool {
     token.tag().is_identifier_like()
         && !token.tag().is_unconditionally_reserved()
         && !token.has_line_terminator_before()
 }
 
+#[inline]
 fn import_or_export_kind_for_declare(declare: bool) -> ImportOrExportKind {
     if declare {
         ImportOrExportKind::Type
@@ -12896,6 +12933,7 @@ fn import_or_export_kind_for_declare(declare: bool) -> ImportOrExportKind {
     }
 }
 
+#[inline]
 fn can_follow_type_arguments_in_expression(token: Token) -> bool {
     match token.tag() {
         TokenTag::LeftParen | TokenTag::NoSubstitutionTemplate | TokenTag::TemplateHead => true,
@@ -12908,6 +12946,7 @@ fn can_follow_type_arguments_in_expression(token: Token) -> bool {
     }
 }
 
+#[inline]
 fn is_binary_operator_like(tag: TokenTag) -> bool {
     tag.is_binary_operator()
         || tag.is_logical_operator()
@@ -12918,6 +12957,7 @@ fn is_binary_operator_like(tag: TokenTag) -> bool {
         )
 }
 
+#[inline]
 fn is_start_of_expression(tag: TokenTag) -> bool {
     matches!(
         tag,
@@ -12944,6 +12984,7 @@ fn is_start_of_expression(tag: TokenTag) -> bool {
         || tag.is_numeric_literal()
 }
 
+#[inline]
 fn binary_operator(tag: TokenTag) -> BinaryOperator {
     match tag {
         TokenTag::Equal => BinaryOperator::Equal,
@@ -12972,6 +13013,7 @@ fn binary_operator(tag: TokenTag) -> BinaryOperator {
     }
 }
 
+#[inline]
 fn assignment_operator(tag: TokenTag) -> AssignmentOperator {
     match tag {
         TokenTag::Assign => AssignmentOperator::Assign,
