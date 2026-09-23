@@ -1,0 +1,173 @@
+name: Binary Size
+
+on:
+  pull_request:
+    types: ["opened", "reopened", "synchronize"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: binary-size-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  binary-size:
+    name: Compare binary sizes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: 1.97.1
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Prepare shared build directory
+        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/binary-size-target" >> "$GITHUB_ENV"
+
+      - name: Setup Rust toolchain and cache
+        uses: actions-rust-lang/setup-rust-toolchain@dc354b3df5a8e4db0bff5361fa176da74fcf3151 # v1
+        with:
+          toolchain: 1.97.1
+          target: x86_64-unknown-linux-gnu
+          cache-save-if: false
+          cache-key: binary-size
+          cache-workspaces: ". -> ${{ runner.temp }}/binary-size-target"
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.17.0
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24.16.0
+          cache: pnpm
+
+      - name: Measure base bindings
+        id: base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git checkout --detach "$BASE_SHA"
+          pnpm install --frozen-lockfile
+          pnpm build --release --target x86_64-unknown-linux-gnu -- --locked
+          for component in core parser codegen; do
+            bytes=$(stat --format=%s "npm/$component/src-js/swc-next-$component.linux-x64-gnu.node")
+            echo "$component=$bytes" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Measure merge bindings
+        id: merge
+        env:
+          COMPARE_SHA: ${{ github.sha }}
+        run: |
+          git checkout --detach "$COMPARE_SHA"
+          pnpm install --frozen-lockfile
+          pnpm build --release --target x86_64-unknown-linux-gnu -- --locked
+          for component in core parser codegen; do
+            bytes=$(stat --format=%s "npm/$component/src-js/swc-next-$component.linux-x64-gnu.node")
+            echo "$component=$bytes" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Render binary size report
+        id: report
+        if: always() && !cancelled()
+        env:
+          BUILD_RESULT: ${{ job.status }}
+          BASE_SIZES: ${{ toJSON(steps.base.outputs) }}
+          MERGE_SIZES: ${{ toJSON(steps.merge.outputs) }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          COMPARE_SHA: ${{ github.sha }}
+        run: |
+          node <<'NODE'
+          const { appendFileSync, writeFileSync } = require("node:fs");
+          const { join } = require("node:path");
+          const lines = [
+            "<!-- binary-size-diff -->",
+            "## Binary size diff",
+            "",
+            "Linux x64 GNU · release · uncompressed, stripped bindings.",
+            "",
+            `Merge: \`${process.env.COMPARE_SHA}\`; base: \`${process.env.BASE_SHA}\`.`,
+            "",
+          ];
+          if (process.env.BUILD_RESULT === "success") {
+            const base = JSON.parse(process.env.BASE_SIZES);
+            const merge = JSON.parse(process.env.MERGE_SIZES);
+            const components = ["core", "parser", "codegen"];
+            if (![base, merge].every(sizes => sizes && Object.keys(sizes).length === components.length && components.every(component => {
+              const value = sizes[component];
+              const bytes = Number(value);
+              return typeof value === "string" && Number.isSafeInteger(bytes) && bytes > 0 && String(bytes) === value;
+            }))) {
+              throw new Error("Invalid binary size measurements");
+            }
+            const formatSize = bytes => `${(bytes / 1024).toLocaleString("en-US", {
+              minimumFractionDigits: 2, maximumFractionDigits: 2,
+            })} KiB`;
+            lines.push(
+              "| Artifact | Merge | Base | Change (bytes) | Change (%) |",
+              "| --- | ---: | ---: | ---: | ---: |",
+            );
+            for (const component of components) {
+              const before = Number(base[component]);
+              const after = Number(merge[component]);
+              const delta = after - before;
+              const sign = delta > 0 ? "+" : "";
+              const status = delta > 0 ? "🔴" : delta < 0 ? "🟢" : "⚪";
+              lines.push(
+                `| \`@swc-next/${component}\` | ${formatSize(after)} | ${formatSize(before)} ` +
+                `| ${sign}${delta.toLocaleString("en-US")} | ${sign}${(delta / before * 100).toFixed(3)}% ${status} |`,
+              );
+            }
+          } else {
+            lines.push("⚠️ Binary size comparison unavailable. See the workflow log.");
+          }
+          const body = lines.join("\n") + "\n";
+          writeFileSync(join(process.env.RUNNER_TEMP, "binary-size-comment.md"), body);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, body);
+          NODE
+
+      - name: Publish binary size diff to pull request
+        if: >-
+          always() && !cancelled() && steps.report.outcome == 'success' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.user.login != 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -o pipefail
+          comment="$RUNNER_TEMP/binary-size-comment.md"
+          if [[ ! -s "$comment" ]]
+          then
+            exit 1
+          fi
+          current_head="$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.head.sha')"
+          if [[ "$current_head" != "$PR_HEAD_SHA" ]]
+          then
+            echo 'Skipping report for an outdated PR revision.'
+            exit 0
+          fi
+          comment_id="$(
+            gh api --paginate --slurp \
+              "repos/$GH_REPO/issues/$PR_NUMBER/comments?per_page=100" | \
+              jq -r \
+              'flatten | map(select(.user.login == "github-actions[bot]" and (.body | contains("<!-- binary-size-diff -->")))) | first | .id // empty'
+          )"
+          if [[ -n "$comment_id" ]]
+          then
+            gh api --method PATCH \
+              "repos/$GH_REPO/issues/comments/$comment_id" \
+              -F body=@"$comment"
+          else
+            gh api --method POST \
+              "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
+              -F body=@"$comment"
+          fi
