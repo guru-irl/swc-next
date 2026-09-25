@@ -20,6 +20,8 @@
   "files": [
     "index.d.ts",
     "index.js",
+    "decode-js.js",
+    "decode-ts.js",
     "README.md"
   ],
   "publishConfig": {

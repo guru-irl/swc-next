@@ -27,3 +27,9 @@ export interface DecodeResult {
 
 /** Decode a buffer produced by an SWC Next parser crate into ESTree. */
 export declare function decode(buffer: Uint8Array, source: string): DecodeResult;
+
+/** Decode a JavaScript buffer produced by an SWC Next parser crate. */
+export declare function decodeJs(buffer: Uint8Array, source: string): DecodeResult;
+
+/** Decode a TypeScript buffer produced by an SWC Next parser crate. */
+export declare function decodeTs(buffer: Uint8Array, source: string): DecodeResult;

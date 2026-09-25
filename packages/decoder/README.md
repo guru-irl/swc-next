@@ -13,3 +13,5 @@ export function parseSync(source, options) {
   return decode(buffer, source);
 }
 ```
+
+`decode` selects the JavaScript or TypeScript decoder from the buffer header. `decodeJs` and `decodeTs` are also exported for callers that already know the language.
