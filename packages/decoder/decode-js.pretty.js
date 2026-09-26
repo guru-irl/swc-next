@@ -5,6 +5,11 @@ const HEADER_SIZE = 36;
 const NATIVE_LITTLE_ENDIAN =
   new Uint8Array(new Int32Array([1]).buffer)[0] === 1;
 const textDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+const fromCharCode = String.fromCharCode;
+const shortStringChars = Array(65);
+for (let length = 0; length <= 64; length++) {
+  shortStringChars[length] = Array(length).fill(0);
+}
 
 const ENUMS = Object.freeze({
   SourceType: ["module", "script", "commonjs"],
@@ -23,33 +28,18 @@ const ENUMS = Object.freeze({
 
 });
 
-function buildPosMap(source, byteLength) {
-  const map = new Int32Array(byteLength + 1);
-  let byte = 0;
-  for (let utf16 = 0; utf16 < source.length; utf16++) {
-    const first = source.charCodeAt(utf16);
-    const isPair =
-      first >= 0xd800 &&
-      first <= 0xdbff &&
-      utf16 + 1 < source.length &&
-      source.charCodeAt(utf16 + 1) >= 0xdc00 &&
-      source.charCodeAt(utf16 + 1) <= 0xdfff;
-    const width =
-      first < 0x80 ? 1 :
-      first < 0x800 ? 2 :
-      isPair ? 4 : 3;
-    for (let i = 0; i < width; i++) map[byte + i] = utf16;
-    byte += width;
-    if (width === 4) {
-      map[byte - 1] = utf16 + 1;
-      utf16++;
-    }
-  }
-  map[byteLength] = source.length;
-  return map;
-}
-
 function decodePool(bytes) {
+  const length = bytes.length;
+  if (length <= 64) {
+    const chars = shortStringChars[length];
+    let i = 0;
+    for (; i < length; i++) {
+      const byte = bytes[i];
+      if (byte >= 0x80) break;
+      chars[i] = byte;
+    }
+    if (i === length) return fromCharCode.apply(null, chars);
+  }
   let hasSurrogate = false;
   for (const byte of bytes) {
     if (byte === 0xed) {
@@ -95,7 +85,7 @@ function copyLittleEndianI32(view) {
   }
   return i32;
 }
-export function decodeJs(buffer, source) {
+export function decodeJs(buffer, source, sourceBuffer) {
 
   const arrayBuffer = buffer instanceof ArrayBuffer ? buffer : buffer.buffer;
   const byteOffset = buffer.byteOffset ?? 0;
@@ -127,13 +117,29 @@ export function decodeJs(buffer, source) {
   const strings = extra + extraCount * 8;
   const comments = strings + ((stringPoolLength + 3) & ~3);
   const diagnostics = comments + commentCount * 16;
-  const positions =
-    source.length === sourceLength ? null : buildPosMap(source, sourceLength);
-
-  const pos = positions === null ? byte => byte : byte => positions[byte];
+  let firstNonAsciiPos = sourceLength;
+  if (source.length !== sourceLength) {
+    firstNonAsciiPos = 0;
+    while (firstNonAsciiPos < sourceLength && sourceBuffer[firstNonAsciiPos] < 0x80) {
+      firstNonAsciiPos++;
+    }
+  }
   const str = (start, end) => {
     if (start === end) return "";
-    if (start < sourceLength) return source.slice(pos(start), pos(end));
+    if (start < sourceLength) {
+      if (end <= firstNonAsciiPos) return source.slice(start, end);
+      const length = end - start;
+      if (length <= 64) {
+        const chars = shortStringChars[length];
+        for (let i = 0; i < length; i++) {
+          const byte = sourceBuffer[start + i];
+          if (byte >= 0x80) return textDecoder.decode(sourceBuffer.subarray(start, end));
+          chars[i] = byte;
+        }
+        return fromCharCode.apply(null, chars);
+      }
+      return textDecoder.decode(sourceBuffer.subarray(start, end));
+    }
     return decodePool(bytes.subarray(
       strings + start - sourceLength,
       strings + end - sourceLength,
@@ -162,15 +168,17 @@ export function decodeJs(buffer, source) {
       const offset = comments + index * 16;
       const start = _i32[offset >> 2];
       const end = _i32[(offset >> 2) + 1];
-      const kind = _dv.getUint16(offset + 12, true);
-      const first = source.charCodeAt(pos(start));
-      const valueStart = start + (first === 0x3c ? 4 : first === 0x2d ? 3 : 2);
-      const valueEnd = end - (kind === 1 ? 2 : 0);
+      const byteStart = _i32[(offset >> 2) + 2];
+      const byteEnd = _i32[(offset >> 2) + 3];
+      const first = sourceBuffer[byteStart];
+      const kind = sourceBuffer[byteStart + 1] === 0x2a ? 1 : 0;
+      const valueStart = byteStart + (first === 0x3c ? 4 : first === 0x2d ? 3 : 2);
+      const valueEnd = byteEnd - (kind === 1 ? 2 : 0);
       result[index] = {
         type: kind === 1 ? "Block" : "Line",
         value: str(valueStart, valueEnd),
-        start: pos(start),
-        end: pos(end),
+        start,
+        end,
       };
     }
     return result;
@@ -198,16 +206,16 @@ export function decodeJs(buffer, source) {
       if (severity === undefined) {
         throw new RangeError(`Unknown diagnostic severity ${severityValue}`);
       }
-      const start = pos(readU32());
-      const end = pos(readU32());
+      const start = readU32();
+      const end = readU32();
       const message = readDiagnosticString();
       const help = readU8() === 0 ? undefined : readDiagnosticString();
       const labelCount = readU32();
       const labels = new Array(labelCount);
       for (let label = 0; label < labelCount; label++) {
         labels[label] = {
-          start: pos(readU32()),
-          end: pos(readU32()),
+          start: readU32(),
+          end: readU32(),
           message: readDiagnosticString(),
         };
       }
@@ -218,8 +226,8 @@ export function decodeJs(buffer, source) {
 
   function node(index) {
     const span = spans + index * 8;
-    const start = pos(_i32[span >> 2]);
-    const end = pos(_i32[(span >> 2) + 1]);
+    const start = _i32[span >> 2];
+    const end = _i32[(span >> 2) + 1];
     const payload = payloads + index * 16;
     let result;
     switch (bytes[kinds + index]) {
@@ -258,7 +266,7 @@ export function decodeJs(buffer, source) {
       }
       case 5: {
         const f_raw = str(_i32[(payload + 0) >> 2], _i32[(payload + 0 + 4) >> 2]);
-        const raw = source.slice(start, end);
+        const raw = `${f_raw}n`;
         const value = BigInt(f_raw.replaceAll("_", ""));
         result = { type: "Literal", start, end, value, raw, bigint: value.toString() };
         break;
