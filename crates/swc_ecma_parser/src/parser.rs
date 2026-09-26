@@ -6016,7 +6016,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.advance()?;
         self.ts_context
             .insert(TsContext::DISALLOW_CONDITIONAL_TYPES);
-        let constraint = match self.parse_union_type() {
+        let constraint = match self.parse_type_no_conditional() {
             Some(constraint) => constraint,
             None => {
                 self.rewind(checkpoint);
@@ -13112,6 +13112,55 @@ mod tests {
         )
         .parse()
         .diagnostics
+    }
+
+    #[test]
+    fn infer_constraints() {
+        fn constraint(ast: &Ast<'_>) -> TsType {
+            let statement = ast.root_program().body(ast).get_node(ast, 0).unwrap();
+            let declaration = statement.as_declaration(ast).unwrap();
+            let alias = declaration.as_ts_type_alias_declaration(ast).unwrap();
+            let conditional = alias
+                .type_annotation(ast)
+                .as_ts_conditional_type(ast)
+                .unwrap();
+            let infer = conditional.extends_type(ast).as_ts_infer_type(ast).unwrap();
+            infer.type_parameter(ast).constraint(ast).unwrap()
+        }
+
+        for lang in [Lang::Ts, Lang::Tsx] {
+            let allocator = Allocator::new();
+            let options = Options {
+                lang,
+                ..Options::default()
+            };
+            let parse = |source| {
+                let result = Parser::init(&allocator, source, options, NoTokenParserConfig).parse();
+                assert!(result.diagnostics.is_empty());
+                result.ast
+            };
+
+            let ast = parse("type T<A> = A extends infer U extends () => void ? U : never;");
+            let function = constraint(&ast).as_ts_function_type(&ast).unwrap();
+            assert!(function.type_parameters(&ast).is_none());
+
+            let ast = parse("type T<A> = A extends infer U extends <V>() => V ? U : never;");
+            let function = constraint(&ast).as_ts_function_type(&ast).unwrap();
+            assert_eq!(
+                function.type_parameters(&ast).unwrap().params(&ast).len(),
+                1
+            );
+
+            let ast = parse("type T<A> = A extends infer U extends new () => object ? U : never;");
+            let constructor = constraint(&ast).as_ts_constructor_type(&ast).unwrap();
+            assert!(!constructor.r#abstract(&ast));
+
+            let ast = parse(
+                "type T<A> = A extends infer U extends abstract new () => object ? U : never;",
+            );
+            let constructor = constraint(&ast).as_ts_constructor_type(&ast).unwrap();
+            assert!(constructor.r#abstract(&ast));
+        }
     }
 
     fn serialize_ast(ast: &Ast<'_>) -> Vec<u8> {
