@@ -4,7 +4,19 @@ const NULL = -1;
 const HEADER_SIZE = 36;
 const NATIVE_LITTLE_ENDIAN =
   new Uint8Array(new Int32Array([1]).buffer)[0] === 1;
-const textDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+const utf8Slice = typeof Buffer !== "undefined" &&
+  typeof Buffer.prototype.utf8Slice === "function"
+  ? Buffer.prototype.utf8Slice
+  : (() => {
+      const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+      return function(start, end) {
+        return decoder.decode(this.subarray(start, end));
+      };
+    })();
+const latin1Slice = typeof Buffer !== "undefined" &&
+  typeof Buffer.prototype.latin1Slice === "function"
+  ? Buffer.prototype.latin1Slice
+  : null;
 const fromCharCode = String.fromCharCode;
 const shortStringChars = Array(65);
 for (let length = 0; length <= 64; length++) {
@@ -47,7 +59,7 @@ function decodePool(bytes) {
       break;
     }
   }
-  if (!hasSurrogate) return textDecoder.decode(bytes);
+  if (!hasSurrogate) return utf8Slice.call(bytes, 0, length);
 
   let result = "";
   for (let i = 0; i < bytes.length;) {
@@ -118,11 +130,15 @@ export function decodeJs(buffer, source, sourceBuffer) {
   const comments = strings + ((stringPoolLength + 3) & ~3);
   const diagnostics = comments + commentCount * 16;
   let firstNonAsciiPos = sourceLength;
+  let sourceLatin;
   if (source.length !== sourceLength) {
     firstNonAsciiPos = 0;
     while (firstNonAsciiPos < sourceLength && sourceBuffer[firstNonAsciiPos] < 0x80) {
       firstNonAsciiPos++;
     }
+    sourceLatin = latin1Slice === null
+      ? new TextDecoder("latin1").decode(sourceBuffer.subarray(0, sourceLength))
+      : latin1Slice.call(sourceBuffer, 0, sourceLength);
   }
   const str = (start, end) => {
     if (start === end) return "";
@@ -130,15 +146,14 @@ export function decodeJs(buffer, source, sourceBuffer) {
       if (end <= firstNonAsciiPos) return source.slice(start, end);
       const length = end - start;
       if (length <= 64) {
-        const chars = shortStringChars[length];
         for (let i = 0; i < length; i++) {
-          const byte = sourceBuffer[start + i];
-          if (byte >= 0x80) return textDecoder.decode(sourceBuffer.subarray(start, end));
-          chars[i] = byte;
+          if (sourceBuffer[start + i] >= 0x80) {
+            return utf8Slice.call(sourceBuffer, start, end);
+          }
         }
-        return fromCharCode.apply(null, chars);
+        return sourceLatin.slice(start, end);
       }
-      return textDecoder.decode(sourceBuffer.subarray(start, end));
+      return utf8Slice.call(sourceBuffer, start, end);
     }
     return decodePool(bytes.subarray(
       strings + start - sourceLength,
@@ -205,7 +220,7 @@ export function decodeJs(buffer, source, sourceBuffer) {
     };
     const readDiagnosticString = () => {
       const length = readU32();
-      const value = textDecoder.decode(bytes.subarray(offset, offset + length));
+      const value = utf8Slice.call(bytes, offset, offset + length);
       offset += length;
       return value;
     };
@@ -261,20 +276,20 @@ export function decodeJs(buffer, source, sourceBuffer) {
       }
       case 3: {
         const f_value = str(_i32[(payload + 0) >> 2], _i32[(payload + 0 + 4) >> 2]);
-        const f_raw = str(_i32[(payload + 8) >> 2], _i32[(payload + 8 + 4) >> 2]);
+        const f_raw = source.slice(start, end);
         result = { type: "Literal", start, end, value: f_value, raw: f_raw };
         break;
       }
       case 4: {
         const f_value = _dv.getFloat64(payload + 0, true);
-        const f_raw = _i32[(payload + 8) >> 2] === NULL && _i32[(payload + 8 + 4) >> 2] === 0 ? null : str(_i32[(payload + 8) >> 2], _i32[(payload + 8 + 4) >> 2]);
+        const f_raw = _i32[(payload + 8) >> 2] === NULL && _i32[(payload + 8 + 4) >> 2] === 0 ? null : source.slice(start, end);
         const value = f_value;
         const raw = f_raw ?? String(value);
         result = { type: "Literal", start, end, value, raw };
         break;
       }
       case 5: {
-        const f_raw = str(_i32[(payload + 0) >> 2], _i32[(payload + 0 + 4) >> 2]);
+        const f_raw = source.slice(start, end - 1);
         const raw = `${f_raw}n`;
         const value = BigInt(f_raw.replaceAll("_", ""));
         result = { type: "Literal", start, end, value, raw, bigint: value.toString() };
@@ -314,9 +329,8 @@ export function decodeJs(buffer, source, sourceBuffer) {
         break;
       }
       case 10: {
-        const extraId = _i32[(payload + 12) >> 2];
         const f_cooked = str(_dv.getInt32(payload + 2, true), _dv.getInt32(payload + 2 + 4, true));
-        const f_raw = str(_i32[(extra + (extraId + 0) * 8) >> 2], _i32[(extra + (extraId + 0) * 8 + 4) >> 2]);
+        const f_raw = source.slice(start, end);
         const f_tail = _dv.getUint8(payload + 0) !== 0;
         const f_isCookedUndefined = _dv.getUint8(payload + 1) !== 0;
         result = { type: "TemplateElement", start, end, value: { raw: f_raw, cooked: f_isCookedUndefined ? null : f_cooked }, tail: f_tail };
@@ -1001,7 +1015,7 @@ export function decodeJs(buffer, source, sourceBuffer) {
         break;
       }
       case 174: {
-        const f_value = str(_i32[(payload + 0) >> 2], _i32[(payload + 0 + 4) >> 2]);
+        const f_value = source.slice(start, end);
         result = { type: "JSXText", start, end, value: f_value, raw: f_value };
         break;
       }

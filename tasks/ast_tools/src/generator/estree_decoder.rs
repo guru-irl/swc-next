@@ -104,7 +104,19 @@ fn write_node_case(
         if skip {
             continue;
         }
-        let expression = read_expression(field_ty, schema, &location, aligned_i32);
+        // These fields are source-backed, and node spans use UTF-16 offsets.
+        let expression = match (ast.name.as_str(), field.name.as_str()) {
+            ("StringLiteral" | "TemplateElement", "raw") | ("JsxText", "value") => {
+                "source.slice(start, end)".into()
+            }
+            ("BigIntLiteral", "raw") => "source.slice(start, end - 1)".into(),
+            ("NumericLiteral", "raw") => {
+                let raw_start = read_i32(&location, aligned_i32);
+                let raw_end = read_i32(&format!("{location} + 4"), aligned_i32);
+                format!("{raw_start} === NULL && {raw_end} === 0 ? null : source.slice(start, end)")
+            }
+            _ => read_expression(field_ty, schema, &location, aligned_i32),
+        };
         let field_name = estree_field_name(&ast.name, &field.name);
         let range = matches!(field_ty, AstType::SubRange(_)).then(|| {
             format!(
@@ -842,7 +854,19 @@ const NULL = -1;
 const HEADER_SIZE = 36;
 const NATIVE_LITTLE_ENDIAN =
   new Uint8Array(new Int32Array([1]).buffer)[0] === 1;
-const textDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+const utf8Slice = typeof Buffer !== "undefined" &&
+  typeof Buffer.prototype.utf8Slice === "function"
+  ? Buffer.prototype.utf8Slice
+  : (() => {
+      const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+      return function(start, end) {
+        return decoder.decode(this.subarray(start, end));
+      };
+    })();
+const latin1Slice = typeof Buffer !== "undefined" &&
+  typeof Buffer.prototype.latin1Slice === "function"
+  ? Buffer.prototype.latin1Slice
+  : null;
 const fromCharCode = String.fromCharCode;
 const shortStringChars = Array(65);
 for (let length = 0; length <= 64; length++) {
@@ -897,7 +921,7 @@ function decodePool(bytes) {
       break;
     }
   }
-  if (!hasSurrogate) return textDecoder.decode(bytes);
+  if (!hasSurrogate) return utf8Slice.call(bytes, 0, length);
 
   let result = "";
   for (let i = 0; i < bytes.length;) {
@@ -969,11 +993,15 @@ const DECODE_PREAMBLE: &str = r#"
   const comments = strings + ((stringPoolLength + 3) & ~3);
   const diagnostics = comments + commentCount * 16;
   let firstNonAsciiPos = sourceLength;
+  let sourceLatin;
   if (source.length !== sourceLength) {
     firstNonAsciiPos = 0;
     while (firstNonAsciiPos < sourceLength && sourceBuffer[firstNonAsciiPos] < 0x80) {
       firstNonAsciiPos++;
     }
+    sourceLatin = latin1Slice === null
+      ? new TextDecoder("latin1").decode(sourceBuffer.subarray(0, sourceLength))
+      : latin1Slice.call(sourceBuffer, 0, sourceLength);
   }
   const str = (start, end) => {
     if (start === end) return "";
@@ -981,15 +1009,14 @@ const DECODE_PREAMBLE: &str = r#"
       if (end <= firstNonAsciiPos) return source.slice(start, end);
       const length = end - start;
       if (length <= 64) {
-        const chars = shortStringChars[length];
         for (let i = 0; i < length; i++) {
-          const byte = sourceBuffer[start + i];
-          if (byte >= 0x80) return textDecoder.decode(sourceBuffer.subarray(start, end));
-          chars[i] = byte;
+          if (sourceBuffer[start + i] >= 0x80) {
+            return utf8Slice.call(sourceBuffer, start, end);
+          }
         }
-        return fromCharCode.apply(null, chars);
+        return sourceLatin.slice(start, end);
       }
-      return textDecoder.decode(sourceBuffer.subarray(start, end));
+      return utf8Slice.call(sourceBuffer, start, end);
     }
     return decodePool(bytes.subarray(
       strings + start - sourceLength,
@@ -1056,7 +1083,7 @@ const DECODE_PREAMBLE: &str = r#"
     };
     const readDiagnosticString = () => {
       const length = readU32();
-      const value = textDecoder.decode(bytes.subarray(offset, offset + length));
+      const value = utf8Slice.call(bytes, offset, offset + length);
       offset += length;
       return value;
     };
