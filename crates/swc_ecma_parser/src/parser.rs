@@ -8077,6 +8077,17 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
             TokenTag::Slash | TokenTag::SlashAssign => self.parse_regexp_literal(),
             TokenTag::LeftBracket => self.parse_array_expression(in_cover),
             TokenTag::LeftBrace => self.parse_object_expression(in_cover),
+            TokenTag::Async => {
+                self.validate_identifier(token, "an identifier");
+                self.advance_without_escape_check()?;
+                if self.current_token.tag() == TokenTag::Function
+                    && !self.current_token.has_line_terminator_before()
+                {
+                    return self.parse_async_function_expression(token);
+                }
+                let name = self.identifier_name(token);
+                Some(self.ast.expr_identifier_reference(token.span(), name))
+            }
             TokenTag::Function => Some(Expr::Function(
                 self.parse_function(
                     ParseFunctionOpts {
@@ -8758,6 +8769,19 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         self.expression_to_parameter(expression)
     }
 
+    fn parse_async_function_expression(&mut self, async_token: Token) -> Option<Expr> {
+        self.report_if_escaped_keyword(async_token);
+        let function = self.parse_function(
+            ParseFunctionOpts {
+                is_async: true,
+                is_expression: true,
+                ..ParseFunctionOpts::default()
+            },
+            Some(async_token.start()),
+        )?;
+        Some(Expr::Function(function.into_function_expression()))
+    }
+
     fn parse_async_function_or_arrow(&mut self, minimum: Precedence) -> Option<Expr> {
         let token = self.current_token;
         let async_identifier = self.parse_identifier()?;
@@ -8767,22 +8791,7 @@ impl<'a, C: ParserConfig> Parser<'a, C> {
         }
 
         match self.current_token.tag() {
-            TokenTag::Function => {
-                if token.is_escaped() {
-                    self.report_escaped_keyword(token.span());
-                }
-                Some(Expr::Function(
-                    self.parse_function(
-                        ParseFunctionOpts {
-                            is_async: true,
-                            is_expression: true,
-                            ..ParseFunctionOpts::default()
-                        },
-                        Some(token.start()),
-                    )?
-                    .into_function_expression(),
-                ))
-            }
+            TokenTag::Function => self.parse_async_function_expression(token),
             TokenTag::LeftParen => self.parse_async_arrow_function_or_call(
                 token.span(),
                 async_identifier,
@@ -13408,15 +13417,18 @@ mod tests {
 
     #[test]
     fn new_expression() {
+        fn parse<'a>(allocator: &'a Allocator, source: &'a str, options: Options) -> Ast<'a> {
+            Parser::init(allocator, source, options, NoTokenParserConfig)
+                .parse_expression_fragment(FragmentContext::TopLevel)
+                .unwrap()
+        }
+
         let allocator = Allocator::new();
         let options = Options {
             lang: Lang::Ts,
             ..Options::default()
         };
-        let source = "new parent.components!.KeepAlive()";
-        let ast = Parser::init(&allocator, source, options, NoTokenParserConfig)
-            .parse_expression_fragment(FragmentContext::TopLevel)
-            .unwrap();
+        let ast = parse(&allocator, "new parent.components!.KeepAlive()", options);
         let expression = ast.root_expression().as_new_expression(&ast).unwrap();
         let callee = expression.callee(&ast).as_member_expression(&ast).unwrap();
         let property = callee.property(&ast).as_identifier_name(&ast).unwrap();
@@ -13431,6 +13443,64 @@ mod tests {
         let object = member.object(&ast).as_identifier_reference(&ast).unwrap();
         assert_eq!(ast.get_utf8(object.name(&ast)), "parent");
         assert!(expression.arguments(&ast).is_empty());
+
+        let ast = parse(&allocator, "new async(1)", options);
+        let expression = ast.root_expression().as_new_expression(&ast).unwrap();
+        assert!(
+            expression
+                .callee(&ast)
+                .as_identifier_reference(&ast)
+                .is_some()
+        );
+        assert_eq!(expression.arguments(&ast).len(), 1);
+
+        let source = "new async function*(){}.constructor(1)";
+        let ast = parse(&allocator, source, options);
+        let expression = ast.root_expression().as_new_expression(&ast).unwrap();
+        let member = expression.callee(&ast).as_member_expression(&ast).unwrap();
+        let function = member.object(&ast).as_function(&ast).unwrap();
+        assert!(function.r#async(&ast));
+        assert!(function.generator(&ast));
+        assert_eq!(function.span(&ast), Span::new(4, 23));
+        assert_eq!(expression.arguments(&ast).len(), 1);
+    }
+
+    #[test]
+    fn class_heritage() {
+        fn parse<'a>(allocator: &'a Allocator, source: &'a str) -> (Ast<'a>, Expr) {
+            let result =
+                Parser::init(allocator, source, Options::default(), NoTokenParserConfig).parse();
+            assert!(result.diagnostics.is_empty());
+            let ast = result.ast;
+            let statement = ast.root_program().body(&ast).get_node(&ast, 0).unwrap();
+            let StmtData::Declaration(declaration) = ast.stmt_data(statement) else {
+                panic!("expected a class declaration");
+            };
+            let DeclData::Class(class) = ast.decl_data(declaration) else {
+                panic!("expected a class declaration");
+            };
+            let superclass = class
+                .super_class(&ast)
+                .expect("class must have a heritage expression");
+            (ast, superclass)
+        }
+
+        let allocator = Allocator::new();
+        let (ast, superclass) = parse(&allocator, "class C extends Base {}");
+        assert!(superclass.as_identifier_reference(&ast).is_some());
+
+        let (ast, superclass) = parse(&allocator, "class C extends async() {}");
+        let call = superclass.as_call_expression(&ast).unwrap();
+        assert!(call.callee(&ast).as_identifier_reference(&ast).is_some());
+
+        let source = "class C extends async function(){}.constructor {}";
+        let (ast, superclass) = parse(&allocator, source);
+        let member = superclass.as_member_expression(&ast).unwrap();
+        let property = member.property(&ast).as_identifier_name(&ast).unwrap();
+        assert_eq!(ast.get_utf8(property.name(&ast)), "constructor");
+        let function = member.object(&ast).as_function(&ast).unwrap();
+        assert!(function.r#async(&ast));
+        assert!(!function.generator(&ast));
     }
 
     #[test]
