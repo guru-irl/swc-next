@@ -6,7 +6,7 @@
 //! `extra_data` using the same generated AST schema.
 //!
 //! Layout, in order:
-//! - 36-byte header;
+//! - 40-byte header, including the first non-ASCII source byte position;
 //! - `node_count` UTF-16 spans (`start: u32`, `end: u32`);
 //! - `node_count` one-byte node kinds, padded to four bytes;
 //! - `node_count` 16-byte `NodePayload` values;
@@ -39,7 +39,7 @@ use crate::{
     NodePayload, SourceType, Span,
 };
 
-const HEADER_SIZE: usize = 36;
+const HEADER_SIZE: usize = 40;
 const SPAN_SIZE: usize = 8;
 const NODE_KIND_SIZE: usize = 1;
 const NODE_PAYLOAD_SIZE: usize = 16;
@@ -47,6 +47,15 @@ const EXTRA_DATA_SIZE: usize = 8;
 const COMMENT_SIZE: usize = 16;
 const FLAG_TS: u32 = 1 << 0;
 const FLAG_SOURCE_TYPE_SHIFT: u32 = 1;
+
+// Skip ASCII runs in 64-byte chunks instead of decoding each byte as a character.
+const ASCII_SCAN_CHUNK_SIZE: usize = 64;
+// Group source bytes into 256-byte blocks for the sparse position map.
+const POSITION_BLOCK_SIZE: usize = 256;
+// Use a dense map when there is more than one non-ASCII character per 128 bytes.
+const DENSE_POSITION_THRESHOLD: usize = 128;
+// Use a dense map when non-ASCII characters touch at least one quarter of the blocks.
+const DENSE_BLOCK_COVERAGE_THRESHOLD: usize = 4;
 
 const _: () = {
     assert!(size_of::<Span>() == SPAN_SIZE);
@@ -109,7 +118,7 @@ pub fn serialize_into(
     if buf.len() < required {
         return required;
     }
-    let positions = build_pos_map(tree.source(), source_utf16_len);
+    let (positions, first_non_ascii_pos) = build_pos_map(tree.source(), source_utf16_len);
 
     // ====================== Header ======================
     let node_count = u32::try_from(tree.node_count()).expect("AST node count exceeds u32");
@@ -133,6 +142,7 @@ pub fn serialize_into(
         tree.root_node_id().index() as u32,
         (if tree.is_ts() { FLAG_TS } else { 0 })
             | ((tree.source_type() as u32) << FLAG_SOURCE_TYPE_SHIFT),
+        u32::try_from(first_non_ascii_pos).expect("AST source length exceeds u32"),
     ] {
         write_u32(buf, &mut pos, value);
     }
@@ -148,8 +158,8 @@ pub fn serialize_into(
         write_slice(buf, &mut pos, spans);
     } else {
         for span in unsafe { slice::from_raw_parts(tree.nodes.span.as_ptr(), tree.node_count()) } {
-            write_u32(buf, &mut pos, utf16_pos(span.start, positions.as_deref()));
-            write_u32(buf, &mut pos, utf16_pos(span.end, positions.as_deref()));
+            write_u32(buf, &mut pos, utf16_pos(span.start, positions.as_ref()));
+            write_u32(buf, &mut pos, utf16_pos(span.end, positions.as_ref()));
         }
     }
 
@@ -202,9 +212,9 @@ pub fn serialize_into(
 
     // =================== Comments ====================
     for comment in tree.comments() {
-        let start = utf16_pos(comment.span.start, positions.as_deref());
+        let start = utf16_pos(comment.span.start, positions.as_ref());
         write_u32(buf, &mut pos, start);
-        let end = utf16_pos(comment.span.end, positions.as_deref());
+        let end = utf16_pos(comment.span.end, positions.as_ref());
         write_u32(buf, &mut pos, end);
         write_u32(buf, &mut pos, comment.span.start);
         write_u32(buf, &mut pos, comment.span.end);
@@ -213,9 +223,9 @@ pub fn serialize_into(
     // =================== Diagnostics ====================
     for diagnostic in diagnostics {
         write_u8(buf, &mut pos, diagnostic.severity as u8);
-        let start = utf16_pos(diagnostic.span.start, positions.as_deref());
+        let start = utf16_pos(diagnostic.span.start, positions.as_ref());
         write_u32(buf, &mut pos, start);
-        let end = utf16_pos(diagnostic.span.end, positions.as_deref());
+        let end = utf16_pos(diagnostic.span.end, positions.as_ref());
         write_u32(buf, &mut pos, end);
         write_bytes_with_length(buf, &mut pos, diagnostic.message.as_bytes());
         write_u8(buf, &mut pos, u8::from(diagnostic.help.is_some()));
@@ -226,9 +236,9 @@ pub fn serialize_into(
             u32::try_from(diagnostic.labels.len()).expect("diagnostic label count exceeds u32");
         write_u32(buf, &mut pos, label_count);
         for label in &diagnostic.labels {
-            let start = utf16_pos(label.span.start, positions.as_deref());
+            let start = utf16_pos(label.span.start, positions.as_ref());
             write_u32(buf, &mut pos, start);
-            let end = utf16_pos(label.span.end, positions.as_deref());
+            let end = utf16_pos(label.span.end, positions.as_ref());
             write_u32(buf, &mut pos, end);
             write_bytes_with_length(buf, &mut pos, label.message.as_bytes());
         }
@@ -415,28 +425,172 @@ fn checked_add(left: usize, right: usize) -> Result<usize, DeserializeError> {
         .ok_or(DeserializeError("AST buffer section offset overflow"))
 }
 
-fn build_pos_map(source: &str, source_utf16_len: usize) -> Option<Vec<u32>> {
+struct NonAsciiChar {
+    start: usize,
+    end: usize,
+    utf16_start: u32,
+    utf16_end: u32,
+}
+
+struct PositionBlock {
+    delta: u32,
+    positions: Option<Box<[u32]>>,
+}
+
+enum PositionMap {
+    Dense(Vec<u32>),
+    Sparse {
+        source_len: usize,
+        blocks: Vec<PositionBlock>,
+    },
+}
+
+fn build_pos_map(source: &str, source_utf16_len: usize) -> (Option<PositionMap>, usize) {
     if source.len() == source_utf16_len {
-        return None;
+        return (None, source.len());
     }
 
+    let bytes = source.as_bytes();
+    let mut non_ascii = Vec::new();
+    let mut byte = 0;
+    let mut utf16 = 0u32;
+    let dense_threshold = source.len() / DENSE_POSITION_THRESHOLD;
+    let dense_block_threshold = source
+        .len()
+        .div_ceil(POSITION_BLOCK_SIZE)
+        .div_ceil(DENSE_BLOCK_COVERAGE_THRESHOLD);
+    let mut covered_blocks = 0;
+    let mut last_covered_block = None;
+    while byte < bytes.len() {
+        let chunk_end = (byte + ASCII_SCAN_CHUNK_SIZE).min(bytes.len());
+        if bytes[byte..chunk_end].is_ascii() {
+            utf16 += (chunk_end - byte) as u32;
+            byte = chunk_end;
+            continue;
+        }
+
+        while byte < chunk_end {
+            let char_len = match bytes[byte] {
+                0..=0x7f => 1,
+                0xc0..=0xdf => 2,
+                0xe0..=0xef => 3,
+                0xf0..=0xf4 => 4,
+                _ => unreachable!("source is valid UTF-8"),
+            };
+            let utf16_len = if char_len == 4 { 2 } else { 1 };
+            if char_len != 1 {
+                for block in
+                    byte / POSITION_BLOCK_SIZE..=(byte + char_len - 1) / POSITION_BLOCK_SIZE
+                {
+                    if last_covered_block != Some(block) {
+                        covered_blocks += 1;
+                        last_covered_block = Some(block);
+                    }
+                }
+                non_ascii.push(NonAsciiChar {
+                    start: byte,
+                    end: byte + char_len,
+                    utf16_start: utf16,
+                    utf16_end: utf16 + utf16_len,
+                });
+                // A dense source or widely distributed Unicode is cheaper to map directly.
+                if non_ascii.len() > dense_threshold || covered_blocks >= dense_block_threshold {
+                    let first_non_ascii_pos = non_ascii[0].start;
+                    return (
+                        Some(PositionMap::Dense(build_dense_pos_map(source))),
+                        first_non_ascii_pos,
+                    );
+                }
+            }
+            byte += char_len;
+            utf16 += utf16_len;
+        }
+    }
+
+    let first_non_ascii_pos = non_ascii[0].start;
+    let mut blocks = Vec::with_capacity(source.len() / POSITION_BLOCK_SIZE + 1);
+    let mut event_index = 0;
+    let mut delta = 0;
+    for block_start in (0..=source.len()).step_by(POSITION_BLOCK_SIZE) {
+        while event_index < non_ascii.len() && non_ascii[event_index].end <= block_start {
+            let event = &non_ascii[event_index];
+            delta = event.end as u32 - event.utf16_end;
+            event_index += 1;
+        }
+
+        let block_end = (block_start + POSITION_BLOCK_SIZE).min(source.len() + 1);
+        let positions = if event_index < non_ascii.len() && non_ascii[event_index].start < block_end
+        {
+            let mut positions = Vec::with_capacity(block_end - block_start);
+            let mut local_index = event_index;
+            let mut local_delta = delta;
+            for byte in block_start..block_end {
+                while local_index < non_ascii.len() && non_ascii[local_index].end <= byte {
+                    let event = &non_ascii[local_index];
+                    local_delta = event.end as u32 - event.utf16_end;
+                    local_index += 1;
+                }
+                let position =
+                    if local_index < non_ascii.len() && non_ascii[local_index].start <= byte {
+                        let event = &non_ascii[local_index];
+                        // The final byte of a four-byte scalar maps to its second UTF-16 unit.
+                        event.utf16_start
+                            + u32::from(event.end - event.start == 4 && byte + 1 == event.end)
+                    } else {
+                        byte as u32 - local_delta
+                    };
+                positions.push(position);
+            }
+            Some(positions.into_boxed_slice())
+        } else {
+            None
+        };
+        blocks.push(PositionBlock { delta, positions });
+    }
+
+    (
+        Some(PositionMap::Sparse {
+            source_len: source.len(),
+            blocks,
+        }),
+        first_non_ascii_pos,
+    )
+}
+
+fn build_dense_pos_map(source: &str) -> Vec<u32> {
     let mut map = vec![0; source.len() + 1];
     let mut utf16 = 0u32;
     for (byte, ch) in source.char_indices() {
-        map[byte..byte + ch.len_utf8()].fill(utf16);
-        if ch.len_utf8() == 4 {
+        let char_len = ch.len_utf8();
+        map[byte..byte + char_len].fill(utf16);
+        if char_len == 4 {
             map[byte + 3] = utf16 + 1;
         }
         utf16 += ch.len_utf16() as u32;
     }
     map[source.len()] = utf16;
-    Some(map)
+    map
 }
 
 #[inline]
-fn utf16_pos(byte: u32, map: Option<&[u32]>) -> u32 {
-    map.and_then(|map| map.get(byte as usize).copied())
-        .unwrap_or(byte)
+fn utf16_pos(byte: u32, map: Option<&PositionMap>) -> u32 {
+    let Some(map) = map else { return byte };
+    let byte_index = byte as usize;
+    match map {
+        PositionMap::Dense(positions) => positions.get(byte_index).copied().unwrap_or(byte),
+        PositionMap::Sparse { source_len, blocks } => {
+            if byte_index > *source_len {
+                return byte;
+            }
+            let block = &blocks[byte_index / POSITION_BLOCK_SIZE];
+            block
+                .positions
+                .as_ref()
+                .map_or(byte - block.delta, |positions| {
+                    positions[byte_index % POSITION_BLOCK_SIZE]
+                })
+        }
+    }
 }
 
 #[inline]
@@ -503,7 +657,9 @@ mod tests {
 
     use swc_next_allocator::Allocator;
 
-    use super::{buffer_size, deserialize_from, serialize_into};
+    use super::{
+        PositionMap, buffer_size, build_pos_map, deserialize_from, serialize_into, utf16_pos,
+    };
     use crate::{Ast, Diagnostic, GetSpan, Label, Severity, Span, SubRange};
 
     #[test]
@@ -517,21 +673,22 @@ mod tests {
 
         let mut buffer = vec![0; buffer_size(&ast, &[])];
         assert_eq!(serialize_into(&ast, &[], &mut buffer, 0), buffer.len());
-        assert_eq!(buffer.len(), 104);
+        assert_eq!(buffer.len(), 108);
 
         assert_eq!(u32_at(&buffer, 0), 2); // node count
         assert_eq!(u32_at(&buffer, 4), 2); // extra-data count
         assert_eq!(u32_at(&buffer, 28), 1); // root node ID
+        assert_eq!(u32_at(&buffer, 36), 0); // no non-ASCII source bytes
 
-        assert_eq!(u32_at(&buffer, 72), u32::MAX); // no hashbang
-        assert_eq!(u32_at(&buffer, 76), 0); // inline directives start
-        assert_eq!(u32_at(&buffer, 80), 0); // inline directives end
-        assert_eq!(u32_at(&buffer, 84), 1); // out-of-line body field
+        assert_eq!(u32_at(&buffer, 76), u32::MAX); // no hashbang
+        assert_eq!(u32_at(&buffer, 80), 0); // inline directives start
+        assert_eq!(u32_at(&buffer, 84), 0); // inline directives end
+        assert_eq!(u32_at(&buffer, 88), 1); // out-of-line body field
 
-        assert_eq!(u32_at(&buffer, 88), 0); // body element node ID
-        assert_eq!(u32_at(&buffer, 92), 0); // node ID padding
-        assert_eq!(u32_at(&buffer, 96), 0); // body range start
-        assert_eq!(u32_at(&buffer, 100), 1); // body range end
+        assert_eq!(u32_at(&buffer, 92), 0); // body element node ID
+        assert_eq!(u32_at(&buffer, 96), 0); // node ID padding
+        assert_eq!(u32_at(&buffer, 100), 0); // body range start
+        assert_eq!(u32_at(&buffer, 104), 1); // body range end
     }
 
     #[test]
@@ -557,6 +714,59 @@ mod tests {
         assert_eq!(decoded_program.span(&decoded), Span::new(1, 4));
         assert_eq!(decoded_statement.span(&decoded), Span::new(2, 3));
         assert!(decoded_statement.is_empty_statement(&decoded));
+    }
+
+    #[test]
+    fn position_map_across_blocks() {
+        let (ascii, first_non_ascii) = build_pos_map("abc", 3);
+        assert!(ascii.is_none());
+        assert_eq!(first_non_ascii, 3);
+
+        let source = format!(
+            "{}😀é{}🦀{}",
+            "a".repeat(255),
+            "b".repeat(255),
+            "c".repeat(4096)
+        );
+        let (map, first_non_ascii) = build_pos_map(&source, source.encode_utf16().count());
+        assert!(matches!(map.as_ref(), Some(PositionMap::Sparse { .. })));
+        let map = map.as_ref();
+        assert_eq!(first_non_ascii, 255);
+        assert_eq!(utf16_pos(254, map), 254);
+        assert_eq!(utf16_pos(255, map), 255);
+        assert_eq!(utf16_pos(256, map), 255);
+        assert_eq!(utf16_pos(258, map), 256);
+        assert_eq!(utf16_pos(259, map), 257);
+        assert_eq!(utf16_pos(260, map), 257);
+        assert_eq!(utf16_pos(261, map), 258);
+        assert_eq!(utf16_pos(516, map), 513);
+        assert_eq!(utf16_pos(519, map), 514);
+        assert_eq!(utf16_pos(520, map), 515);
+        assert_eq!(utf16_pos(521, map), 516);
+        assert_eq!(
+            utf16_pos((source.len() + 1) as u32, map),
+            (source.len() + 1) as u32
+        );
+
+        let dense_source = "é".repeat(256);
+        let (dense, first_non_ascii) =
+            build_pos_map(&dense_source, dense_source.encode_utf16().count());
+        assert!(matches!(dense, Some(PositionMap::Dense(_))));
+        assert_eq!(first_non_ascii, 0);
+        assert_eq!(utf16_pos(1, dense.as_ref()), 0);
+        assert_eq!(utf16_pos(255, dense.as_ref()), 127);
+        assert_eq!(utf16_pos(512, dense.as_ref()), 256);
+
+        let distributed_source = format!("{}é", "a".repeat(254)).repeat(128);
+        let (distributed, first_non_ascii) = build_pos_map(
+            &distributed_source,
+            distributed_source.encode_utf16().count(),
+        );
+        assert!(matches!(distributed, Some(PositionMap::Dense(_))));
+        assert_eq!(first_non_ascii, 254);
+        assert_eq!(utf16_pos(255, distributed.as_ref()), 254);
+        assert_eq!(utf16_pos(256, distributed.as_ref()), 255);
+        assert_eq!(utf16_pos(512, distributed.as_ref()), 510);
     }
 
     #[test]
@@ -590,7 +800,8 @@ mod tests {
         let mut buffer = vec![0; required];
         assert_eq!(serialize_into(&ast, &diagnostics, &mut buffer, 2), required);
         assert_eq!(u32_at(&buffer, 24), 1); // diagnostic count
-        assert_eq!(u32_at(&buffer, 40), 2); // program end in UTF-16 units
+        assert_eq!(u32_at(&buffer, 36), 0); // first non-ASCII byte
+        assert_eq!(u32_at(&buffer, 44), 2); // program end in UTF-16 units
 
         let diagnostic = diagnostics_offset;
         assert_eq!(buffer[diagnostic], Severity::Warning as u8);
