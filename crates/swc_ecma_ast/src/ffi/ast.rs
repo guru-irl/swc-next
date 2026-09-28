@@ -24,7 +24,8 @@
 //! Attached comments are intentionally omitted for now. Their count in the
 //! header is always zero.
 //!
-//! All multi-byte integers are little-endian, independent of the host target.
+//! All multi-byte values use little-endian byte order, including on big-endian
+//! Rust and JavaScript targets.
 
 use std::{
     fmt,
@@ -131,21 +132,24 @@ pub fn serialize_into(
     let diag_count = u32::try_from(diagnostics.len()).expect("diagnostic count exceeds u32");
 
     let mut pos = 0;
-    for value in [
-        node_count,
-        extra_count,
-        string_pool_len,
-        source_len,
-        comment_count,
-        0, // attached_comment_count
-        diag_count,
-        tree.root_node_id().index() as u32,
-        (if tree.is_ts() { FLAG_TS } else { 0 })
-            | ((tree.source_type() as u32) << FLAG_SOURCE_TYPE_SHIFT),
-        u32::try_from(first_non_ascii_pos).expect("AST source length exceeds u32"),
-    ] {
-        write_u32(buf, &mut pos, value);
-    }
+    write(buf, &mut pos, &node_count.to_le_bytes());
+    write(buf, &mut pos, &extra_count.to_le_bytes());
+    write(buf, &mut pos, &string_pool_len.to_le_bytes());
+    write(buf, &mut pos, &source_len.to_le_bytes());
+    write(buf, &mut pos, &comment_count.to_le_bytes());
+    write(buf, &mut pos, &0u32.to_le_bytes()); // attached_comment_count
+    write(buf, &mut pos, &diag_count.to_le_bytes());
+    write(
+        buf,
+        &mut pos,
+        &(tree.root_node_id().index() as u32).to_le_bytes(),
+    );
+    let flags = (if tree.is_ts() { FLAG_TS } else { 0 })
+        | ((tree.source_type() as u32) << FLAG_SOURCE_TYPE_SHIFT);
+    write(buf, &mut pos, &flags.to_le_bytes());
+    let first_non_ascii_pos =
+        u32::try_from(first_non_ascii_pos).expect("AST source length exceeds u32");
+    write(buf, &mut pos, &first_non_ascii_pos.to_le_bytes());
 
     // ==================== Spans =====================
     let spans = unsafe {
@@ -155,11 +159,13 @@ pub fn serialize_into(
         )
     };
     if positions.is_none() && cfg!(target_endian = "little") {
-        write_slice(buf, &mut pos, spans);
+        write(buf, &mut pos, spans);
     } else {
         for span in unsafe { slice::from_raw_parts(tree.nodes.span.as_ptr(), tree.node_count()) } {
-            write_u32(buf, &mut pos, utf16_pos(span.start, positions.as_ref()));
-            write_u32(buf, &mut pos, utf16_pos(span.end, positions.as_ref()));
+            let start = utf16_pos(span.start, positions.as_ref());
+            write(buf, &mut pos, &start.to_le_bytes());
+            let end = utf16_pos(span.end, positions.as_ref());
+            write(buf, &mut pos, &end.to_le_bytes());
         }
     }
 
@@ -170,7 +176,7 @@ pub fn serialize_into(
             tree.node_count() * NODE_KIND_SIZE,
         )
     };
-    write_slice(buf, &mut pos, kinds);
+    write(buf, &mut pos, kinds);
     pad_to_four(buf, &mut pos);
 
     // =================== Payloads ====================
@@ -181,11 +187,17 @@ pub fn serialize_into(
         )
     };
     if cfg!(target_endian = "little") {
-        write_slice(buf, &mut pos, payloads);
+        write(buf, &mut pos, payloads);
     } else {
-        for payload in unsafe { slice::from_raw_parts(tree.nodes.data.as_ptr(), tree.node_count()) }
-        {
-            write_bytes(buf, &mut pos, &payload.0.to_le_bytes());
+        for index in 0..tree.node_count() {
+            let start = index * NODE_PAYLOAD_SIZE;
+            let mut payload: [u8; NODE_PAYLOAD_SIZE] = payloads[start..start + NODE_PAYLOAD_SIZE]
+                .try_into()
+                .unwrap();
+            // SAFETY: The AST node table contains `node_count` initialized kinds.
+            let kind = unsafe { *tree.nodes.kind.as_ptr().add(index) };
+            crate::generated::ast_payload::swap_payload_endian(&mut payload, kind);
+            write(buf, &mut pos, &payload);
         }
     }
 
@@ -197,10 +209,10 @@ pub fn serialize_into(
         )
     };
     if cfg!(target_endian = "little") {
-        write_slice(buf, &mut pos, extra_data);
+        write(buf, &mut pos, extra_data);
     } else {
         for data in tree.extra_data.as_slice() {
-            write_bytes(buf, &mut pos, &data.raw().to_le_bytes());
+            write(buf, &mut pos, &data.raw().to_le_bytes());
         }
     }
 
@@ -213,33 +225,33 @@ pub fn serialize_into(
     // =================== Comments ====================
     for comment in tree.comments() {
         let start = utf16_pos(comment.span.start, positions.as_ref());
-        write_u32(buf, &mut pos, start);
         let end = utf16_pos(comment.span.end, positions.as_ref());
-        write_u32(buf, &mut pos, end);
-        write_u32(buf, &mut pos, comment.span.start);
-        write_u32(buf, &mut pos, comment.span.end);
+        write(buf, &mut pos, &start.to_le_bytes());
+        write(buf, &mut pos, &end.to_le_bytes());
+        write(buf, &mut pos, &comment.span.start.to_le_bytes());
+        write(buf, &mut pos, &comment.span.end.to_le_bytes());
     }
 
     // =================== Diagnostics ====================
     for diagnostic in diagnostics {
-        write_u8(buf, &mut pos, diagnostic.severity as u8);
+        write(buf, &mut pos, &[diagnostic.severity as u8]);
         let start = utf16_pos(diagnostic.span.start, positions.as_ref());
-        write_u32(buf, &mut pos, start);
         let end = utf16_pos(diagnostic.span.end, positions.as_ref());
-        write_u32(buf, &mut pos, end);
+        write(buf, &mut pos, &start.to_le_bytes());
+        write(buf, &mut pos, &end.to_le_bytes());
         write_bytes_with_length(buf, &mut pos, diagnostic.message.as_bytes());
-        write_u8(buf, &mut pos, u8::from(diagnostic.help.is_some()));
+        write(buf, &mut pos, &[u8::from(diagnostic.help.is_some())]);
         if let Some(help) = &diagnostic.help {
             write_bytes_with_length(buf, &mut pos, help.as_bytes());
         }
         let label_count =
             u32::try_from(diagnostic.labels.len()).expect("diagnostic label count exceeds u32");
-        write_u32(buf, &mut pos, label_count);
+        write(buf, &mut pos, &label_count.to_le_bytes());
         for label in &diagnostic.labels {
             let start = utf16_pos(label.span.start, positions.as_ref());
-            write_u32(buf, &mut pos, start);
             let end = utf16_pos(label.span.end, positions.as_ref());
-            write_u32(buf, &mut pos, end);
+            write(buf, &mut pos, &start.to_le_bytes());
+            write(buf, &mut pos, &end.to_le_bytes());
             write_bytes_with_length(buf, &mut pos, label.message.as_bytes());
         }
     }
@@ -314,26 +326,20 @@ pub fn deserialize_from<'a>(
     if kind_bytes[program_index] != NodeKind::Program as u8 {
         return Err(DeserializeError("AST root is not a Program"));
     }
-
     // TODO: Use `sourceMap.source` when optional source-map generation is enabled.
     let mut tree = Ast::new("", allocator);
     tree.reserve(node_count, extra_count);
 
     // SAFETY: `reserve` allocated each destination for `node_count` elements.
     // The section bounds were checked above and all node-kind bytes are valid
-    // discriminants. Little-endian targets can copy the canonical wire bytes;
-    // big-endian targets reconstruct the numeric payload representation.
+    // discriminants. On big-endian targets, numeric fields are converted after
+    // copying the canonical little-endian wire bytes.
     unsafe {
         if cfg!(target_endian = "little") {
             ptr::copy_nonoverlapping(
                 buf.as_ptr().add(spans),
                 tree.nodes.span.as_ptr().cast::<u8>(),
                 node_count * SPAN_SIZE,
-            );
-            ptr::copy_nonoverlapping(
-                buf.as_ptr().add(payloads),
-                tree.nodes.data.as_ptr().cast::<u8>(),
-                node_count * NODE_PAYLOAD_SIZE,
             );
         } else {
             for index in 0..node_count {
@@ -342,14 +348,19 @@ pub fn deserialize_from<'a>(
                     read_u32(buf, span),
                     read_u32(buf, span + size_of::<u32>()),
                 ));
-                tree.nodes
-                    .data
-                    .as_ptr()
-                    .add(index)
-                    .write(NodePayload(read_u128(
-                        buf,
-                        payloads + index * NODE_PAYLOAD_SIZE,
-                    )));
+            }
+        }
+        ptr::copy_nonoverlapping(
+            buf.as_ptr().add(payloads),
+            tree.nodes.data.as_ptr().cast::<u8>(),
+            node_count * NODE_PAYLOAD_SIZE,
+        );
+        if cfg!(target_endian = "big") {
+            for (index, &kind_byte) in kind_bytes.iter().enumerate() {
+                let payload = &mut *tree.nodes.data.as_ptr().add(index);
+                let bytes = &mut *ptr::from_mut(payload).cast::<[u8; NODE_PAYLOAD_SIZE]>();
+                let kind = std::mem::transmute::<u8, NodeKind>(kind_byte);
+                crate::generated::ast_payload::swap_payload_endian(bytes, kind);
             }
         }
         ptr::copy_nonoverlapping(
@@ -366,21 +377,18 @@ pub fn deserialize_from<'a>(
     // section has the checked byte length, and all bit patterns are valid for
     // `ExtraData`.
     unsafe {
-        if cfg!(target_endian = "little") {
-            ptr::copy_nonoverlapping(
-                buf.as_ptr().add(extra),
+        ptr::copy_nonoverlapping(
+            buf.as_ptr().add(extra),
+            tree.extra_data.as_mut_ptr().cast::<u8>(),
+            extra_count * EXTRA_DATA_SIZE,
+        );
+        if cfg!(target_endian = "big") {
+            let bytes = slice::from_raw_parts_mut(
                 tree.extra_data.as_mut_ptr().cast::<u8>(),
                 extra_count * EXTRA_DATA_SIZE,
             );
-        } else {
-            for index in 0..extra_count {
-                tree.extra_data
-                    .as_mut_ptr()
-                    .add(index)
-                    .write(ExtraData::from_raw(read_u64(
-                        buf,
-                        extra + index * EXTRA_DATA_SIZE,
-                    )));
+            for word in bytes.as_chunks_mut::<4>().0 {
+                word.reverse();
             }
         }
         tree.extra_data.set_len(extra_count);
@@ -606,22 +614,7 @@ fn pad_to_four(buf: &mut [u8], pos: &mut usize) {
 }
 
 #[inline]
-fn write_u32(buf: &mut [u8], pos: &mut usize, value: u32) {
-    write_bytes(buf, pos, &value.to_le_bytes());
-}
-
-#[inline]
-fn write_u8(buf: &mut [u8], pos: &mut usize, value: u8) {
-    write_bytes(buf, pos, &value.to_le_bytes());
-}
-
-#[inline]
-fn write_bytes<const N: usize>(buf: &mut [u8], pos: &mut usize, bytes: &[u8; N]) {
-    write_slice(buf, pos, bytes);
-}
-
-#[inline]
-fn write_slice(buf: &mut [u8], pos: &mut usize, bytes: &[u8]) {
+fn write(buf: &mut [u8], pos: &mut usize, bytes: &[u8]) {
     buf[*pos..*pos + bytes.len()].copy_from_slice(bytes);
     *pos += bytes.len();
 }
@@ -632,23 +625,10 @@ fn read_u32(buf: &[u8], pos: usize) -> u32 {
 }
 
 #[inline]
-fn read_u64(buf: &[u8], pos: usize) -> u64 {
-    u64::from_le_bytes(buf[pos..pos + size_of::<u64>()].try_into().unwrap())
-}
-
-#[inline]
-fn read_u128(buf: &[u8], pos: usize) -> u128 {
-    u128::from_le_bytes(buf[pos..pos + size_of::<u128>()].try_into().unwrap())
-}
-
-#[inline]
 fn write_bytes_with_length(buf: &mut [u8], pos: &mut usize, bytes: &[u8]) {
-    write_u32(
-        buf,
-        pos,
-        u32::try_from(bytes.len()).expect("byte sequence length exceeds u32"),
-    );
-    write_slice(buf, pos, bytes);
+    let len = u32::try_from(bytes.len()).expect("byte sequence length exceeds u32");
+    write(buf, pos, &len.to_le_bytes());
+    write(buf, pos, bytes);
 }
 
 #[cfg(test)]
@@ -692,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_canonical_little_endian_format() {
+    fn deserialize_little_endian_format() {
         let allocator = Allocator::new();
         let mut ast = Ast::new("", &allocator);
         let statement = ast.stmt_empty_statement(Span::new(2, 3));
