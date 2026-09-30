@@ -79,8 +79,12 @@ impl BinaryishOperator {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OperatorCode {
     Binary(BinaryOperator),
+    Assignment,
     Unary(UnaryOperator),
     Update(UpdateOperator, bool),
+    TsNonNull,
+    TsTypeOpen,
+    TsTypeClose,
 }
 
 // Binary and logical expressions share this visitor because either kind can
