@@ -1880,7 +1880,7 @@ impl<'a> Printer<'a> {
         self.print_expr_with_context(expr, level, ExprContext::empty());
     }
 
-    fn print_expr_with_context(&mut self, expr: Expr, level: Precedence, context: ExprContext) {
+    fn print_expr_leading_comments(&mut self, expr: Expr) {
         let is_at_stmt_start = self.js.len() == self.stmt_start;
         let is_at_export_default_start = self.js.len() == self.export_default_start;
         self.print_comments_before(expr.span(self.ast).start, false, true);
@@ -1890,6 +1890,10 @@ impl<'a> Printer<'a> {
         if is_at_export_default_start {
             self.export_default_start = self.js.len();
         }
+    }
+
+    fn print_expr_with_context(&mut self, expr: Expr, level: Precedence, context: ExprContext) {
+        self.print_expr_leading_comments(expr);
         match self.ast.expr_data(expr) {
             ExprData::IdentifierReference(e) => {
                 let name = self.ast.get_utf8(e.name(self.ast));
@@ -2323,8 +2327,7 @@ impl<'a> Printer<'a> {
                 break;
             };
 
-            // Manually run the code at the start of "print_expr".
-            self.print_comments_before(left.span(self.ast).start, false, true);
+            self.print_expr_leading_comments(left);
 
             // Only allocate heap memory on the stack for nested binary-ish
             // expressions.
