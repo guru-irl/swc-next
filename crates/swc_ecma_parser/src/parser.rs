@@ -13096,19 +13096,250 @@ mod tests {
 
     use super::*;
 
-    fn parse_typescript_diagnostics(source: &str) -> Vec<Diagnostic<'static>> {
+    fn parse_typescript_declaration<'a>(
+        allocator: &'a Allocator,
+        source: &'a str,
+    ) -> (Ast<'a>, Decl) {
+        let options = Options {
+            lang: Lang::Ts,
+            source_type: SourceType::Module,
+            ..Options::default()
+        };
+        let parsed = Parser::init(allocator, source, options, NoTokenParserConfig).parse();
+        assert!(parsed.diagnostics.is_empty());
+        let ast = parsed.ast;
+        let body = ast.root_program().body(&ast);
+        assert_eq!(body.len(), 1);
+        let statement = body.get_node(&ast, 0).unwrap();
+        let declaration = statement.as_declaration(&ast).unwrap_or_else(|| {
+            statement
+                .as_export_named_declaration(&ast)
+                .unwrap()
+                .declaration(&ast)
+                .unwrap()
+        });
+        (ast, declaration)
+    }
+
+    #[test]
+    fn ambient_variables() {
+        fn parse_variable(source: &str) -> (VariableKind, String) {
+            let allocator = Allocator::new();
+            let (ast, declaration) = parse_typescript_declaration(&allocator, source);
+            let variable = declaration.as_variable_declaration(&ast).unwrap();
+            assert!(variable.declare(&ast));
+            assert_eq!(variable.declarators(&ast).len(), 1);
+            let declarator = variable.declarators(&ast).get_node(&ast, 0).unwrap();
+            assert!(declarator.type_annotation(&ast).is_some());
+            assert!(declarator.init(&ast).is_none());
+            let binding = declarator.id(&ast);
+            let name = if let Some(identifier) = binding.as_binding_identifier(&ast) {
+                ast.get_utf8(identifier.name(&ast)).to_owned()
+            } else if binding.as_array_pattern(&ast).is_some() {
+                "array".to_owned()
+            } else {
+                assert!(binding.as_object_pattern(&ast).is_some());
+                "object".to_owned()
+            };
+            (variable.kind(&ast), name)
+        }
+
+        let variable = parse_variable("declare var /* marker\n continued */ foo: string;");
+        assert_eq!(variable, (VariableKind::Var, "foo".into()));
+
+        let variable = parse_variable("declare let // marker\nfoo: string;");
+        assert_eq!(variable, (VariableKind::Let, "foo".into()));
+
+        let variable = parse_variable("declare const\nfoo: string;");
+        assert_eq!(variable, (VariableKind::Const, "foo".into()));
+
+        let variable = parse_variable("export declare const\nfoo: string;");
+        assert_eq!(variable, (VariableKind::Const, "foo".into()));
+
+        let variable = parse_variable("export declare const // marker\nfoo: string;");
+        assert_eq!(variable, (VariableKind::Const, "foo".into()));
+
+        let variable = parse_variable("export declare const /* marker\n continued */ foo: string;");
+        assert_eq!(variable, (VariableKind::Const, "foo".into()));
+
+        let variable = parse_variable("declare const // marker\nglobal: string;");
+        assert_eq!(variable, (VariableKind::Const, "global".into()));
+
+        let variable = parse_variable("declare const\n[foo]: [string];");
+        assert_eq!(variable, (VariableKind::Const, "array".into()));
+
+        let variable = parse_variable("declare let // marker\n{ foo }: { foo: string };");
+        assert_eq!(variable, (VariableKind::Let, "object".into()));
+    }
+
+    #[test]
+    fn const_enums() {
+        fn is_ambient(source: &str) -> bool {
+            let allocator = Allocator::new();
+            let (ast, declaration) = parse_typescript_declaration(&allocator, source);
+            let enumeration = declaration.as_ts_enum_declaration(&ast).unwrap();
+            assert!(enumeration.is_const(&ast));
+            assert_eq!(ast.get_utf8(enumeration.id(&ast).name(&ast)), "E");
+            assert_eq!(enumeration.body(&ast).members(&ast).len(), 1);
+            enumeration.declare(&ast)
+        }
+
+        let ambient = is_ambient("const\nenum E { A = 1 }");
+        assert!(!ambient);
+
+        let ambient = is_ambient("const // marker\nenum E { A = 1 }");
+        assert!(!ambient);
+
+        let ambient = is_ambient("const /* marker\n continued */ enum E { A = 1 }");
+        assert!(!ambient);
+
+        let ambient = is_ambient("declare const // marker\nenum E { A = 1 }");
+        assert!(ambient);
+
+        let ambient = is_ambient("export const /* marker\n continued */ enum E { A = 1 }");
+        assert!(!ambient);
+    }
+
+    #[test]
+    fn global_augmentations() {
+        fn interface_name(source: &str) -> String {
+            let allocator = Allocator::new();
+            let (ast, declaration) = parse_typescript_declaration(&allocator, source);
+            let global = declaration.as_ts_global_declaration(&ast).unwrap();
+            assert!(global.declare(&ast));
+            assert_eq!(ast.get_utf8(global.id(&ast).name(&ast)), "global");
+            let body = global.body(&ast).body(&ast);
+            assert_eq!(body.len(), 1);
+            let interface = body
+                .get_node(&ast, 0)
+                .unwrap()
+                .as_declaration(&ast)
+                .unwrap()
+                .as_ts_interface_declaration(&ast)
+                .unwrap();
+            ast.get_utf8(interface.id(&ast).name(&ast)).to_owned()
+        }
+
+        let name = interface_name("declare global\n{ interface Foo {} }");
+        assert_eq!(name, "Foo");
+
+        let name = interface_name("declare global // marker\n{ interface Foo {} }");
+        assert_eq!(name, "Foo");
+
+        let name = interface_name("declare global /* marker\n continued */ { interface Foo {} }");
+        assert_eq!(name, "Foo");
+    }
+
+    #[test]
+    fn named_declarations() {
+        fn class_flags(source: &str) -> (bool, bool, usize) {
+            let allocator = Allocator::new();
+            let (ast, declaration) = parse_typescript_declaration(&allocator, source);
+            let class = declaration.as_class(&ast).unwrap();
+            assert_eq!(class.class_type(&ast), ClassType::ClassDeclaration);
+            assert_eq!(ast.get_utf8(class.id(&ast).unwrap().name(&ast)), "Foo");
+            (
+                class.declare(&ast),
+                class.r#abstract(&ast),
+                class.body(&ast).body(&ast).len(),
+            )
+        }
+
+        let flags = class_flags("declare class // marker\nFoo {}");
+        assert_eq!(flags, (true, false, 0));
+
+        let flags = class_flags("export declare class /* marker\n continued */ Foo {}");
+        assert_eq!(flags, (true, false, 0));
+
+        let flags = class_flags(
+            "abstract class\nFoo { protected abstract readonly foo: number; public static method() {} }",
+        );
+        assert_eq!(flags, (false, true, 2));
+
+        let flags = class_flags(
+            "abstract class // marker\nFoo { protected abstract readonly foo: number; public static method() {} }",
+        );
+        assert_eq!(flags, (false, true, 2));
+
+        let flags = class_flags(
+            "abstract class /* marker\n continued */ Foo { protected abstract readonly foo: number; public static method() {} }",
+        );
+        assert_eq!(flags, (false, true, 2));
+
+        let flags = class_flags("abstract class\nFoo { abstract method<T>(x: T): T; }");
+        assert_eq!(flags, (false, true, 1));
+
+        let flags = class_flags("abstract class // marker\nFoo { abstract method<T>(x: T): T; }");
+        assert_eq!(flags, (false, true, 1));
+
+        let flags = class_flags(
+            "abstract class /* marker\n continued */ Foo { abstract method<T>(x: T): T; }",
+        );
+        assert_eq!(flags, (false, true, 1));
+
         let allocator = Allocator::new();
-        Parser::init(
-            &allocator,
-            source,
-            Options {
-                lang: Lang::Ts,
+        let (ast, declaration) =
+            parse_typescript_declaration(&allocator, "declare function\nfoo(): void;");
+        let function = declaration.as_ts_function(&ast).unwrap();
+        assert!(function.declare(&ast));
+        assert_eq!(ast.get_utf8(function.id(&ast).unwrap().name(&ast)), "foo");
+        assert!(function.params(&ast).items(&ast).is_empty());
+        assert!(function.return_type(&ast).is_some());
+    }
+
+    #[test]
+    fn ambient_function_recovery() {
+        fn function_name(ast: &Ast<'_>, statement: Stmt) -> String {
+            let function = statement
+                .as_declaration(ast)
+                .unwrap()
+                .as_ts_function(ast)
+                .unwrap();
+            ast.get_utf8(function.id(ast).unwrap().name(ast)).to_owned()
+        }
+
+        fn recovered_names(source: &str, lang: Lang) -> Vec<String> {
+            let allocator = Allocator::new();
+            let options = Options {
+                lang,
+                source_type: SourceType::Module,
                 ..Options::default()
-            },
-            NoTokenParserConfig,
-        )
-        .parse()
-        .diagnostics
+            };
+            let parsed = Parser::init(&allocator, source, options, NoTokenParserConfig).parse();
+            assert_eq!(parsed.diagnostics.len(), 1);
+            let ast = &parsed.ast;
+            let body = ast.root_program().body(ast);
+            assert_eq!(body.len(), 2);
+            let declaration = body.get_node(ast, 0).unwrap().as_declaration(ast).unwrap();
+            let functions = if let Some(module) = declaration.as_ts_module_declaration(ast) {
+                assert_eq!(function_name(ast, body.get_node(ast, 1).unwrap()), "after");
+                module
+                    .body(ast)
+                    .unwrap()
+                    .as_ts_module_block(ast)
+                    .unwrap()
+                    .body(ast)
+            } else {
+                assert!(declaration.as_ts_function(ast).unwrap().declare(ast));
+                body
+            };
+            functions
+                .iter()
+                .map(|id| function_name(ast, ast.get_node_in_sub_range(id)))
+                .collect()
+        }
+
+        let source = "declare namespace N { function bad() {} function good(): void; } declare function after(): void;";
+        let names = recovered_names(source, Lang::Ts);
+        assert_eq!(names, ["bad", "good"]);
+
+        let source = "declare module \"pkg\" { function bad() {} function good(): void; } declare function after(): void;";
+        let names = recovered_names(source, Lang::Ts);
+        assert_eq!(names, ["bad", "good"]);
+
+        let source = "declare function bad() {} declare function good(): void;";
+        let names = recovered_names(source, Lang::Dts);
+        assert_eq!(names, ["bad", "good"]);
     }
 
     #[test]
@@ -13262,6 +13493,21 @@ mod tests {
                 assert!(function.r#async(&ast));
                 assert!(function.generator(&ast));
                 assert!(function.id(&ast).is_none());
+
+                let ast = parse(
+                    "export default /* marker\n continued */ async function* f() {}\nexport { f };",
+                );
+                let function = exported_function(&ast);
+                assert_eq!(
+                    function.function_type(&ast),
+                    FunctionType::FunctionDeclaration
+                );
+                assert!(function.r#async(&ast));
+                assert!(function.generator(&ast));
+                assert_eq!(ast.get_utf8(function.id(&ast).unwrap().name(&ast)), "f");
+                assert_eq!(ast.root_program().body(&ast).len(), 2);
+                let export = ast.root_program().body(&ast).get_node(&ast, 1).unwrap();
+                assert!(export.as_export_named_declaration(&ast).is_some());
 
                 let ast = parse("export default async\nfunction f() {}");
                 let ExportDefaultDeclarationKindData::Expr(expression) = declaration(&ast) else {
@@ -13632,7 +13878,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_expression_fragment() {
+    fn expression_fragment() {
         fn parse<'a>(allocator: &'a Allocator, source: &'a str, options: Options) -> Ast<'a> {
             Parser::init(allocator, source, options, NoTokenParserConfig)
                 .parse_expression_fragment(FragmentContext::TopLevel)
@@ -13737,6 +13983,21 @@ mod tests {
 
     #[test]
     fn disallow_unerasable_assertions() {
+        fn parse_typescript_diagnostics(source: &str) -> Vec<Diagnostic<'static>> {
+            let allocator = Allocator::new();
+            Parser::init(
+                &allocator,
+                source,
+                Options {
+                    lang: Lang::Ts,
+                    ..Options::default()
+                },
+                NoTokenParserConfig,
+            )
+            .parse()
+            .diagnostics
+        }
+
         let diagnostics = parse_typescript_diagnostics("1 + 1 as number * 2");
         assert!(!diagnostics.is_empty(), "{diagnostics:#?}");
 
