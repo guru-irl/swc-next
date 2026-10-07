@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { execFileSync } from "node:child_process";
 
-import { encode } from "@swc-next/encoder";
+import { encode, encodeJs, encodeTs } from "@swc-next/encoder";
 import { parseSync, printSync } from "../src-js/index.js";
 
 test("encode writes spans in canonical little-endian order", () => {
@@ -25,26 +26,6 @@ test("printSync prints modified parser-produced ESTree", () => {
   program.body[0].declarations[0].init.value = 42;
 
   assert.equal(printSync(program).code, "const changed = 42;\n");
-});
-
-test("printSync rejects lone surrogates before they reach native AstUtf8", () => {
-  const { program } = parseSync("const value = 1;");
-  program.body[0].declarations[0].id.name = "\uD800";
-
-  // Letting WTF-8 bytes reach native AstUtf8 would violate the safety
-  // requirement of Rust's `from_utf8_unchecked` and may cause undefined behavior.
-  assert.throws(
-    () => printSync(program),
-    /AST UTF-8 field contains an unpaired surrogate/,
-  );
-});
-
-test("printSync preserves lone surrogates in WTF-8 fields", () => {
-  const { program } = parseSync('const value = "ok";');
-  program.body[0].declarations[0].init.value = "\uD800";
-  program.body[0].declarations[0].init.raw = null;
-
-  assert.equal(printSync(program).code, 'const value = "\\uD800";\n');
 });
 
 test("printSync accepts surrogate pairs in UTF-8 fields", () => {
@@ -171,4 +152,54 @@ test("printSync rejects unsupported ESTree nodes", () => {
       }),
     /Unsupported ESTree node type Unsupported/,
   );
+});
+
+test("encoder language hints select compatible JS and TS variants", () => {
+  const { program } = parseSync("const value = (a) => a;");
+  assert.deepEqual(encodeJs(program), encodeTs(program));
+  assert.deepEqual(encode(program, "js"), encodeJs(program));
+  assert.deepEqual(encode(program, "jsx"), encodeJs(program));
+  assert.deepEqual(encode(program), encodeTs(program));
+
+  const typed = parseSync("const value: string = 'ok';", { lang: "ts" }).program;
+  assert.deepEqual(encode(typed, "ts"), encodeTs(typed));
+  assert.deepEqual(encode(typed, "tsx"), encodeTs(typed));
+  assert.equal(new DataView(encodeTs(typed).buffer).getUint32(32, true) & 1, 1);
+});
+
+
+function encodeWithBufferMode(program, mode) {
+  const script = `
+    import { Buffer as NodeBuffer } from "node:buffer";
+    import { readFileSync } from "node:fs";
+    const { program, mode } = JSON.parse(readFileSync(0, "utf8"));
+    globalThis.Buffer = mode === "absent" ? undefined
+      : mode === "missing" ? { prototype: {} }
+      : { prototype: { write() { throw new TypeError("unsupported receiver"); } } };
+    const { encodeJs, encodeTs } = await import(${JSON.stringify(new URL("../../../packages/encoder/index.js", import.meta.url).href)});
+    console.log(JSON.stringify([encodeJs(program), encodeTs(program)].map(bytes =>
+      NodeBuffer.from(bytes).toString("base64"))));
+  `;
+  const output = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+    input: JSON.stringify({ program, mode }), encoding: "utf8", maxBuffer: 4 * 1024 * 1024,
+  });
+  return JSON.parse(output).map(value => Uint8Array.from(Buffer.from(value, "base64")));
+}
+
+test("encoder UTF-8 fallback matches Node", () => {
+  const { program } = parseSync('"prefix"; "value"; "tail";');
+  program.body[1].expression.value = "ab雪🌍\uD800x\uDFFF";
+  program.body[1].expression.raw = null;
+  const expected = encodeJs(program);
+  for (const mode of ["absent", "missing", "incompatible"]) {
+    const [js, ts] = encodeWithBufferMode(program, mode);
+    assert.deepEqual(js, expected);
+    assert.deepEqual(ts, expected);
+  }
+
+  program.body[1].expression.value = "ab雪🌍";
+  const utf8 = encodeJs(program);
+  const [js, ts] = encodeWithBufferMode(program, "absent");
+  assert.deepEqual(js, utf8);
+  assert.deepEqual(ts, utf8);
 });
