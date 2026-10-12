@@ -532,3 +532,44 @@ fn enum_merging() {
     assert_ne!(references[0], Some(namespace_a));
     assert_eq!(references[2], Some(namespace_a));
 }
+
+#[test]
+fn contextual_await() {
+    let allocator = Allocator::new();
+    let ts_module = Options {
+        lang: Lang::Ts,
+        ..Options::default()
+    };
+    let syntax = AnalyzeOptions {
+        check_syntax: true,
+        ..AnalyzeOptions::default()
+    };
+
+    let source = "enum E{await=1,A=await}";
+    let (ast, semantic) = analyze_with_options(&allocator, source, ts_module, syntax);
+    assert!(reference_symbol(&ast, &semantic, b"await").is_some());
+
+    let source = "namespace N{export let await=1,x=await}";
+    let (ast, semantic) = analyze_with_options(&allocator, source, ts_module, syntax);
+    assert!(reference_symbol(&ast, &semantic, b"await").is_some());
+}
+
+#[test]
+fn class_definition_super_calls() {
+    let allocator = Allocator::new();
+    let options = Options::default();
+
+    let diagnostics = has_syntax_diagnostics(
+        &allocator,
+        "class B {} class C extends B { constructor() { class Inner { [(super(), 'x')] = 0; } } }",
+        options,
+    );
+    assert!(!diagnostics);
+
+    let diagnostics = has_syntax_diagnostics(
+        &allocator,
+        "class B {} class C extends B { constructor() { class Inner { x = super(); } } }",
+        options,
+    );
+    assert!(diagnostics);
+}

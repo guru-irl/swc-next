@@ -118,6 +118,9 @@ bitflags::bitflags! {
         /// A file-level `export as namespace` alias. It does not introduce a
         /// lexical binding or inherit the meanings of a same-named local.
         const UMD_EXPORT = 1 << 22;
+        /// A TypeScript import-equals declaration, including type-only and
+        /// external `require` aliases. Independent of target resolution.
+        const IMPORT_EQUALS = 1 << 23;
 
         /// `var` / `let` / `const`, parameters and catch bindings included.
         const VARIABLE = Self::FUNCTION_SCOPED_VAR.bits() | Self::BLOCK_SCOPED_VAR.bits();
@@ -1785,6 +1788,7 @@ pub(crate) struct SymbolTracker<'a> {
     allocator: &'a Allocator,
     symbols: ArenaVec<'a, Symbol>,
     references: ArenaVec<'a, Reference>,
+    jsx_usages: ArenaVec<'a, crate::JsxUsage>,
     declarations: ArenaVec<'a, Declaration>,
     redeclarations: Redeclarations<'a>,
     node_symbols: ArenaVec<'a, Option<SymbolId>>,
@@ -1998,6 +2002,7 @@ impl<'a> SymbolTracker<'a> {
             allocator,
             symbols: ArenaVec::with_capacity_in(16usize.max(nodes / 12), allocator),
             references: ArenaVec::with_capacity_in(16usize.max(nodes / 4), allocator),
+            jsx_usages: ArenaVec::new_in(allocator),
             declarations: ArenaVec::with_capacity_in(16usize.max(nodes / 12), allocator),
             redeclarations: Redeclarations::new_in(allocator),
             node_symbols,
@@ -2390,6 +2395,7 @@ impl<'a> SymbolTracker<'a> {
     ) {
         self.push_saved_context();
         self.pending = import_pending(import_kind, scope.current);
+        self.pending.flags |= SymbolFlags::IMPORT_EQUALS;
     }
 
     pub fn enter_import_specifier(&mut self, tree: &Ast, specifier: ImportSpecifier) {
@@ -3741,6 +3747,18 @@ impl<'a> SymbolTracker<'a> {
         );
     }
 
+    pub fn record_jsx_usage(&mut self, scope: ScopeId, is_fragment: bool) {
+        // Adjacent JSX in one environment has the same implicit dependencies.
+        // Keep scope summaries instead of allocating an entry for every tag.
+        if let Some(usage) = self.jsx_usages.last_mut()
+            && usage.scope == scope
+        {
+            usage.is_fragment |= is_fragment;
+            return;
+        }
+        self.jsx_usages.push(crate::JsxUsage { scope, is_fragment });
+    }
+
     pub fn add_jsx_opening_element_reference(
         &mut self,
         tree: &Ast<'a>,
@@ -4247,6 +4265,7 @@ impl<'a> SymbolTracker<'a> {
             scopes,
             symbols: self.symbols,
             references: self.references,
+            jsx_usages: self.jsx_usages,
             reference_candidates,
             declarations,
             redeclarations,

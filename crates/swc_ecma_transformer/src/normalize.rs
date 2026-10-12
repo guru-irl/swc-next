@@ -1,7 +1,10 @@
 use swc_next_ecma_ast::{
-    Ast, CommentPosition, Expr, ExprData, GetSpan, Program, SequenceExpression, Span, SubRange,
-    TsIntersectionType, TsType, TsTypeData, TsUnionType, VisitMut, VisitMutWith,
+    Ast, Expr, ExprData, GetSpan, Program, SequenceExpression, Span, SubRange,
+    TsInterfaceDeclaration, TsIntersectionType, TsType, TsTypeAliasDeclaration, TsTypeData,
+    TsUnionType, VisitMut, VisitMutWith,
 };
+
+use crate::comments::CommentRetargets;
 
 /// Normalizes parser AST shapes for downstream transforms.
 ///
@@ -11,20 +14,28 @@ pub struct Normalizer {}
 
 impl Normalizer {
     pub fn normalize<'ast>(program: Program, ast: &mut Ast<'ast>) {
-        let mut pass = NormalizePass {
+        Self::run::<true>(program, ast);
+    }
+
+    /// Normalize executable syntax before TypeScript erasure. Type-only subtrees
+    /// are removed by the following pass and do not need canonical forms.
+    pub(crate) fn normalize_runtime<'ast>(program: Program, ast: &mut Ast<'ast>) {
+        Self::run::<false>(program, ast);
+    }
+
+    fn run<'ast, const NORMALIZE_TYPES: bool>(program: Program, ast: &mut Ast<'ast>) {
+        let mut pass = NormalizePass::<NORMALIZE_TYPES> {
             ast,
-            leading_comment_retargets: Vec::new(),
-            trailing_comment_retargets: Vec::new(),
+            comment_retargets: CommentRetargets::default(),
         };
         program.visit_mut_children_with(&mut pass);
-        pass.retarget_comments();
+        pass.comment_retargets.apply(pass.ast);
     }
 }
 
-struct NormalizePass<'visit, 'ast> {
+struct NormalizePass<'visit, 'ast, const NORMALIZE_TYPES: bool> {
     ast: &'visit mut Ast<'ast>,
-    leading_comment_retargets: Vec<(u32, u32)>,
-    trailing_comment_retargets: Vec<(u32, u32)>,
+    comment_retargets: CommentRetargets,
 }
 
 #[derive(Clone, Copy)]
@@ -70,20 +81,10 @@ impl AssociativeType {
     }
 }
 
-impl NormalizePass<'_, '_> {
+impl<const NORMALIZE_TYPES: bool> NormalizePass<'_, '_, NORMALIZE_TYPES> {
     fn record_replacement(&mut self, removed: Span, replacement: Span) {
-        if self.ast.comments().is_empty() {
-            return;
-        }
-
-        if removed.start != replacement.start {
-            self.leading_comment_retargets
-                .push((removed.start, replacement.start));
-        }
-        if removed.end != replacement.end {
-            self.trailing_comment_retargets
-                .push((removed.end, replacement.end));
-        }
+        self.comment_retargets
+            .record_replacement(self.ast, removed, replacement);
     }
 
     fn replacement_span(&self, flattened: &[Expr], start: usize) -> Option<Span> {
@@ -226,47 +227,11 @@ impl NormalizePass<'_, '_> {
         node.set_types(self.ast, types);
         None
     }
-
-    fn compact_retargets(retargets: &mut Vec<(u32, u32)>, select: fn(u32, u32) -> u32) {
-        retargets.sort_unstable_by_key(|retarget| retarget.0);
-
-        let mut write = 0;
-        for read in 0..retargets.len() {
-            let (source, target) = retargets[read];
-            if write > 0 && retargets[write - 1].0 == source {
-                retargets[write - 1].1 = select(retargets[write - 1].1, target);
-            } else {
-                retargets[write] = (source, target);
-                write += 1;
-            }
-        }
-        retargets.truncate(write);
-    }
-
-    fn retarget_comments(mut self) {
-        if self.leading_comment_retargets.is_empty() && self.trailing_comment_retargets.is_empty() {
-            return;
-        }
-
-        Self::compact_retargets(&mut self.leading_comment_retargets, u32::max);
-        Self::compact_retargets(&mut self.trailing_comment_retargets, u32::min);
-
-        let leading = &self.leading_comment_retargets;
-        let trailing = &self.trailing_comment_retargets;
-        self.ast.retarget_comments(|position, attached_to| {
-            let retargets = match position {
-                CommentPosition::Leading => leading,
-                CommentPosition::Trailing => trailing,
-            };
-            let index = retargets
-                .binary_search_by_key(&attached_to, |retarget| retarget.0)
-                .ok()?;
-            Some(retargets[index].1)
-        });
-    }
 }
 
-impl<'ast> VisitMut<'ast> for NormalizePass<'_, 'ast> {
+impl<'ast, const NORMALIZE_TYPES: bool> VisitMut<'ast>
+    for NormalizePass<'_, 'ast, NORMALIZE_TYPES>
+{
     fn ast(&mut self) -> &mut Ast<'ast> {
         self.ast
     }
@@ -291,7 +256,30 @@ impl<'ast> VisitMut<'ast> for NormalizePass<'_, 'ast> {
         }
     }
 
+    fn visit_mut_ts_type_alias_declaration(
+        &mut self,
+        node: TsTypeAliasDeclaration,
+    ) -> Option<TsTypeAliasDeclaration> {
+        if NORMALIZE_TYPES {
+            node.visit_mut_children_with(self);
+        }
+        None
+    }
+
+    fn visit_mut_ts_interface_declaration(
+        &mut self,
+        node: TsInterfaceDeclaration,
+    ) -> Option<TsInterfaceDeclaration> {
+        if NORMALIZE_TYPES {
+            node.visit_mut_children_with(self);
+        }
+        None
+    }
+
     fn visit_mut_ts_type(&mut self, node: TsType) -> Option<TsType> {
+        if !NORMALIZE_TYPES {
+            return None;
+        }
         match self.ast.ts_type_data(node) {
             TsTypeData::TsParenthesizedType(parenthesized) => {
                 let type_annotation = parenthesized.type_annotation(self.ast);

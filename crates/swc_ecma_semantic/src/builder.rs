@@ -230,7 +230,18 @@ impl SemanticBuilder<'_, '_> {
             NodeKindData::StringLiteral(node) => js::check_string_literal(self, node),
             NodeKindData::NumericLiteral(node) => js::check_numeric_literal(self, node),
             NodeKindData::RegExpLiteral(node) => js::check_reg_exp_literal(self, node),
-            NodeKindData::IdentifierReference(node) => js::check_identifier_reference(self, node),
+            NodeKindData::IdentifierReference(node) => {
+                let tree = self.ast;
+                let name = tree.get_utf8(node.name(tree)).as_bytes();
+                js::check_identifier_reference(self, node, name);
+                if tree.is_ts() && name == b"await" {
+                    ts::check_contextual_await(
+                        self,
+                        node.node_id(),
+                        "'await' cannot be used as an identifier here",
+                    );
+                }
+            }
             NodeKindData::LabelIdentifier(node) => js::check_label_identifier(self, node),
             NodeKindData::BinaryExpression(node) => js::check_binary_expression(self, node),
             NodeKindData::UnaryExpression(node) => js::check_unary_expression(self, node),
@@ -253,6 +264,7 @@ impl SemanticBuilder<'_, '_> {
             NodeKindData::CallExpression(node) => js::check_call_expression(self, node),
             NodeKindData::AwaitExpression(node) => js::check_await_expression(self, node),
             NodeKindData::YieldExpression(node) => js::check_yield_expression(self, node),
+            NodeKindData::TsParameterProperty(node) => ts::check_parameter_property(self, node),
             NodeKindData::MetaProperty(node) => js::check_meta_property(self, node),
             NodeKindData::ImportDeclaration(node) => js::check_import_declaration(self, node),
             NodeKindData::ExportNamedDeclaration(node) => {
@@ -424,7 +436,17 @@ impl<'a> Visit<'a> for SemanticBuilder<'_, 'a> {
         let flags = self.enter_node(node.node_id());
         node.visit_children_with(self);
         let prepared = if self.check_syntax {
-            js::check_binding_identifier(self, node)
+            let tree = self.ast;
+            let name = tree.get_utf8(node.name(tree)).as_bytes();
+            let prepared = js::check_binding_identifier(self, node, name);
+            if tree.is_ts() && name == b"await" {
+                ts::check_contextual_await(
+                    self,
+                    node.node_id(),
+                    "'await' cannot be used as a binding identifier here",
+                );
+            }
+            prepared
         } else {
             None
         };
@@ -1519,9 +1541,19 @@ impl<'a> Visit<'a> for SemanticBuilder<'_, 'a> {
         self.state.enter_node();
     }
 
+    fn visit_jsx_fragment(&mut self, node: swc_next_ecma_ast::JsxFragment) {
+        self.enter_node(node.node_id());
+        self.state
+            .symbols
+            .record_jsx_usage(self.state.scope.current, true);
+        node.visit_children_with(self);
+        self.leave_node(NodeKindData::JsxFragment(node));
+    }
+
     fn visit_jsx_opening_element(&mut self, node: JsxOpeningElement) {
         self.enter_node(node.node_id());
         let state = &mut self.state;
+        state.symbols.record_jsx_usage(state.scope.current, false);
         state
             .symbols
             .add_jsx_opening_element_reference(self.ast, node, &state.scope);
