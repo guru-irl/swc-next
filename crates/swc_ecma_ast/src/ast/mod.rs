@@ -1,7 +1,8 @@
 //! ECMAScript and TypeScript AST node definitions.
 //!
-//! This module is a Rust port of the AST design from
+//! AST definitions based on
 //! [yuku-toolchain/yuku](https://github.com/yuku-toolchain/yuku).
+//! Modified for SWC Next.
 
 mod js;
 mod jsx;

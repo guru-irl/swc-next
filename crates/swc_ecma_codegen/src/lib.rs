@@ -1,8 +1,8 @@
 //! ECMAScript and TypeScript code generation.
 //!
-//! The printer is a Rust port of esbuild's
+//! The printer is based on esbuild's
 //! [`js_printer.go`](https://github.com/evanw/esbuild/blob/main/internal/js_printer/js_printer.go)
-//! design.
+//! implementation, with modifications for SWC Next.
 
 mod operator;
 mod printer;

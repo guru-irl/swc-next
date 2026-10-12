@@ -1,3 +1,7 @@
+//! Based on Oxc's `oxc_regular_expression` 0.137.0.
+//!
+//! Modified for SWC Next's allocator, diagnostics, and source spans, focusing on validation.
+
 #![expect(clippy::missing_errors_doc)]
 
 mod diagnostic;

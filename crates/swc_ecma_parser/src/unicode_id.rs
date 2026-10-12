@@ -1,4 +1,5 @@
-// Generated table data comes from `src/util/unicode_id.zig`.
+// Lookup implementation based on Yuku's src/util/unicode_id.zig, modified for SWC Next.
+// See unicode_id_tables.rs for the fixed source reference.
 
 const CHUNK_SIZE: u32 = 512;
 const BITS_PER_WORD: u32 = 32;

@@ -1,6 +1,4 @@
-// Ported from upstream esbuild's internal/js_parser/js_parser_test.go.
-// This upstream mirror should normally only change when syncing with esbuild.
-// Add swc-next-specific regressions to the parent suite (`../js.rs` or `../ts.rs`).
+// Based on upstream esbuild's internal/js_parser/js_parser_test.go, modified for SWC Next.
 use crate::{expect_printed, expect_printed_jsx, expect_printed_script};
 
 #[test]
