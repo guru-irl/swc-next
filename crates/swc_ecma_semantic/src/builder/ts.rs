@@ -1,3 +1,5 @@
+use swc_next_ecma_ast::{Lang, SourceType};
+
 use super::*;
 use crate::binder::{TsImportAliasIssue, TsNamespaceExportAliasIssue};
 
@@ -52,6 +54,165 @@ pub(super) fn check_tuple_optional_type(
             ReportOptions::default(),
         );
     }
+}
+
+pub(super) fn check_ts_module_declaration(
+    builder: &mut SemanticBuilder<'_, '_>,
+    declaration: TsModuleDeclaration,
+) {
+    let Some((node, message)) = ts_module_declaration_context_error(builder, declaration) else {
+        return;
+    };
+    builder.report(builder.ast.span(node), message, ReportOptions::default());
+}
+
+fn ts_module_declaration_context_error(
+    builder: &SemanticBuilder<'_, '_>,
+    declaration: TsModuleDeclaration,
+) -> Option<(NodeId, &'static str)> {
+    let (parent, ancestors) = ts_module_element_context(builder)?;
+    let parent_kind = builder.ast.node_kind(parent);
+    let quoted = matches!(
+        builder.ast.ts_module_name_data(declaration.id(builder.ast)),
+        TsModuleNameData::StringLiteral(_)
+    );
+    if !is_ts_module_element_container(parent_kind) {
+        let message = if quoted {
+            "An ambient module declaration is only allowed at the top level in a file"
+        } else {
+            "A namespace declaration is only allowed at the top level of a namespace or module"
+        };
+        return Some((declaration.node_id(), message));
+    }
+    if quoted
+        && parent_kind != NodeKind::Program
+        && !is_ts_module_augmentation_external(builder.ast, parent, ancestors)
+    {
+        return Some((
+            declaration.id(builder.ast).node_id(),
+            "Ambient modules cannot be nested in other modules or namespaces",
+        ));
+    }
+    None
+}
+
+pub(super) fn check_ts_global_declaration(
+    builder: &mut SemanticBuilder<'_, '_>,
+    declaration: TsGlobalDeclaration,
+) {
+    if !declaration.declare(builder.ast) && !in_ts_syntactic_ambient_context(builder) {
+        builder.report(
+            builder.ast.span(declaration.id(builder.ast).node_id()),
+            "Augmentations for the global scope should have 'declare' modifier unless they appear in already ambient context",
+            ReportOptions::default(),
+        );
+    }
+    let Some((node, message)) = ts_global_declaration_context_error(builder, declaration) else {
+        return;
+    };
+    builder.report(builder.ast.span(node), message, ReportOptions::default());
+}
+
+fn ts_global_declaration_context_error(
+    builder: &SemanticBuilder<'_, '_>,
+    declaration: TsGlobalDeclaration,
+) -> Option<(NodeId, &'static str)> {
+    let (parent, ancestors) = ts_module_element_context(builder)?;
+    let parent_kind = builder.ast.node_kind(parent);
+    if !is_ts_module_element_container(parent_kind) {
+        return Some((
+            declaration.node_id(),
+            "An ambient module declaration is only allowed at the top level in a file",
+        ));
+    }
+
+    if is_ts_module_augmentation_external(builder.ast, parent, ancestors) {
+        return None;
+    }
+    Some((
+        declaration.id(builder.ast).node_id(),
+        "Augmentations for the global scope can only be directly nested in external modules or ambient module declarations",
+    ))
+}
+
+/// Recognizes external augmentation containers: an ESM/CommonJS program or the
+/// direct body of a top-level ambient module in a Script.
+/// `parent` is the effective parent after skipping an export declaration wrapper,
+/// and `ancestors` starts immediately above it.
+fn is_ts_module_augmentation_external(
+    tree: &Ast<'_>,
+    parent: NodeId,
+    mut ancestors: impl Iterator<Item = NodeId>,
+) -> bool {
+    let external_module = matches!(
+        tree.source_type(),
+        SourceType::Module | SourceType::CommonJs
+    );
+    match tree.node_kind(parent) {
+        NodeKind::Program => external_module,
+        // In an external module, a quoted module declaration is an augmentation.
+        NodeKind::TsModuleBlock if !external_module => {
+            let Some(owner) = ancestors.next() else {
+                return false;
+            };
+            let ambient_module = match tree.kind_data(owner) {
+                NodeKindData::TsModuleDeclaration(module) => matches!(
+                    tree.ts_module_name_data(module.id(tree)),
+                    TsModuleNameData::StringLiteral(_)
+                ),
+                NodeKindData::TsGlobalDeclaration(_) => true,
+                _ => false,
+            };
+            if !ambient_module {
+                return false;
+            }
+            let Some(program) = ancestors.next() else {
+                return false;
+            };
+            tree.node_kind(program) == NodeKind::Program
+        }
+        _ => false,
+    }
+}
+
+fn in_ts_syntactic_ambient_context(builder: &SemanticBuilder<'_, '_>) -> bool {
+    if builder.ast.lang() == Lang::Dts {
+        return true;
+    }
+    // Binding recovery also makes bare global bodies ambient. Only syntax can
+    // exempt an inner augmentation from requiring its own declare modifier.
+    builder
+        .ancestors()
+        .skip(1)
+        .any(|node| match builder.ast.kind_data(node) {
+            NodeKindData::VariableDeclaration(node) => node.declare(builder.ast),
+            NodeKindData::Class(node) => node.declare(builder.ast),
+            NodeKindData::TsFunction(node) => node.declare(builder.ast),
+            NodeKindData::TsTypeAliasDeclaration(node) => node.declare(builder.ast),
+            NodeKindData::TsInterfaceDeclaration(node) => node.declare(builder.ast),
+            NodeKindData::TsEnumDeclaration(node) => node.declare(builder.ast),
+            NodeKindData::TsModuleDeclaration(node) => node.declare(builder.ast),
+            NodeKindData::TsGlobalDeclaration(node) => node.declare(builder.ast),
+            _ => false,
+        })
+}
+
+fn ts_module_element_context<'b>(
+    builder: &'b SemanticBuilder<'_, '_>,
+) -> Option<(NodeId, impl Iterator<Item = NodeId> + 'b)> {
+    let mut ancestors = builder.ancestors().skip(1);
+    let mut parent = ancestors.next()?;
+    if builder.ast.node_kind(parent) == NodeKind::ExportNamedDeclaration {
+        parent = ancestors.next()?;
+    }
+    Some((parent, ancestors))
+}
+
+fn is_ts_module_element_container(kind: NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Program | NodeKind::TsModuleBlock | NodeKind::TsModuleDeclaration
+    )
 }
 
 pub(super) fn check_ts_alias_issues(
