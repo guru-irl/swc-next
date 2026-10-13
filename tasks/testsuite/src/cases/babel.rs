@@ -48,27 +48,6 @@ pub struct BabelTransformCase {
     pub options: BabelOptions,
 }
 
-impl TransformCase for BabelTransformCase {
-    fn transformer_options(&self) -> TransformerOptions {
-        self.options.clone().into()
-    }
-
-    fn supports_options(&self) -> bool {
-        self.options.plugins.errors.is_empty()
-            && self.options.plugins.unsupported.is_empty()
-            && self.options.presets.errors.is_empty()
-            && self.options.presets.unsupported.is_empty()
-    }
-
-    fn expected_output(&self) -> Option<&str> {
-        Some(&self.output)
-    }
-
-    fn codegen_options(&self) -> CodegenOptions {
-        self.options.codegen_options()
-    }
-}
-
 struct BabelTransformCasePaths {
     input: PathBuf,
     output: PathBuf,
@@ -185,6 +164,27 @@ impl Case for BabelTransformCase {
     }
 }
 
+impl TransformCase for BabelTransformCase {
+    fn supports_options(&self) -> bool {
+        self.options.plugins.errors.is_empty()
+            && self.options.plugins.unsupported.is_empty()
+            && self.options.presets.errors.is_empty()
+            && self.options.presets.unsupported.is_empty()
+    }
+
+    fn expected_output(&self) -> Option<&str> {
+        Some(&self.output)
+    }
+
+    fn transformer_options(&self) -> TransformerOptions {
+        self.options.clone().into()
+    }
+
+    fn codegen_options(&self) -> CodegenOptions {
+        self.options.codegen_options()
+    }
+}
+
 pub(super) fn source_type(path: &Path, options: &BabelOptions) -> SourceType {
     match path.extension().and_then(|extension| extension.to_str()) {
         Some("mjs" | "mts") => return SourceType::Module,
@@ -207,7 +207,9 @@ pub(super) fn lang(path: &Path, options: &BabelOptions) -> Lang {
         return Lang::Dts;
     }
 
-    let typescript = matches!(path_lang, Lang::Ts | Lang::Tsx) || options.is_typescript();
+    let typescript = matches!(path_lang, Lang::Ts | Lang::Tsx)
+        || options.is_typescript()
+        || options.plugins.typescript.is_some();
     let jsx = matches!(path_lang, Lang::Jsx | Lang::Tsx) || options.is_jsx();
     match (typescript, jsx) {
         (true, true) => Lang::Tsx,

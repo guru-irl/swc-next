@@ -4,12 +4,12 @@ use swc_next_ecma_ast::{
     TsUnionType, VisitMut, VisitMutWith,
 };
 
-use crate::comments::CommentRetargets;
+use crate::context::CommentState;
 
 /// Normalizes parser AST shapes for downstream transforms.
 ///
-/// This pass preserves the node IDs of semantic-bearing leaves while the AST
-/// representation is normalized.
+/// Run this pass before semantic analysis so scopes and export targets are
+/// collected from the normalized tree.
 pub struct Normalizer {}
 
 impl Normalizer {
@@ -17,25 +17,24 @@ impl Normalizer {
         Self::run::<true>(program, ast);
     }
 
-    /// Normalize executable syntax before TypeScript erasure. Type-only subtrees
-    /// are removed by the following pass and do not need canonical forms.
-    pub(crate) fn normalize_runtime<'ast>(program: Program, ast: &mut Ast<'ast>) {
+    /// Normalize runtime expressions while retaining TypeScript declaration shapes.
+    pub fn normalize_runtime<'ast>(program: Program, ast: &mut Ast<'ast>) {
         Self::run::<false>(program, ast);
     }
 
     fn run<'ast, const NORMALIZE_TYPES: bool>(program: Program, ast: &mut Ast<'ast>) {
         let mut pass = NormalizePass::<NORMALIZE_TYPES> {
             ast,
-            comment_retargets: CommentRetargets::default(),
+            comments: CommentState::default(),
         };
         program.visit_mut_children_with(&mut pass);
-        pass.comment_retargets.apply(pass.ast);
+        pass.comments.flush(pass.ast);
     }
 }
 
 struct NormalizePass<'visit, 'ast, const NORMALIZE_TYPES: bool> {
     ast: &'visit mut Ast<'ast>,
-    comment_retargets: CommentRetargets,
+    comments: CommentState,
 }
 
 #[derive(Clone, Copy)]
@@ -83,8 +82,9 @@ impl AssociativeType {
 
 impl<const NORMALIZE_TYPES: bool> NormalizePass<'_, '_, NORMALIZE_TYPES> {
     fn record_replacement(&mut self, removed: Span, replacement: Span) {
-        self.comment_retargets
-            .record_replacement(self.ast, removed, replacement);
+        if !self.ast.comments().is_empty() {
+            self.comments.inherit(replacement, removed);
+        }
     }
 
     fn replacement_span(&self, flattened: &[Expr], start: usize) -> Option<Span> {

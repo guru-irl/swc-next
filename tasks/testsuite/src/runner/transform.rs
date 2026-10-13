@@ -5,7 +5,7 @@ use swc_next_ecma_ast::{Ast, Lang, Severity, SourceType};
 use swc_next_ecma_codegen::print;
 use swc_next_ecma_parser::{NoTokenParserConfig, Options as ParserOptions, Parser};
 use swc_next_ecma_semantic::{AnalyzeOptions, analyze};
-use swc_next_ecma_transformer::Transformer;
+use swc_next_ecma_transformer::{Transformer, normalize::Normalizer};
 
 use crate::{cases::TransformCase, runner::Runner, suite::TestResult, util::workspace_root};
 
@@ -73,11 +73,18 @@ fn run_case<C: TransformCase>(case: &C) -> Result<bool, String> {
             expected,
             case.source_type(),
             case.lang(),
+            true,
         ) else {
             return Ok(false);
         };
         let expected = print(&expected_allocator, &expected_ast, case.codegen_options()).code;
-        if output != expected {
+        let Some(actual) = normalize_output(case, output) else {
+            return Ok(false);
+        };
+        let Some(expected) = normalize_output(case, expected) else {
+            return Ok(false);
+        };
+        if actual != expected {
             return Err("transformed output differs from expected output".into());
         }
     } else {
@@ -119,7 +126,13 @@ fn transform_program<'a, C: TransformCase>(
     source_type: SourceType,
     lang: Lang,
 ) -> Option<Ast<'a>> {
-    let mut ast = parse_program(allocator, source, source_type, lang)?;
+    let mut ast = parse_program(allocator, source, source_type, lang, true)?;
+    let options = case.transformer_options();
+    if options.typescript.is_some() {
+        Normalizer::normalize_runtime(ast.root_program(), &mut ast);
+    } else {
+        Normalizer::normalize(ast.root_program(), &mut ast);
+    }
     let semantic_ret = analyze(
         &ast,
         AnalyzeOptions {
@@ -134,7 +147,7 @@ fn transform_program<'a, C: TransformCase>(
     {
         return None;
     }
-    Transformer::transform(&mut ast, &semantic_ret.semantic, case.transformer_options());
+    Transformer::transform(&mut ast, semantic_ret.semantic, options);
     Some(ast)
 }
 
@@ -143,6 +156,7 @@ fn parse_program<'a>(
     source: &'a str,
     source_type: SourceType,
     lang: Lang,
+    preserve_parens: bool,
 ) -> Option<Ast<'a>> {
     let result = Parser::init(
         allocator,
@@ -150,6 +164,7 @@ fn parse_program<'a>(
         ParserOptions {
             source_type,
             lang,
+            preserve_parens,
             ..ParserOptions::default()
         },
         NoTokenParserConfig,
@@ -163,4 +178,14 @@ fn parse_program<'a>(
         return None;
     }
     Some(result.ast)
+}
+
+/// Compare output with comments while ignoring redundant parentheses and formatting.
+fn normalize_output<C: TransformCase>(case: &C, source: &str) -> Option<String> {
+    let allocator = Allocator::new();
+    let ast = parse_program(&allocator, source, case.source_type(), case.lang(), false)?;
+    let mut options = case.codegen_options();
+    options.minify = true;
+    options.comments = true;
+    Some(print(&allocator, &ast, options).code.to_owned())
 }

@@ -8,6 +8,7 @@ use testsuite::{
         babel_parser::BabelParserCase,
         local::LocalCase,
         swc_resolver::SwcResolverCase,
+        swc_transform::SwcTransformCase,
         test262::Test262Case,
         typescript::{parser::TypeScriptParserCase, transform::TypeScriptTransformCase},
     },
@@ -31,6 +32,7 @@ pub fn main() -> ExitCode {
         update_snapshots::<BabelParserCase>(),
         update_snapshot::<ResolverRunner, SwcResolverCase>(&SwcResolverCase::read()),
         update_snapshot::<TransformerRunner, BabelTransformCase>(&BabelTransformCase::read()),
+        update_snapshot::<TransformerRunner, SwcTransformCase>(&SwcTransformCase::read()),
         update_snapshot::<TransformerRunner, TypeScriptTransformCase>(
             &TypeScriptTransformCase::read(),
         ),

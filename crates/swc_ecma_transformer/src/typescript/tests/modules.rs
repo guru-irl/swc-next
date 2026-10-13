@@ -1,13 +1,7 @@
 use super::*;
 
 fn transformed_script(source: &str) -> String {
-    transformed_code_with_source_type(
-        source,
-        Default::default(),
-        false,
-        Lang::Ts,
-        SourceType::Script,
-    )
+    transformed_code_with_source_type(source, Default::default(), Lang::Ts, SourceType::Script)
 }
 
 #[test]

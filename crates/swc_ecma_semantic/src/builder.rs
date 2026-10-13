@@ -87,6 +87,7 @@ impl<'traverse, 'a> SemanticBuilder<'traverse, 'a> {
     }
 
     fn enter_node(&mut self, node: NodeId) -> ReferenceFlags {
+        self.state.enter_scope(node);
         self.path.push(node);
         self.state.enter_node()
     }
@@ -305,19 +306,6 @@ impl<'a> Visit<'a> for SemanticBuilder<'_, 'a> {
     }
 
     #[inline]
-    fn visit_call_expression(&mut self, node: CallExpression) {
-        self.enter_node(node.node_id());
-        if !self.state.symbols.in_ambient_context()
-            && self.state.default_reference_flags().is_read()
-            && is_direct_eval_call(self.ast, node)
-        {
-            self.state.scope.mark_direct_eval();
-        }
-        node.visit_children_with(self);
-        self.leave_node(NodeKindData::CallExpression(node));
-    }
-
-    #[inline]
     fn visit_update_expression(&mut self, node: UpdateExpression) {
         self.enter_node(node.node_id());
         let argument = node.argument(self.ast);
@@ -403,17 +391,20 @@ impl<'a> Visit<'a> for SemanticBuilder<'_, 'a> {
     // These leaves have neither binding actions nor syntax checks. Consume
     // pending reference flags without adding an unused ancestry entry.
     #[inline]
-    fn visit_this_expression(&mut self, _node: ThisExpression) {
+    fn visit_this_expression(&mut self, node: ThisExpression) {
+        self.state.enter_scope(node.node_id());
         self.state.enter_node();
     }
 
     #[inline]
-    fn visit_boolean_literal(&mut self, _node: BooleanLiteral) {
+    fn visit_boolean_literal(&mut self, node: BooleanLiteral) {
+        self.state.enter_scope(node.node_id());
         self.state.enter_node();
     }
 
     #[inline]
-    fn visit_identifier_name(&mut self, _node: IdentifierName) {
+    fn visit_identifier_name(&mut self, node: IdentifierName) {
+        self.state.enter_scope(node.node_id());
         self.state.enter_node();
     }
 
@@ -427,6 +418,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'_, 'a> {
             let current = self.path.pop();
             debug_assert_eq!(current, Some(node.node_id()));
         } else {
+            self.state.enter_scope(node.node_id());
             let flags = self.state.enter_node();
             self.record_identifier_reference(node, flags);
         }
@@ -645,10 +637,12 @@ impl<'a> Visit<'a> for SemanticBuilder<'_, 'a> {
     //   Bare FunctionDeclaration in if/else is allowed in non-strict code only.
     fn visit_function(&mut self, node: Function) {
         let annex_b_if_body = is_annex_b_if_function(self.ast, self.current_node(), node);
-        self.state.enter_function(self.ast, node, annex_b_if_body);
+        self.state.enter_function(self.ast, node);
         self.enter_node(node.node_id());
         let state = &mut self.state;
-        state.symbols.enter_function(self.ast, node, &state.scope);
+        state
+            .symbols
+            .enter_function(self.ast, node, &state.scope, annex_b_if_body);
         node.visit_children_with(self);
         self.state.symbols.exit_saved_context();
         self.leave_node(NodeKindData::Function(node));
@@ -727,7 +721,7 @@ impl<'a> Visit<'a> for SemanticBuilder<'_, 'a> {
     }
 
     fn visit_class(&mut self, node: Class) {
-        self.state.enter_class(self.ast, node);
+        self.state.enter_class(node);
         self.enter_node(node.node_id());
         let state = &mut self.state;
         state.symbols.enter_class(self.ast, node, &state.scope);
@@ -1532,12 +1526,14 @@ impl<'a> Visit<'a> for SemanticBuilder<'_, 'a> {
     }
 
     #[inline]
-    fn visit_jsx_identifier(&mut self, _node: JsxIdentifier) {
+    fn visit_jsx_identifier(&mut self, node: JsxIdentifier) {
+        self.state.enter_scope(node.node_id());
         self.state.enter_node();
     }
 
     #[inline]
-    fn visit_jsx_text(&mut self, _node: JsxText) {
+    fn visit_jsx_text(&mut self, node: JsxText) {
+        self.state.enter_scope(node.node_id());
         self.state.enter_node();
     }
 
@@ -1595,28 +1591,6 @@ fn export_expression_space(tree: &Ast<'_>, expression: NodeId) -> ReferenceSpace
         ReferenceSpace::Any
     } else {
         ReferenceSpace::Value
-    }
-}
-
-fn is_direct_eval_call(tree: &Ast<'_>, call: CallExpression) -> bool {
-    if call.optional(tree) {
-        return false;
-    }
-
-    let mut callee = call.callee(tree).node_id();
-    loop {
-        callee = match tree.kind_data(callee) {
-            NodeKindData::IdentifierReference(identifier) => {
-                return tree.get_utf8(identifier.name(tree)).as_bytes() == b"eval";
-            }
-            NodeKindData::ParenthesizedExpression(wrapper) => wrapper.expression(tree).node_id(),
-            NodeKindData::TsAsExpression(wrapper) => wrapper.expression(tree).node_id(),
-            NodeKindData::TsSatisfiesExpression(wrapper) => wrapper.expression(tree).node_id(),
-            NodeKindData::TsTypeAssertion(wrapper) => wrapper.expression(tree).node_id(),
-            NodeKindData::TsNonNullExpression(wrapper) => wrapper.expression(tree).node_id(),
-            NodeKindData::TsInstantiationExpression(wrapper) => wrapper.expression(tree).node_id(),
-            _ => return false,
-        };
     }
 }
 

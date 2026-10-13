@@ -39,6 +39,7 @@ mod ecmascript;
 mod module_record;
 pub mod name_resolver;
 pub mod scope;
+mod scope_model;
 
 pub use binder::{
     Declaration, NameResolution, Reference, ReferenceFlags, ReferenceSpace, Symbol, SymbolFlags,
@@ -47,6 +48,7 @@ pub use module_record::{
     ExportEntry, ExportName, ExportOrigin, ExportTarget, ExternalExportName, ModuleName,
     ModuleRecord,
 };
+pub use scope_model::ScopeModel;
 pub use swc_next_ecma_ast::ReferenceId;
 
 oxc_index::define_nonmax_u32_index_type! {
@@ -98,6 +100,7 @@ pub struct Semantic<'a> {
     /// The symbol declared by each node, indexed by [`NodeId`].
     node_symbols: ArenaVec<'a, Option<SymbolId>>,
     node_references: ArenaVec<'a, Option<ReferenceId>>,
+    node_scopes: ArenaVec<'a, Option<ScopeId>>,
 
     module_record: ModuleRecord<'a>,
     ts_members: TsMemberIndex<'a>,
@@ -108,6 +111,22 @@ impl<'a> Semantic<'a> {
     /// Intrinsic tags are included; a fragment also requires an element factory.
     pub fn jsx_usages(&self) -> &[JsxUsage] {
         &self.jsx_usages
+    }
+
+    /// The scope active when this node is evaluated, collected during every analysis.
+    /// Detached structural nodes may retain their old entry; this is not a
+    /// reachability index.
+    pub fn scope_at(&self, node: NodeId) -> Option<ScopeId> {
+        self.node_scopes.get(node.index()).copied().flatten()
+    }
+
+    /// The evaluation scope outside a scope-owning expression.
+    pub fn scope_outside(&self, node: NodeId) -> Option<ScopeId> {
+        let mut scope = self.scope_at(node)?;
+        while self.scope(scope).node == node {
+            scope = self.scope(scope).parent?;
+        }
+        Some(scope)
     }
 
     /// The symbol with the given id.
@@ -431,14 +450,7 @@ impl<'a> Semantic<'a> {
         name: &[u8],
         space: ReferenceSpace,
     ) -> NameResolution {
-        self.ts_members.resolve_name(
-            &self.scopes,
-            &self.symbols,
-            &self.scope_maps,
-            scope_id,
-            name,
-            space,
-        )
+        self.ts_members.resolve_name(self, scope_id, name, space)
     }
 
     /// Iterates every `(id, scope)` pair in creation order.
@@ -461,6 +473,7 @@ impl<'a> Semantic<'a> {
     pub fn iter_references(&self) -> ReferenceIterator<'_> {
         ReferenceIterator {
             references: &self.references,
+            node_references: &self.node_references,
             index: 0,
         }
     }
@@ -541,13 +554,17 @@ impl Iterator for ScopeIterator<'_> {
     type Item = ScopeEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let index = self.index as usize;
-        let scope = *self.list.get(index)?;
-        self.index += 1;
-        Some(ScopeEntry {
-            id: ScopeId::from_usize(index),
-            scope,
-        })
+        loop {
+            let index = self.index as usize;
+            let scope = *self.list.get(index)?;
+            self.index += 1;
+            if scope.active {
+                return Some(ScopeEntry {
+                    id: ScopeId::from_usize(index),
+                    scope,
+                });
+            }
+        }
     }
 }
 
@@ -588,6 +605,7 @@ impl Iterator for SymbolIterator<'_> {
 
 pub struct ReferenceIterator<'a> {
     references: &'a [Reference],
+    node_references: &'a [Option<ReferenceId>],
     index: u32,
 }
 
@@ -600,13 +618,15 @@ impl Iterator for ReferenceIterator<'_> {
     type Item = ReferenceEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let index = self.index as usize;
-        let reference = *self.references.get(index)?;
-        self.index += 1;
-        Some(ReferenceEntry {
-            id: ReferenceId::from_usize(index),
-            reference,
-        })
+        loop {
+            let index = self.index as usize;
+            let reference = *self.references.get(index)?;
+            self.index += 1;
+            let id = ReferenceId::from_usize(index);
+            if self.node_references[reference.node.index()].is_some() {
+                return Some(ReferenceEntry { id, reference });
+            }
+        }
     }
 }
 

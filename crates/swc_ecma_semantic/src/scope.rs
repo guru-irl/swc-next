@@ -1,8 +1,8 @@
 use oxc_index::Idx;
 use swc_next_allocator::vec::Vec as ArenaVec;
 use swc_next_ecma_ast::{
-    ArrowFunctionExpression, Ast, Class, ClassType, Directive, Function, FunctionBody,
-    FunctionType, NodeId, NodeKindData, ScopeId, SourceType,
+    ArrowFunctionExpression, Ast, Class, Directive, Function, FunctionBody, NodeId, NodeKindData,
+    ScopeId, SourceType,
 };
 
 use crate::ecmascript;
@@ -26,6 +26,8 @@ pub(crate) enum DecoratorSite {
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Scope {
+    /// False when a transform has removed this scope.
+    pub active: bool,
     /// The AST node that created this scope.
     pub node: NodeId,
     /// Parent scope, or `None` for the root.
@@ -63,17 +65,6 @@ pub enum ScopeKind {
     ClassDecorator,
     /// Section 15.7.11 ClassStaticBlockDefinitionEvaluation.
     StaticBlock,
-    /// Intermediate scope holding a named function/class expression's
-    /// name (sections 15.2.5 and 15.7.14). The name binds in its own
-    /// environment between the outer scope and the body, so it never
-    /// conflicts with same-named bindings inside the body:
-    ///
-    /// ```text
-    /// outer scope (x lives here)
-    ///   expression-name scope (foo lives here)
-    ///     function scope (body bindings live here)
-    /// ```
-    ExpressionName,
     /// TS namespace body. Acts as a var-hoist target so vars
     /// declared inside don't escape to the surrounding scope.
     TsModule,
@@ -139,19 +130,9 @@ impl ScopeKind {
 pub struct ScopeFlags {
     /// Whether this scope is in strict mode.
     pub strict: bool,
-    /// Whether this scope or one of its descendants contains a call that can
-    /// invoke the intrinsic eval function directly.
-    pub direct_eval: bool,
     /// Stops lookup of an outer `arguments` binding: ordinary functions provide
     /// their own implicit binding, while static blocks disallow it entirely.
     pub arguments_barrier: bool,
-}
-
-impl ScopeFlags {
-    /// True when direct eval can observe bindings owned by this scope.
-    pub fn contains_direct_eval(self) -> bool {
-        self.direct_eval
-    }
 }
 
 /// All scopes of a tree, indexed by [`ScopeId`].
@@ -231,6 +212,7 @@ impl<'a> ScopeTracker<'a> {
     fn push_root(&mut self, root_node: NodeId, source_type: SourceType, root_strict: bool) {
         debug_assert!(self.scopes.is_empty());
         self.scopes.push(Scope {
+            active: true,
             node: root_node,
             parent: None,
             hoist_target: ScopeId::ROOT,
@@ -276,6 +258,7 @@ impl<'a> ScopeTracker<'a> {
         let id = ScopeId::from_usize(self.scopes.len());
         let parent = self.current_scope();
         self.scopes.push(Scope {
+            active: true,
             node,
             parent: Some(self.current),
             hoist_target: if kind.is_hoist_target() {
@@ -304,7 +287,7 @@ impl<'a> ScopeTracker<'a> {
         }
     }
 
-    pub fn enter_function(&mut self, tree: &Ast, function: Function, annex_b_if_body: bool) {
+    pub fn enter_function(&mut self, tree: &Ast, function: Function) {
         let flags = if self.has_retroactive_use_strict(tree, function.body(tree)) {
             ScopeFlags {
                 strict: true,
@@ -313,18 +296,6 @@ impl<'a> ScopeTracker<'a> {
         } else {
             self.inherit_strict_flag()
         };
-        // Annex B.3.3 permits a FunctionDeclaration directly in a sloppy
-        // if/else clause. Its lexical binding is distinct from bindings in
-        // the enclosing scope, just as if the clause had an implicit block.
-        // Use the function node as the scope creator so `exit_scope` removes
-        // this scope together with the function scope below.
-        if annex_b_if_body && !flags.strict {
-            self.push_scope(ScopeKind::Block, function.node_id(), flags);
-        }
-        if is_named_function_expression(tree, function) {
-            // The expression-name scope sits between outer and body.
-            self.push_scope(ScopeKind::ExpressionName, function.node_id(), flags);
-        }
         self.push_function_scope(function.node_id(), flags);
     }
 
@@ -455,15 +426,12 @@ impl<'a> ScopeTracker<'a> {
         self.push_scope(ScopeKind::TsModule, node, self.inherit_strict_flag());
     }
 
-    pub fn enter_class(&mut self, tree: &Ast, class: Class) {
+    pub fn enter_class(&mut self, class: Class) {
         // Classes are always strict mode (section 15.7.14).
         let flags = ScopeFlags {
             strict: true,
             ..ScopeFlags::default()
         };
-        if is_named_class_expression(tree, class) {
-            self.push_scope(ScopeKind::ExpressionName, class.node_id(), flags);
-        }
         self.push_scope(ScopeKind::Class, class.node_id(), flags);
     }
 
@@ -498,10 +466,7 @@ impl<'a> ScopeTracker<'a> {
             if self.get(class).kind != ScopeKind::Class {
                 continue;
             }
-            let mut outer = self.get(class).parent?;
-            if self.get(outer).kind == ScopeKind::ExpressionName {
-                outer = self.get(outer).parent?;
-            }
+            let outer = self.get(class).parent?;
             return Some((class, outer));
         }
         None
@@ -528,8 +493,8 @@ impl<'a> ScopeTracker<'a> {
         }
     }
 
-    // A node owns its lexical scopes, including both scopes of a named
-    // expression. Lookup views have a separate lifetime: their root node may
+    // A node owns its lexical scopes.
+    // Lookup views have a separate lifetime: their root node may
     // create lexical scopes without owning the surrounding lookup view.
     pub fn exit_scope(&mut self, node: NodeId) {
         while self.current.index() != 0
@@ -604,33 +569,9 @@ impl<'a> ScopeTracker<'a> {
         }
     }
 
-    /// Marks the current scope and every lexical ancestor as observable by
-    /// direct eval.
-    pub fn mark_direct_eval(&mut self) {
-        let mut current = Some(self.current);
-        // Each scope is marked at most once. Later calls stop at the first
-        // marked ancestor, so all calls together are O(scopes + eval calls).
-        while let Some(id) = current {
-            let scope = &mut self.scopes[id.index()];
-            if scope.flags.direct_eval {
-                break;
-            }
-            scope.flags.direct_eval = true;
-            current = scope.parent;
-        }
-    }
-
     /// Finalizes into an immutable [`ScopeTree`].
     pub fn into_scope_tree(self) -> (ScopeTree<'a>, bool) {
         debug_assert!(self.active_with_scopes.is_empty());
         (ScopeTree { list: self.scopes }, self.has_with_statement)
     }
-}
-
-fn is_named_function_expression(tree: &Ast<'_>, function: Function) -> bool {
-    function.function_type(tree) == FunctionType::FunctionExpression && function.id(tree).is_some()
-}
-
-fn is_named_class_expression(tree: &Ast<'_>, class: Class) -> bool {
-    class.class_type(tree) != ClassType::ClassDeclaration && class.id(tree).is_some()
 }

@@ -1,6 +1,126 @@
 use super::*;
 
 #[test]
+fn annex_b_if_bindings() {
+    let allocator = Allocator::new();
+    let script = Options {
+        source_type: SourceType::Script,
+        ..Options::default()
+    };
+    let checked = AnalyzeOptions {
+        check_syntax: true,
+        ..AnalyzeOptions::default()
+    };
+
+    let source = "if (condition) function f() { return f; }";
+    let (ast, semantic) = analyze_with_options(&allocator, source, script, checked);
+    let name = symbol_named(&ast, &semantic, b"f");
+    let scope = semantic.scope_of(name);
+    assert!(
+        semantic
+            .symbol(name)
+            .flags
+            .contains(SymbolFlags::ANNEX_B_IF_FUNCTION)
+    );
+    assert_eq!(
+        semantic.scope(scope).kind,
+        crate::scope::ScopeKind::Function
+    );
+    assert_eq!(semantic.scope(scope).parent, Some(ScopeId::ROOT));
+    assert_eq!(semantic.iter_scopes().count(), 2);
+    assert_eq!(semantic.binding(scope, b"f"), Some(name));
+    assert!(semantic.binding(ScopeId::ROOT, b"f").is_none());
+
+    let source = "if (condition) function f(f) { return f; }";
+    let (ast, semantic) = analyze_with_options(&allocator, source, script, checked);
+    let name = expression_name_symbol(&semantic, SymbolFlags::ANNEX_B_IF_FUNCTION);
+    let parameter = reference_symbol(&ast, &semantic, b"f").unwrap();
+    assert_ne!(name, parameter);
+    assert_eq!(semantic.scope_of(name), semantic.scope_of(parameter));
+    assert_eq!(semantic.declarations(name).len(), 1);
+    assert_eq!(semantic.declarations(parameter).len(), 1);
+    assert!(semantic.uses(name).is_empty());
+
+    let source = "if (condition) function f() { var f; return f; }";
+    let (ast, semantic) = analyze_with_options(&allocator, source, script, checked);
+    let name = expression_name_symbol(&semantic, SymbolFlags::ANNEX_B_IF_FUNCTION);
+    let local = reference_symbol(&ast, &semantic, b"f").unwrap();
+    assert_ne!(name, local);
+    assert_eq!(semantic.scope_of(name), semantic.scope_of(local));
+    assert!(
+        !semantic
+            .symbol(local)
+            .flags
+            .contains(SymbolFlags::ANNEX_B_IF_FUNCTION)
+    );
+}
+
+#[test]
+fn expression_name_bindings() {
+    let allocator = Allocator::new();
+    let js = Options::default();
+    let checked = AnalyzeOptions {
+        check_syntax: true,
+        ..AnalyzeOptions::default()
+    };
+
+    let source = "const f = function n(n) { return n; };";
+    let (ast, semantic) = analyze_with_options(&allocator, source, js, checked);
+    let name = expression_name_symbol(&semantic, SymbolFlags::FUNCTION_EXPRESSION);
+    let parameter = reference_symbol(&ast, &semantic, b"n").unwrap();
+    assert_ne!(name, parameter);
+    assert_eq!(semantic.scope_of(name), semantic.scope_of(parameter));
+    assert_eq!(
+        semantic.binding(semantic.scope_of(name), b"n"),
+        Some(parameter)
+    );
+    assert!(semantic.uses(name).is_empty());
+    assert_eq!(semantic.declarations(name).len(), 1);
+    assert_eq!(semantic.declarations(parameter).len(), 1);
+    assert_eq!(semantic.iter_scopes().count(), 3);
+
+    let source = "const f = function n() { var n; return n; };";
+    let (ast, semantic) = analyze_with_options(&allocator, source, js, checked);
+    let name = expression_name_symbol(&semantic, SymbolFlags::FUNCTION_EXPRESSION);
+    let local = reference_symbol(&ast, &semantic, b"n").unwrap();
+    assert_ne!(name, local);
+    assert_eq!(semantic.scope_of(name), semantic.scope_of(local));
+    assert!(
+        !semantic
+            .symbol(local)
+            .flags
+            .contains(SymbolFlags::FUNCTION_EXPRESSION)
+    );
+
+    let source = "const f = function n() { let n; return n; };";
+    let (ast, semantic) = analyze_with_options(&allocator, source, js, checked);
+    let name = expression_name_symbol(&semantic, SymbolFlags::FUNCTION_EXPRESSION);
+    let local = reference_symbol(&ast, &semantic, b"n").unwrap();
+    assert_ne!(name, local);
+    assert_eq!(semantic.scope_of(name), semantic.scope_of(local));
+
+    let source = "const C = class Inner { self = Inner; };";
+    let (ast, semantic) = analyze_with_options(&allocator, source, js, checked);
+    let name = expression_name_symbol(&semantic, SymbolFlags::CLASS_EXPRESSION);
+    assert_eq!(
+        semantic.scope(semantic.scope_of(name)).kind,
+        crate::scope::ScopeKind::Class
+    );
+    assert_eq!(reference_symbol(&ast, &semantic, b"Inner"), Some(name));
+    assert!(semantic.binding(ScopeId::MODULE, b"Inner").is_none());
+    assert_eq!(semantic.iter_scopes().count(), 3);
+}
+
+fn expression_name_symbol(semantic: &Semantic<'_>, flag: SymbolFlags) -> SymbolId {
+    let mut names = semantic
+        .iter_symbols()
+        .filter(|entry| entry.symbol.flags.contains(flag));
+    let name = names.next().unwrap().id;
+    assert!(names.next().is_none());
+    name
+}
+
+#[test]
 fn declarations_share_canonical_symbols() {
     let allocator = Allocator::new();
     let ts_script = Options {

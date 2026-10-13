@@ -6,6 +6,7 @@ use testsuite::{
         babel_parser::BabelParserCase,
         local::LocalCase,
         swc_resolver::SwcResolverCase,
+        swc_transform::SwcTransformCase,
         test262::Test262Case,
         typescript::{
             parser::TypeScriptParserCase,
@@ -36,6 +37,7 @@ enum CaseSet {
     Babel,
     #[value(name = "swc_resolver")]
     SwcResolver,
+    Swc,
 }
 
 #[derive(Parser)]
@@ -52,7 +54,6 @@ struct AppArgs {
     /// Contains filter applied to the fixture path and case name.
     #[arg(long)]
     filter: String,
-
     /// Override the fixture's TypeScript transform options.
     #[arg(long, value_enum)]
     typescript_mode: Option<TypeScriptMode>,
@@ -88,7 +89,11 @@ fn main() {
                 args.typescript_mode.map(TypeScriptTransformMode::from),
             )
             .and_then(|cases| run_filtered_cases::<TransformerRunner, _>(&args.filter, cases)),
-            _ => Err("`transform` runner requires `--case babel` or `--case typescript`".into()),
+            CaseSet::Swc => run_filtered::<TransformerRunner, SwcTransformCase>(&args.filter),
+            _ => Err(
+                "`transform` runner requires `--case babel`, `--case typescript` or `--case swc`"
+                    .into(),
+            ),
         },
         RunnerName::Resolver if matches!(args.case, CaseSet::SwcResolver) => {
             run_filtered::<ResolverRunner, SwcResolverCase>(&args.filter)
@@ -110,7 +115,9 @@ where
         CaseSet::Local => run_filtered::<R, LocalCase>(filter),
         CaseSet::TypeScript => run_filtered::<R, TypeScriptParserCase>(filter),
         CaseSet::Babel => run_filtered::<R, BabelParserCase>(filter),
-        CaseSet::SwcResolver => Err("parser/codegen do not run SWC resolver cases".into()),
+        CaseSet::SwcResolver | CaseSet::Swc => {
+            Err("parser/codegen do not run SWC transform/resolver cases".into())
+        }
     }
 }
 

@@ -9,7 +9,6 @@ fn transform(source: &str, jsx: JsxImportOptions) -> String {
             jsx,
             ..Default::default()
         },
-        false,
         Lang::Tsx,
     )
 }

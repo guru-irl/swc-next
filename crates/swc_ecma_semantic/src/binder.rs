@@ -59,10 +59,29 @@ use module_instance::{TsModuleInstanceMemo, TsModuleInstanceState, ts_module_ins
 /// contribution of an individual declaration matters.
 #[derive(Debug, Clone, Copy)]
 pub struct Symbol {
+    /// Same-named declarations that shadow an internal name reuse its name
+    /// handle, so lexical lookup can compare names without reading the AST.
     pub name: AstWtf8,
     pub flags: SymbolFlags,
     /// The first declaration contributing to this symbol.
     pub declaration: DeclarationId,
+}
+
+pub(crate) fn find_internal_name(
+    symbols: &[Symbol],
+    declarations: &[Declaration],
+    scope: ScopeId,
+    binding: SymbolId,
+) -> Option<SymbolId> {
+    let name = symbols[binding.index()].name;
+    symbols.iter().enumerate().find_map(|(index, symbol)| {
+        let id = SymbolId::from_usize(index);
+        (id != binding
+            && symbol.flags.intersects(SymbolFlags::INTERNAL_NAME)
+            && symbol.name == name
+            && declarations[symbol.declaration.index()].scope == scope)
+            .then_some(id)
+    })
 }
 
 /// One declaration contributing to a [`Symbol`].
@@ -121,6 +140,17 @@ bitflags::bitflags! {
         /// A TypeScript import-equals declaration, including type-only and
         /// external `require` aliases. Independent of target resolution.
         const IMPORT_EQUALS = 1 << 23;
+        /// A named function expression's internal name. Same-named parameters
+        /// and local declarations replace its scope binding with a new symbol.
+        const FUNCTION_EXPRESSION = 1 << 24;
+        /// A named class expression's internal name, local to its class scope.
+        const CLASS_EXPRESSION = 1 << 25;
+        /// The branch-local name of a sloppy if/else function declaration.
+        /// Shares the function scope and is shadowed by parameters and locals.
+        const ANNEX_B_IF_FUNCTION = 1 << 26;
+
+        const EXPRESSION_NAME = Self::FUNCTION_EXPRESSION.bits() | Self::CLASS_EXPRESSION.bits();
+        const INTERNAL_NAME = Self::EXPRESSION_NAME.bits() | Self::ANNEX_B_IF_FUNCTION.bits();
 
         /// `var` / `let` / `const`, parameters and catch bindings included.
         const VARIABLE = Self::FUNCTION_SCOPED_VAR.bits() | Self::BLOCK_SCOPED_VAR.bits();
@@ -489,7 +519,7 @@ impl ReferenceFlags {
         self
     }
 
-    pub(crate) fn write_only(mut self) -> Self {
+    pub fn write_only(mut self) -> Self {
         self.properties = ReferenceProperties::WRITE;
         self
     }
@@ -505,7 +535,7 @@ impl ReferenceFlags {
         self
     }
 
-    fn with_dynamic(mut self) -> Self {
+    pub(crate) fn with_dynamic(mut self) -> Self {
         self.properties.insert(ReferenceProperties::DYNAMIC);
         self
     }
@@ -1109,18 +1139,17 @@ impl TsMemberIndex<'_> {
 
     pub(crate) fn resolve_name(
         &self,
-        scopes: &ScopeTree<'_>,
-        symbols: &[Symbol],
-        scope_maps: &[ScopeMap<'_>],
+        semantic: &Semantic<'_>,
         scope: ScopeId,
         name: &[u8],
         space: ReferenceSpace,
     ) -> NameResolution {
         let query = NameLookupQuery { scope, name, space };
         let lexical = LexicalLookup {
-            scopes: &scopes.list,
-            symbols,
-            scope_maps,
+            scopes: &semantic.scopes.list,
+            symbols: &semantic.symbols,
+            declarations: &semantic.declarations,
+            scope_maps: &semantic.scope_maps,
         };
         let ts = TsNameLookup {
             source_exports: self.source_exports.as_ref(),
@@ -2149,16 +2178,26 @@ impl<'a> SymbolTracker<'a> {
         kind == VariableKind::Var && scope.var_write_crosses_with()
     }
 
-    pub fn enter_function(&mut self, tree: &Ast<'a>, function: Function, scope: &ScopeTracker<'a>) {
+    pub fn enter_function(
+        &mut self,
+        tree: &Ast<'a>,
+        function: Function,
+        scope: &ScopeTracker<'a>,
+        annex_b_if_body: bool,
+    ) {
         self.push_saved_context();
         let is_declaration = function.function_type(tree) == FunctionType::FunctionDeclaration;
-        let target = if is_declaration {
+        // Preserve the branch-local binding without allocating an implicit
+        // block. Like an expression name, it is distinct from parameters,
+        // body declarations and same-named declarations in the outer scope.
+        let branch_local = annex_b_if_body && !scope.current_scope().flags.strict;
+        let target = if is_declaration && !branch_local {
             scope
                 .current_scope()
                 .parent
                 .expect("a function declaration scope has a parent")
         } else {
-            expression_name_scope(scope)
+            scope.current
         };
 
         let target_scope = scope.get(target);
@@ -2169,7 +2208,7 @@ impl<'a> SymbolTracker<'a> {
             tree.is_ts() && tree.node_kind(target_scope.node) == NodeKind::CatchClause;
         let annex_b_block_function = !tree.is_ts()
             && is_declaration
-            && target_kind == ScopeKind::Block
+            && (target_kind == ScopeKind::Block || branch_local)
             && !target_scope.flags.strict
             && !function.generator(tree)
             && !function.r#async(tree);
@@ -2185,6 +2224,8 @@ impl<'a> SymbolTracker<'a> {
         // var. Lexical scopes use the block-scoped excludes instead.
         self.pending = PendingBinding {
             flags: SymbolFlags::FUNCTION
+                .with(SymbolFlags::FUNCTION_EXPRESSION, !is_declaration)
+                .with(SymbolFlags::ANNEX_B_IF_FUNCTION, branch_local)
                 .with(
                     SymbolFlags::ANNEX_B_FUNCTION,
                     is_declaration && !function.generator(tree) && !function.r#async(tree),
@@ -2237,6 +2278,7 @@ impl<'a> SymbolTracker<'a> {
         let is_declaration = class.class_type(tree) == ClassType::ClassDeclaration;
         self.pending = PendingBinding {
             flags: SymbolFlags::CLASS
+                .with(SymbolFlags::CLASS_EXPRESSION, !is_declaration)
                 .with(SymbolFlags::AMBIENT, class.declare(tree) || self.ambient),
             excludes: if tree.is_ts() {
                 Excludes::CLASS
@@ -2249,7 +2291,7 @@ impl<'a> SymbolTracker<'a> {
                     .parent
                     .expect("a class declaration scope has a parent")
             } else {
-                expression_name_scope(scope)
+                scope.current
             },
         };
         // Expression names are local.
@@ -2707,7 +2749,13 @@ impl<'a> SymbolTracker<'a> {
         node: NodeId,
     ) -> PreparedDeclaration {
         let name_text = tree.get_wtf8(name).as_bytes();
-        let local = self.binding(self.pending.scope, name_text);
+        let local = self
+            .binding(self.pending.scope, name_text)
+            .filter(|&symbol| {
+                !self.symbols[symbol.index()]
+                    .flags
+                    .intersects(SymbolFlags::INTERNAL_NAME)
+            });
         let (destination, shared, existing) = if self.pending_is_default_export(tree) {
             let shared = self
                 .ts_source_exports
@@ -2905,6 +2953,26 @@ impl<'a> SymbolTracker<'a> {
             let entry = bindings
                 .raw_entry_mut()
                 .from_key_hashed_nocheck(hash, name_text);
+            // The internal name shares the function scope, but is shadowed
+            // rather than redeclared by parameters and local declarations.
+            // Keep its symbol and AST identity while replacing the name map.
+            let (entry, symbol_name) = match entry {
+                hashbrown::hash_map::RawEntryMut::Occupied(entry)
+                    if self.symbols[entry.get().index()]
+                        .flags
+                        .intersects(SymbolFlags::INTERNAL_NAME) =>
+                {
+                    let symbol_name = self.symbols[entry.get().index()].name;
+                    entry.remove_entry();
+                    (
+                        bindings
+                            .raw_entry_mut()
+                            .from_key_hashed_nocheck(hash, name_text),
+                        symbol_name,
+                    )
+                }
+                entry => (entry, name),
+            };
             let entry = match entry {
                 hashbrown::hash_map::RawEntryMut::Occupied(entry) => Ok(*entry.get()),
                 hashbrown::hash_map::RawEntryMut::Vacant(entry) => {
@@ -2931,7 +2999,7 @@ impl<'a> SymbolTracker<'a> {
                 Err(vacant) => {
                     let new_id = SymbolId::from_usize(self.symbols.len());
                     self.symbols.push(Symbol {
-                        name,
+                        name: symbol_name,
                         flags: declaration_flags,
                         declaration: declaration_id,
                     });
@@ -3519,7 +3587,13 @@ impl<'a> SymbolTracker<'a> {
         } else {
             let new_id = SymbolId::from_usize(self.symbols.len());
             self.symbols.push(Symbol {
-                name,
+                name: self
+                    .scope_maps
+                    .get(binding.scope.index())
+                    .and_then(|bindings| bindings.get(tree.get_wtf8(name).as_bytes()))
+                    .map(|&symbol| self.symbols[symbol.index()])
+                    .filter(|symbol| symbol.flags.intersects(SymbolFlags::INTERNAL_NAME))
+                    .map_or(name, |symbol| symbol.name),
                 flags: declaration_flags,
                 declaration: declaration_id,
             });
@@ -4276,6 +4350,7 @@ impl<'a> SymbolTracker<'a> {
             hoisting_variables: self.hoisting_variables,
             node_symbols,
             node_references,
+            node_scopes: ArenaVec::new_in(self.allocator),
             ts_members: TsMemberIndex {
                 source_exports: self.ts_source_exports,
                 local_exports: self.ts_local_exports,
@@ -4389,6 +4464,7 @@ impl<'a> SymbolTracker<'a> {
                 LexicalLookup {
                     scopes: &scopes.list,
                     symbols: &self.symbols,
+                    declarations: &self.declarations,
                     scope_maps: &self.scope_maps,
                 },
                 &TsNameLookup {
@@ -4486,6 +4562,7 @@ impl<'a> SymbolTracker<'a> {
             let lexical = LexicalLookup {
                 scopes: &scopes.list,
                 symbols: &self.symbols,
+                declarations: &self.declarations,
                 scope_maps: &self.scope_maps,
             };
             let resolved = if PRECISE_IMPORT_ALIASES {
@@ -4700,19 +4777,6 @@ fn jsx_tag_root(tree: &Ast<'_>, name: JsxElementNameData) -> Option<JsxIdentifie
             }
             JsxElementNameData::JsxNamespacedName(_) => return None,
         }
-    }
-}
-
-// The expression-name scope sits between the outer and function/class
-// scopes, so it is the parent of the current scope.
-fn expression_name_scope(scope: &ScopeTracker<'_>) -> ScopeId {
-    let current = scope.current_scope();
-    if matches!(current.kind, ScopeKind::Function | ScopeKind::Class) {
-        current
-            .parent
-            .expect("function and class scopes have a parent")
-    } else {
-        scope.current
     }
 }
 

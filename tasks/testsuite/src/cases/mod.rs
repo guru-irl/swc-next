@@ -10,6 +10,7 @@ pub mod babel;
 pub mod babel_parser;
 pub mod local;
 pub mod swc_resolver;
+pub mod swc_transform;
 pub mod test262;
 pub mod typescript;
 

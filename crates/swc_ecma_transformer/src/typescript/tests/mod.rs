@@ -21,30 +21,20 @@ pub(super) fn transformed_code_with_options(
     source: &str,
     transform_options: TypeScriptOptions,
 ) -> String {
-    transformed_code_with_pipeline(source, transform_options, false)
-}
-
-fn transformed_code_with_pipeline(
-    source: &str,
-    transform_options: TypeScriptOptions,
-    arrows: bool,
-) -> String {
-    transformed_code_with_language(source, transform_options, arrows, Lang::Ts)
+    transformed_code_with_language(source, transform_options, Lang::Ts)
 }
 
 fn transformed_code_with_language(
     source: &str,
     transform_options: TypeScriptOptions,
-    arrows: bool,
     lang: Lang,
 ) -> String {
-    transformed_code_with_source_type(source, transform_options, arrows, lang, SourceType::Module)
+    transformed_code_with_source_type(source, transform_options, lang, SourceType::Module)
 }
 
 fn transformed_code_with_source_type(
     source: &str,
     transform_options: TypeScriptOptions,
-    arrows: bool,
     lang: Lang,
     source_type: SourceType,
 ) -> String {
@@ -57,20 +47,9 @@ fn transformed_code_with_source_type(
     let parsed = Parser::init(&allocator, source, options, NoTokenParserConfig).parse();
     assert!(parsed.diagnostics.is_empty());
     let mut ast = parsed.ast;
+    Normalizer::normalize_runtime(ast.root_program(), &mut ast);
     let semantic = analyze(&ast, AnalyzeOptions::default()).semantic;
-    crate::Transformer::transform(
-        &mut ast,
-        &semantic,
-        crate::TransformerOptions {
-            typescript: Some(transform_options),
-            es2015: crate::es2015::ES2015Options {
-                arrow_functions: arrows
-                    .then_some(crate::es2015::arrow::ArrowFunctionsOptions::default()),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-    );
+    transform(ast.root_program(), &mut ast, &semantic, transform_options);
     swc_next_ecma_codegen::print(&allocator, &ast, Default::default())
         .code
         .to_owned()

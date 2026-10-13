@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use swc_next_ecma_transformer::es2015::arrow::ArrowFunctionsOptions;
 use swc_next_ecma_transformer::typescript::{JsxImportOptions, TypeScriptOptions};
 
 use super::PluginPresetEntries;
@@ -51,10 +50,8 @@ pub struct BabelPlugins {
     pub react_jsx: bool,
     pub react_jsx_dev: bool,
 
-    // ES2015
-    pub arrow_function: Option<ArrowFunctionsOptions>,
-    pub shorthand_properties: bool,
-    pub sticky_regex: bool,
+    // ES2022
+    pub static_blocks: bool,
 }
 
 impl TryFrom<PluginPresetEntries> for BabelPlugins {
@@ -83,14 +80,7 @@ impl TryFrom<PluginPresetEntries> for BabelPlugins {
                     plugins.react_jsx_dev = true;
                     plugins.unsupported.push(entry.name().to_owned());
                 }
-                "transform-arrow-functions" => {
-                    plugins.arrow_function = entry
-                        .value::<ArrowFunctionsOptions>()
-                        .map_err(|error| plugins.errors.push(error))
-                        .ok();
-                }
-                "transform-shorthand-properties" => plugins.shorthand_properties = true,
-                "transform-sticky-regex" => plugins.sticky_regex = true,
+                "transform-class-static-block" => plugins.static_blocks = true,
                 _ => plugins.unsupported.push(entry.name().to_owned()),
             }
         }
