@@ -1,6 +1,6 @@
 use std::mem;
 
-use swc_next_ast_macros::ast;
+use swc_next_ast_macros::{ast, estree};
 
 use crate::{
     ExtraData,
@@ -39,10 +39,15 @@ macro_rules! impl_extra_data_value {
 /// ```
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum MethodDefinitionKind {
+    #[estree(rename = "constructor")]
     Constructor,
+    #[estree(rename = "method")]
     Method,
+    #[estree(rename = "get")]
     Get,
+    #[estree(rename = "set")]
     Set,
 }
 
@@ -52,10 +57,15 @@ pub enum MethodDefinitionKind {
 /// which is written explicitly.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum Accessibility {
+    #[estree(ts_type = "null")]
     None,
+    #[estree(rename = "public")]
     Public,
+    #[estree(rename = "private")]
     Private,
+    #[estree(rename = "protected")]
     Protected,
 }
 
@@ -65,6 +75,7 @@ pub enum Accessibility {
 /// `const x = class {}`.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum ClassType {
     ClassDeclaration,
     ClassExpression,
@@ -80,28 +91,51 @@ pub enum ClassType {
 /// ```
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum BinaryOperator {
+    #[estree(rename = "==")]
     Equal,
+    #[estree(rename = "!=")]
     NotEqual,
+    #[estree(rename = "===")]
     StrictEqual,
+    #[estree(rename = "!==")]
     StrictNotEqual,
+    #[estree(rename = "<")]
     LessThan,
+    #[estree(rename = "<=")]
     LessThanOrEqual,
+    #[estree(rename = ">")]
     GreaterThan,
+    #[estree(rename = ">=")]
     GreaterThanOrEqual,
+    #[estree(rename = "+")]
     Add,
+    #[estree(rename = "-")]
     Subtract,
+    #[estree(rename = "*")]
     Multiply,
+    #[estree(rename = "/")]
     Divide,
+    #[estree(rename = "%")]
     Modulo,
+    #[estree(rename = "**")]
     Exponent,
+    #[estree(rename = "|")]
     BitwiseOr,
+    #[estree(rename = "^")]
     BitwiseXor,
+    #[estree(rename = "&")]
     BitwiseAnd,
+    #[estree(rename = "<<")]
     LeftShift,
+    #[estree(rename = ">>")]
     RightShift,
+    #[estree(rename = ">>>")]
     UnsignedRightShift,
+    #[estree(rename = "in")]
     In,
+    #[estree(rename = "instanceof")]
     Instanceof,
 }
 
@@ -115,9 +149,13 @@ pub enum BinaryOperator {
 /// ```
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum LogicalOperator {
+    #[estree(rename = "&&")]
     And,
+    #[estree(rename = "||")]
     Or,
+    #[estree(rename = "??")]
     NullishCoalescing,
 }
 
@@ -133,13 +171,21 @@ pub enum LogicalOperator {
 /// ```
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum UnaryOperator {
+    #[estree(rename = "-")]
     Negate,
+    #[estree(rename = "+")]
     Positive,
+    #[estree(rename = "!")]
     LogicalNot,
+    #[estree(rename = "~")]
     BitwiseNot,
+    #[estree(rename = "typeof")]
     Typeof,
+    #[estree(rename = "void")]
     Void,
+    #[estree(rename = "delete")]
     Delete,
 }
 
@@ -152,8 +198,11 @@ pub enum UnaryOperator {
 /// ```
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum UpdateOperator {
+    #[estree(rename = "++")]
     Increment,
+    #[estree(rename = "--")]
     Decrement,
 }
 
@@ -168,22 +217,39 @@ pub enum UpdateOperator {
 /// ```
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum AssignmentOperator {
+    #[estree(rename = "=")]
     Assign,
+    #[estree(rename = "+=")]
     AddAssign,
+    #[estree(rename = "-=")]
     SubtractAssign,
+    #[estree(rename = "*=")]
     MultiplyAssign,
+    #[estree(rename = "/=")]
     DivideAssign,
+    #[estree(rename = "%=")]
     ModuloAssign,
+    #[estree(rename = "**=")]
     ExponentAssign,
+    #[estree(rename = "<<=")]
     LeftShiftAssign,
+    #[estree(rename = ">>=")]
     RightShiftAssign,
+    #[estree(rename = ">>>=")]
     UnsignedRightShiftAssign,
+    #[estree(rename = "|=")]
     BitwiseOrAssign,
+    #[estree(rename = "^=")]
     BitwiseXorAssign,
+    #[estree(rename = "&=")]
     BitwiseAndAssign,
+    #[estree(rename = "||=")]
     LogicalOrAssign,
+    #[estree(rename = "&&=")]
     LogicalAndAssign,
+    #[estree(rename = "??=")]
     NullishAssign,
 }
 
@@ -199,11 +265,17 @@ pub enum AssignmentOperator {
 /// ```
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum VariableKind {
+    #[estree(rename = "var")]
     Var,
+    #[estree(rename = "let")]
     Let,
+    #[estree(rename = "const")]
     Const,
+    #[estree(rename = "using")]
     Using,
+    #[estree(rename = "await using")]
     AwaitUsing,
 }
 
@@ -225,6 +297,7 @@ impl VariableKind {
 /// `FunctionExpression` for `const x = function () {}`.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum FunctionType {
     FunctionDeclaration,
     FunctionExpression,
@@ -242,10 +315,15 @@ pub enum FunctionType {
 /// type signature.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum FormalParameterKind {
+    #[estree(rename = "formal")]
     FormalParameters,
+    #[estree(rename = "unique")]
     UniqueFormalParameters,
+    #[estree(rename = "arrow")]
     ArrowFormalParameters,
+    #[estree(rename = "signature")]
     Signature,
 }
 
@@ -259,9 +337,13 @@ pub enum FormalParameterKind {
 /// ```
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum PropertyKind {
+    #[estree(rename = "init")]
     Init,
+    #[estree(rename = "get")]
     Get,
+    #[estree(rename = "set")]
     Set,
 }
 
@@ -277,8 +359,11 @@ pub enum PropertyKind {
 /// ```
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum ImportOrExportKind {
+    #[estree(rename = "value")]
     Value,
+    #[estree(rename = "type")]
     Type,
 }
 
@@ -291,8 +376,11 @@ pub enum ImportOrExportKind {
 /// ```
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[estree]
 pub enum ImportPhase {
+    #[estree(rename = "source")]
     Source,
+    #[estree(rename = "defer")]
     Defer,
 }
 
@@ -347,15 +435,19 @@ impl ExtraDataValue for Option<ImportPhase> {
 /// `hashbang` is the `#!` line if present. `directives` contains the directive
 /// prologue (`"use strict";`), while `body` contains imports and statements.
 #[ast]
+#[estree(fields(sourceType(ts_type = "SourceType")))]
 pub struct Program {
+    #[estree(skip)]
     directives: SubRange<Directive>,
     /// Import and export declarations are classified as statements.
+    #[estree(ts_type = "Array<Directive | Statement>")]
     body: SubRange<Stmt>,
     /// `null` when the file has no `#!` line.
     hashbang: Option<Hashbang>,
 }
 
 #[ast(repr, nested)]
+#[estree(rename = "Statement")]
 pub enum Stmt {
     BlockStatement(BlockStatement),
     BreakStatement(BreakStatement),
@@ -385,10 +477,14 @@ pub enum Stmt {
 }
 
 #[ast(repr)]
+#[estree(rename = "Declaration")]
 pub enum Decl {
     VariableDeclaration(VariableDeclaration),
+    #[estree(rename = "FunctionDeclaration")]
     Function(Function),
+    #[estree(rename = "ClassDeclaration")]
     Class(Class),
+    #[estree(rename = "TSDeclareFunction")]
     TsFunction(TsFunction),
     TsTypeAliasDeclaration(TsTypeAliasDeclaration),
     TsInterfaceDeclaration(TsInterfaceDeclaration),
@@ -399,6 +495,7 @@ pub enum Decl {
 }
 
 #[ast(repr)]
+#[estree(rename = "Expression")]
 pub enum Expr {
     IdentifierReference(IdentifierReference),
     ThisExpression(ThisExpression),
@@ -427,7 +524,9 @@ pub enum Expr {
     ArrayExpression(ArrayExpression),
     ObjectExpression(ObjectExpression),
     ParenthesizedExpression(ParenthesizedExpression),
+    #[estree(rename = "FunctionExpression")]
     Function(Function),
+    #[estree(rename = "ClassExpression")]
     Class(Class),
     ImportExpression(ImportExpression),
     AwaitExpression(AwaitExpression),
@@ -443,6 +542,7 @@ pub enum Expr {
 }
 
 #[ast(repr, nested)]
+#[estree(rename = "Pattern")]
 pub enum BindingPattern {
     BindingIdentifier(BindingIdentifier),
     SimpleAssignmentTarget(SimpleAssignmentTarget),
@@ -543,8 +643,11 @@ pub enum ImportDeclarationSpecifier {
 #[ast(repr, nested)]
 pub enum ExportDefaultDeclarationKind {
     Expr(Expr),
+    #[estree(rename = "FunctionDeclaration")]
     Function(Function),
+    #[estree(rename = "ClassDeclaration")]
     Class(Class),
+    #[estree(rename = "TSDeclareFunction")]
     TsFunction(TsFunction),
     TsInterfaceDeclaration(TsInterfaceDeclaration),
 }
@@ -577,6 +680,10 @@ pub struct ThisExpression {}
 /// //    ^^ escape sequences are decoded into `value`
 /// ```
 #[ast]
+#[estree(
+    rename = "Literal",
+    add_ts_def = "type Literal = StringLiteral | NumericLiteral | BigIntLiteral | BooleanLiteral | NullLiteral | RegExpLiteral;"
+)]
 pub struct StringLiteral {
     /// decoded content with escape sequences resolved and quotes stripped
     value: AstWtf8,
@@ -595,6 +702,7 @@ pub struct StringLiteral {
 /// 1_000_000   // separators are stripped when computing `value`
 /// ```
 #[ast]
+#[estree(rename = "Literal")]
 pub struct NumericLiteral {
     /// The authoritative ECMAScript Number value.
     #[ast(invalidates(raw))]
@@ -602,6 +710,7 @@ pub struct NumericLiteral {
     /// The source lexeme, including prefix (`0x`, `0b`, `0o`) and separators.
     ///
     /// `None` when no source spelling should be preserved.
+    #[estree(ts_type = "string")]
     raw: Option<AstUtf8>,
 }
 
@@ -618,6 +727,10 @@ pub struct NumericLiteral {
 /// // raw = "0xff"
 /// ```
 #[ast]
+#[estree(
+    rename = "Literal",
+    fields(value(ts_type = "bigint | null"), bigint(ts_type = "string"))
+)]
 pub struct BigIntLiteral {
     /// digits without the trailing `n`
     raw: AstUtf8,
@@ -625,6 +738,7 @@ pub struct BigIntLiteral {
 
 /// A `true` or `false` literal.
 #[ast]
+#[estree(rename = "Literal", fields(raw(ts_type = r#""false" | "true""#)))]
 pub struct BooleanLiteral {
     value: bool,
 }
@@ -637,6 +751,10 @@ pub struct BooleanLiteral {
 /// //        ^^^^ NullLiteral
 /// ```
 #[ast]
+#[estree(
+    rename = "Literal",
+    fields(value(ts_type = "null"), raw(ts_type = r#""null""#))
+)]
 pub struct NullLiteral {}
 
 /// A regular expression literal.
@@ -650,8 +768,18 @@ pub struct NullLiteral {}
 /// //     ^^ flags
 /// ```
 #[ast]
+#[estree(
+    rename = "Literal",
+    fields(
+        value(ts_type = "RegExp | null"),
+        raw(ts_type = "string"),
+        regex(ts_type = "{ pattern: string; flags: string }")
+    )
+)]
 pub struct RegExpLiteral {
+    #[estree(skip)]
     pattern: AstUtf8,
+    #[estree(skip)]
     flags: AstUtf8,
 }
 
@@ -685,16 +813,20 @@ pub struct TemplateLiteral {
 /// The two quasi elements are `"a "` (`tail = false`) and `" b"`
 /// (`tail = true`).
 #[ast]
+#[estree(fields(value(ts_type = "{ raw: string; cooked: string | null }")))]
 pub struct TemplateElement {
     /// escape-decoded content, empty when `is_cooked_undefined`
+    #[estree(skip)]
     cooked: AstWtf8,
     /// verbatim source text, line endings normalized to `\n`. empty for
     /// synthetic nodes
+    #[estree(skip)]
     raw: AstUtf8,
     /// true for the final element (after the last interpolation)
     tail: bool,
     /// true when the cooked value is undefined per ECMAScript TV semantics
     /// (an invalid escape inside a tagged template)
+    #[estree(skip)]
     is_cooked_undefined: bool,
 }
 
@@ -711,6 +843,7 @@ pub struct TemplateElement {
 /// `identifier_name` because it appears in property-access position, not
 /// as a value reference.
 #[ast]
+#[estree(ts_alias = "Identifier")]
 pub struct IdentifierReference {
     name: AstUtf8,
 }
@@ -740,6 +873,16 @@ pub struct PrivateIdentifier {
 /// //           ^ BindingIdentifier; the annotation belongs to the parameter
 /// ```
 #[ast]
+#[estree(
+    ts_alias = "Identifier",
+    add_ts_def = r#"interface Identifier extends BaseNode {
+  type: "Identifier";
+  name: string;
+  decorators?: Array<Decorator>;
+  optional?: boolean;
+  typeAnnotation?: TSTypeAnnotation | null;
+}"#
+)]
 pub struct BindingIdentifier {
     name: AstUtf8,
 }
@@ -754,6 +897,7 @@ pub struct BindingIdentifier {
 /// //^^^ IdentifierName
 /// ```
 #[ast]
+#[estree(ts_alias = "Identifier")]
 pub struct IdentifierName {
     name: AstUtf8,
 }
@@ -768,6 +912,7 @@ pub struct IdentifierName {
 /// //                    ^^^^^ break target
 /// ```
 #[ast]
+#[estree(ts_alias = "Identifier")]
 pub struct LabelIdentifier {
     name: AstUtf8,
 }
@@ -782,6 +927,11 @@ pub struct LabelIdentifier {
 /// //         ^ right
 /// ```
 #[ast]
+#[estree(fields(
+    decorators(ts_type = "Array<Decorator>", optional),
+    optional(ts_type = "boolean", optional),
+    typeAnnotation(ts_type = "TSTypeAnnotation | null", optional)
+))]
 pub struct AssignmentPattern {
     /// any binding pattern
     left: BindingPattern,
@@ -798,6 +948,15 @@ pub struct AssignmentPattern {
 /// //        ^^^^ argument
 /// ```
 #[ast]
+#[estree(
+    rename = "RestElement",
+    fields(
+        value(ts_type = "null", optional),
+        decorators(ts_type = "Array<Decorator>", optional),
+        optional(ts_type = "boolean", optional),
+        typeAnnotation(ts_type = "TSTypeAnnotation | null", optional)
+    )
+)]
 pub struct BindingRestElement {
     /// any binding pattern
     argument: BindingPattern,
@@ -815,10 +974,16 @@ pub struct BindingRestElement {
 ///
 /// `elements[1]` is `None` (the hole between the two commas).
 #[ast]
+#[estree(fields(
+    decorators(ts_type = "Array<Decorator>", optional),
+    optional(ts_type = "boolean", optional),
+    typeAnnotation(ts_type = "TSTypeAnnotation | null", optional)
+))]
 pub struct ArrayPattern {
     /// any binding pattern. Entries are `None` for holes.
     elements: SubRange<Option<BindingPattern>>,
     /// `binding_rest_element`. `None` when no rest element is present.
+    #[estree(skip)]
     rest: Option<BindingRestElement>,
 }
 
@@ -832,10 +997,17 @@ pub struct ArrayPattern {
 /// //               ^^^^^^^ rest
 /// ```
 #[ast]
+#[estree(fields(
+    decorators(ts_type = "Array<Decorator>", optional),
+    optional(ts_type = "boolean", optional),
+    typeAnnotation(ts_type = "TSTypeAnnotation | null", optional)
+))]
 pub struct ObjectPattern {
     /// `binding_property[]`
+    #[estree(ts_type = "Array<BindingProperty | BindingRestElement>")]
     properties: SubRange<BindingProperty>,
     /// `binding_rest_element`. `None` when no rest element is present.
+    #[estree(skip)]
     rest: Option<BindingRestElement>,
 }
 
@@ -849,6 +1021,14 @@ pub struct ObjectPattern {
 /// //               ^^^^^^ computed key
 /// ```
 #[ast]
+#[estree(
+    rename = "Property",
+    fields(
+        kind(ts_type = r#""init""#),
+        method(ts_type = "false"),
+        optional(ts_type = "false", optional)
+    )
+)]
 pub struct BindingProperty {
     /// `identifier_name`, `string_literal`, `numeric_literal`,
     /// `private_identifier` (class members only), or any expression when `computed = true`
@@ -924,6 +1104,7 @@ pub struct ConditionalExpression {
 /// //     ^^^ argument
 /// ```
 #[ast]
+#[estree(fields(prefix(ts_type = "true")))]
 pub struct UnaryExpression {
     /// any expression
     argument: Expr,
@@ -980,8 +1161,10 @@ pub struct AssignmentExpression {
 pub struct VariableDeclaration {
     kind: VariableKind,
     /// `variable_declarator[]`
+    #[estree(rename = "declarations")]
     declarators: SubRange<VariableDeclarator>,
     /// true for `declare var x: T`.
+    #[estree(optional)]
     declare: bool,
 }
 
@@ -1000,10 +1183,12 @@ pub struct VariableDeclarator {
     /// any binding pattern
     id: BindingPattern,
     /// TypeScript annotation on this declaration, outside the binding pattern.
+    #[estree(skip)]
     type_annotation: Option<TsTypeAnnotation>,
     /// any expression. `None` when there is no initializer.
     init: Option<Expr>,
     /// true for a definite assignment assertion (`let x!: T`).
+    #[estree(optional)]
     definite: bool,
 }
 
@@ -1149,6 +1334,7 @@ pub struct CatchClause {
     /// any binding pattern. `None` for `catch { }` with no binding.
     param: Option<BindingPattern>,
     /// TypeScript annotation on the catch binding, if one is present.
+    #[estree(skip)]
     type_annotation: Option<TsTypeAnnotation>,
     /// `block_statement`
     body: BlockStatement,
@@ -1206,6 +1392,7 @@ pub struct LabeledStatement {
 /// // ^^^^ expression
 /// ```
 #[ast]
+#[estree(fields(directive(ts_type = "string | null", optional)))]
 pub struct ExpressionStatement {
     /// any expression
     expression: Expr,
@@ -1266,10 +1453,12 @@ pub struct EmptyStatement {}
 /// `expression` is the underlying `string_literal` (`"use strict"`).
 /// `value` is the text between the quotes (`use strict`).
 #[ast]
+#[estree(rename = "ExpressionStatement")]
 pub struct Directive {
     /// `string_literal`
     expression: StringLiteral,
     /// the directive text without surrounding quotes
+    #[estree(rename = "directive")]
     value: AstUtf8,
 }
 
@@ -1306,7 +1495,13 @@ pub struct Decorator {
 /// `@dec class` populates `decorators`. `abstract class` sets `abstract`.
 /// `declare class` sets `declare`.
 #[ast]
+#[estree(
+    ts_type = "ClassType",
+    add_ts_def = r#"type ClassDeclaration = Class & { type: "ClassDeclaration" };
+export type ClassExpression = Class & { type: "ClassExpression" };"#
+)]
 pub struct Class {
+    #[estree(skip)]
     class_type: ClassType,
     /// `decorator[]`
     decorators: SubRange<Decorator>,
@@ -1314,19 +1509,24 @@ pub struct Class {
     id: Option<BindingIdentifier>,
     /// `ts_type_parameter_declaration`. `None` when the class has no `<T, U>`
     /// parameters.
+    #[estree(optional)]
     type_parameters: Option<TsTypeParameterDeclaration>,
     /// any expression. `None` when the class has no `extends` clause.
     super_class: Option<Expr>,
     /// `ts_type_parameter_instantiation`. `None` when `extends` has no `<T>`
     /// arguments.
+    #[estree(optional)]
     super_type_arguments: Option<TsTypeParameterInstantiation>,
     /// `ts_class_implements[]`. Empty when the class has no `implements`
     /// clause.
+    #[estree(optional)]
     implements: SubRange<TsClassImplements>,
     /// `class_body`
     body: ClassBody,
+    #[estree(optional)]
     r#abstract: bool,
     /// true for `declare class`.
+    #[estree(optional)]
     declare: bool,
 }
 
@@ -1358,6 +1558,7 @@ pub struct ClassBody {
 /// //                            ^^^^^^^^^^^ value
 /// ```
 #[ast]
+#[estree(ts_type = r#""MethodDefinition" | "TSAbstractMethodDefinition""#)]
 pub struct MethodDefinition {
     /// `decorator[]`
     decorators: SubRange<Decorator>,
@@ -1365,16 +1566,21 @@ pub struct MethodDefinition {
     /// `private_identifier` (class members only), or any expression when `computed = true`
     key: PropertyKey,
     /// `function`
+    #[estree(ts_type = "FunctionExpression")]
     value: Function,
     kind: MethodDefinitionKind,
     /// true when the key is written inside `[...]`.
     computed: bool,
     r#static: bool,
+    #[estree(optional)]
     r#override: bool,
     /// true for an optional method (`foo?()`).
+    #[estree(optional)]
     optional: bool,
+    #[estree(skip)]
     r#abstract: bool,
     /// `None` when no accessibility modifier was written.
+    #[estree(optional)]
     accessibility: Accessibility,
 }
 
@@ -1391,6 +1597,9 @@ pub struct MethodDefinition {
 /// //                                       ^ value
 /// ```
 #[ast]
+#[estree(
+    ts_type = r#""PropertyDefinition" | "AccessorProperty" | "TSAbstractPropertyDefinition" | "TSAbstractAccessorProperty""#
+)]
 pub struct PropertyDefinition {
     /// `decorator[]`
     decorators: SubRange<Decorator>,
@@ -1398,6 +1607,7 @@ pub struct PropertyDefinition {
     /// `private_identifier` (class members only), or any expression when `computed = true`
     key: PropertyKey,
     /// `ts_type_annotation`. `None` when the field has no annotation.
+    #[estree(optional)]
     type_annotation: Option<TsTypeAnnotation>,
     /// any expression. `None` when the field has no initializer.
     value: Option<Expr>,
@@ -1405,18 +1615,26 @@ pub struct PropertyDefinition {
     computed: bool,
     r#static: bool,
     /// true for `accessor x;` auto-accessor fields.
+    #[estree(skip)]
     accessor: bool,
     /// true for the `declare` modifier.
+    #[estree(optional)]
     declare: bool,
+    #[estree(optional)]
     r#override: bool,
     /// true for an optional property (`foo?: T`).
+    #[estree(optional)]
     optional: bool,
     /// true for a definite assignment assertion (`foo!: T`).
+    #[estree(optional)]
     definite: bool,
     /// true for the `readonly` modifier.
+    #[estree(optional)]
     readonly: bool,
+    #[estree(skip)]
     r#abstract: bool,
     /// `None` when no accessibility modifier was written.
+    #[estree(optional)]
     accessibility: Accessibility,
 }
 
@@ -1451,17 +1669,27 @@ pub struct StaticBlock {
 /// //                              ^^^^^^^^^^^^ body
 /// ```
 #[ast]
+#[estree(
+    ts_type = "FunctionType",
+    add_ts_def = r#"type FunctionDeclaration = Function & { type: "FunctionDeclaration" };
+export type FunctionExpression = Function & { type: "FunctionExpression" };"#,
+    fields(expression(ts_type = "false"), declare(ts_type = "false", optional))
+)]
 pub struct Function {
+    #[estree(skip)]
     function_type: FunctionType,
     /// `binding_identifier`. `None` for anonymous functions.
     id: Option<BindingIdentifier>,
     /// `ts_type_parameter_declaration`. `None` when absent.
+    #[estree(optional)]
     type_parameters: Option<TsTypeParameterDeclaration>,
     /// The explicit receiver type; does not consume a runtime argument.
+    #[estree(skip)]
     this_param: Option<TsThisParameter>,
     /// `formal_parameters`, excluding the explicit receiver.
     params: FormalParameters,
     /// `ts_type_annotation`. `None` when absent.
+    #[estree(optional)]
     return_type: Option<TsTypeAnnotation>,
     /// `function_body`
     body: FunctionBody,
@@ -1473,6 +1701,7 @@ pub struct Function {
 ///
 /// See: <https://tc39.es/ecma262/#prod-FunctionBody>
 #[ast]
+#[estree(ts_alias = "BlockStatement")]
 pub struct FunctionBody {
     directives: SubRange<Directive>,
     body: SubRange<Stmt>,
@@ -1546,6 +1775,7 @@ pub struct WithStatement {
 /// //                   ^^^^^^^ rest
 /// ```
 #[ast]
+#[estree(ts_alias = "Array<FormalParameterItem | FormalParameterRest | TSThisParameter>")]
 pub struct FormalParameters {
     /// `formal_parameter[]`. May also include `ts_parameter_property` entries
     /// (constructors only).
@@ -1556,6 +1786,9 @@ pub struct FormalParameters {
 }
 
 #[ast]
+#[estree(
+    ts_alias = "FormalParameterPattern | (AssignmentPattern & { left: FormalParameterPattern })"
+)]
 pub struct FormalParameter {
     /// Legacy parameter decorators, in source order.
     decorators: SubRange<Decorator>,
@@ -1572,6 +1805,7 @@ pub struct FormalParameter {
 
 /// A rest parameter collecting the remaining arguments of a call.
 #[ast]
+#[estree(ts_alias = "BindingRestElement & { argument: FormalParameterPattern }")]
 pub struct FormalParameterRest {
     decorators: SubRange<Decorator>,
     argument: FormalParameterPattern,
@@ -1638,6 +1872,7 @@ pub struct SpreadElement {
 /// })
 /// ```
 #[ast]
+#[estree(rename = "Property", fields(optional(ts_type = "false", optional)))]
 pub struct ObjectProperty {
     /// `identifier_name`, `string_literal`, `numeric_literal`,
     /// `private_identifier` (class members only), or any expression when `computed = true`
@@ -1682,16 +1917,19 @@ pub struct ParenthesizedExpression {
 /// //                    ^ body (expression = true)
 /// ```
 #[ast]
+#[estree(fields(id(ts_type = "null"), generator(ts_type = "false")))]
 pub struct ArrowFunctionExpression {
     /// true for a concise body `() => expr`. false for a block body
     /// `() => { ... }`.
     expression: bool,
     r#async: bool,
     /// `ts_type_parameter_declaration`. `None` when absent.
+    #[estree(optional)]
     type_parameters: Option<TsTypeParameterDeclaration>,
     /// `formal_parameters`
     params: FormalParameters,
     /// `ts_type_annotation`. `None` when absent.
+    #[estree(optional)]
     return_type: Option<TsTypeAnnotation>,
     /// `function_body` when `expression` is false. any expression otherwise.
     body: ArrowFunctionBody,
@@ -1750,6 +1988,7 @@ pub struct CallExpression {
     /// any expression
     callee: Expr,
     /// `ts_type_parameter_instantiation`. `None` when absent.
+    #[estree(optional)]
     type_arguments: Option<TsTypeParameterInstantiation>,
     /// any expression or `spread_element`.
     arguments: SubRange<Argument>,
@@ -1772,6 +2011,9 @@ pub struct CallExpression {
 pub struct ChainExpression {
     /// `call_expression` or `member_expression` containing an optional link
     /// somewhere in the chain.
+    #[estree(
+        ts_type = "CallExpression | MemberExpression | TSNonNullExpression | TSInstantiationExpression"
+    )]
     expression: Expr,
 }
 
@@ -1789,6 +2031,7 @@ pub struct TaggedTemplateExpression {
     /// any expression
     tag: Expr,
     /// `ts_type_parameter_instantiation`. `None` when absent.
+    #[estree(optional)]
     type_arguments: Option<TsTypeParameterInstantiation>,
     /// `template_literal`
     quasi: TemplateLiteral,
@@ -1810,6 +2053,7 @@ pub struct NewExpression {
     /// any expression
     callee: Expr,
     /// `ts_type_parameter_instantiation`. `None` when absent.
+    #[estree(optional)]
     type_arguments: Option<TsTypeParameterInstantiation>,
     /// any expression or `spread_element`.
     arguments: SubRange<Argument>,
@@ -1922,6 +2166,7 @@ pub struct ImportDeclaration {
     /// `null` for a regular import.
     phase: Option<ImportPhase>,
     /// `Type` for `import type { ... }`.
+    #[estree(optional)]
     import_kind: ImportOrExportKind,
 }
 
@@ -1943,6 +2188,7 @@ pub struct ImportSpecifier {
     /// `binding_identifier`
     local: BindingIdentifier,
     /// `Type` for `import { type X }`.
+    #[estree(optional)]
     import_kind: ImportOrExportKind,
 }
 
@@ -2013,6 +2259,7 @@ pub struct ExportNamedDeclaration {
     /// `import_attribute[]`
     attributes: SubRange<ImportAttribute>,
     /// `Type` for `export type { ... }`.
+    #[estree(optional)]
     export_kind: ImportOrExportKind,
 }
 
@@ -2026,6 +2273,7 @@ pub struct ExportNamedDeclaration {
 /// //             ^^^^^^^^^^^^^^ declaration
 /// ```
 #[ast]
+#[estree(fields(exportKind(ts_type = r#""value""#, optional)))]
 pub struct ExportDefaultDeclaration {
     /// any expression, `function`, or `class`.
     declaration: ExportDefaultDeclarationKind,
@@ -2051,6 +2299,7 @@ pub struct ExportAllDeclaration {
     /// `import_attribute[]`
     attributes: SubRange<ImportAttribute>,
     /// `Type` for `export type * from "..."`.
+    #[estree(optional)]
     export_kind: ImportOrExportKind,
 }
 
@@ -2073,6 +2322,7 @@ pub struct ExportSpecifier {
     /// `identifier_name` or `string_literal`.
     exported: ModuleExportName,
     /// `Type` for `export { type X }`.
+    #[estree(optional)]
     export_kind: ImportOrExportKind,
 }
 

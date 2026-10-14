@@ -51,11 +51,13 @@ pub fn parse_files(file_paths: &[&str]) -> Schema {
     let mut type_names = IndexSet::new();
     let mut prototypes = Vec::new();
     let mut repr_sizes = HashMap::new();
+    let mut scalar_enums = Vec::new();
 
     for source in file_paths {
         let content =
             fs::read_to_string(source).unwrap_or_else(|_| panic!("Cannot not find {source}"));
-        let file = syn::parse_file(&content).unwrap();
+        let file = syn::parse_file(&content)
+            .unwrap_or_else(|error| panic!("cannot parse {source}: {error}"));
         for item in file.items {
             match item {
                 Item::Struct(item) => {
@@ -74,6 +76,9 @@ pub fn parse_files(file_paths: &[&str]) -> Schema {
                     }));
                 }
                 Item::Enum(item) => {
+                    if let Some(enumeration) = crate::estree::scalar(&item) {
+                        scalar_enums.push(enumeration);
+                    }
                     // Collect #[repr(uN)] sizes for all enums (not just #[ast] enums)
                     if let Some(size) = parse_repr_size(&item.attrs) {
                         repr_sizes.insert(item.ident.to_string(), size);
@@ -128,6 +133,7 @@ pub fn parse_files(file_paths: &[&str]) -> Schema {
 
     types.extend(parser.extra_types);
     let schema = Schema {
+        scalar_enums,
         types,
         repr_sizes: parser.repr_sizes,
     };
@@ -245,8 +251,12 @@ fn parse_attrs(attrs: &[Attribute]) -> Option<AstAttrs> {
     let mut has_ast_attr = false;
     let mut ast_attrs = HashSet::new();
     let mut generate_derives = HashSet::new();
+    if !attrs.iter().any(|attr| attr.path().is_ident("ast")) {
+        return None;
+    }
+    let estree = crate::estree::attrs(attrs);
 
-    // Find #[ast] and #[generate_derive]
+    // Find AST metadata before the proc macro consumes the original fields.
     for attr in attrs {
         match &attr.meta {
             Meta::Path(path) => {
@@ -280,6 +290,7 @@ fn parse_attrs(attrs: &[Attribute]) -> Option<AstAttrs> {
     Some(AstAttrs {
         ast_attrs,
         generate_derives,
+        estree,
     })
 }
 
@@ -353,7 +364,11 @@ impl Parser {
             Some(type_id)
         };
 
-        AstEnumVariant { type_id, name }
+        AstEnumVariant {
+            type_id,
+            name,
+            estree: crate::estree::attrs(&variant.attrs),
+        }
     }
 
     fn parse_type_name(&mut self, ty: &Type) -> Option<TypeId> {
@@ -433,23 +448,12 @@ impl Parser {
     }
 
     fn parse_field_attrs(attrs: &[Attribute]) -> AstFieldAttrs {
-        let mut field_attrs = AstFieldAttrs::default();
+        let mut field_attrs = crate::estree::field_attrs(attrs);
 
         for attr in attrs {
             let Meta::List(meta_list) = &attr.meta else {
                 continue;
             };
-            if meta_list.path.is_ident("estree") {
-                let args = meta_list
-                    .parse_args_with(Punctuated::<Meta, Comma>::parse_terminated)
-                    .expect("Unable to parse `#[estree]`");
-                field_attrs.estree_skip = args.into_iter().any(|arg| match arg {
-                    Meta::Path(path) => path.is_ident("skip"),
-                    Meta::List(list) => list.path.is_ident("skip"),
-                    Meta::NameValue(name_value) => name_value.path.is_ident("skip"),
-                });
-                continue;
-            }
             if meta_list.path.is_ident("ast") {
                 let args = meta_list
                     .parse_args_with(Punctuated::<Meta, Comma>::parse_terminated)

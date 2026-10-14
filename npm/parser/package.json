@@ -39,6 +39,7 @@
   ],
   "license": "Apache-2.0",
   "napi": {
+    "constEnum": false,
     "binaryName": "swc-next-parser",
     "packageName": "@swc-next/parser-binding",
     "targets": [
@@ -58,7 +59,8 @@
     ]
   },
   "dependencies": {
-    "@swc-next/decoder": "workspace:*"
+    "@swc-next/decoder": "workspace:*",
+    "@swc-next/types": "workspace:*"
   },
   "wasm": {
     "binaryName": "swc-next-parser",
