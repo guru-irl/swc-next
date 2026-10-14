@@ -97,13 +97,45 @@ pub struct Semantic<'a> {
     scope_maps: ArenaVec<'a, ScopeMap<'a>>,
     hoisting_variables: ArenaVec<'a, HoistingMap<'a>>,
 
-    /// The symbol declared by each node, indexed by [`NodeId`].
-    node_symbols: ArenaVec<'a, Option<SymbolId>>,
-    node_references: ArenaVec<'a, Option<ReferenceId>>,
-    node_scopes: ArenaVec<'a, Option<ScopeId>>,
+    /// Each node records one binding, reference, or created scope identity.
+    node_semantic: ArenaVec<'a, NodeSemanticId>,
 
     module_record: ModuleRecord<'a>,
     ts_members: TsMemberIndex<'a>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum NodeSemanticId {
+    None,
+    Symbol(SymbolId),
+    Reference(ReferenceId),
+    Scope(ScopeId),
+}
+
+impl NodeSemanticId {
+    #[inline]
+    fn symbol(self) -> Option<SymbolId> {
+        match self {
+            Self::Symbol(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    fn reference(self) -> Option<ReferenceId> {
+        match self {
+            Self::Reference(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    fn scope(self) -> Option<ScopeId> {
+        match self {
+            Self::Scope(id) => Some(id),
+            _ => None,
+        }
+    }
 }
 
 impl<'a> Semantic<'a> {
@@ -111,22 +143,6 @@ impl<'a> Semantic<'a> {
     /// Intrinsic tags are included; a fragment also requires an element factory.
     pub fn jsx_usages(&self) -> &[JsxUsage] {
         &self.jsx_usages
-    }
-
-    /// The scope active when this node is evaluated, collected during every analysis.
-    /// Detached structural nodes may retain their old entry; this is not a
-    /// reachability index.
-    pub fn scope_at(&self, node: NodeId) -> Option<ScopeId> {
-        self.node_scopes.get(node.index()).copied().flatten()
-    }
-
-    /// The evaluation scope outside a scope-owning expression.
-    pub fn scope_outside(&self, node: NodeId) -> Option<ScopeId> {
-        let mut scope = self.scope_at(node)?;
-        while self.scope(scope).node == node {
-            scope = self.scope(scope).parent?;
-        }
-        Some(scope)
     }
 
     /// The symbol with the given id.
@@ -156,15 +172,35 @@ impl<'a> Semantic<'a> {
     }
 
     /// The symbol declared at `node`, or `None` when the node is not a
-    /// declaration site.
+    /// binding or member declaration site. Source-module and anonymous default
+    /// export symbols are queried through the TypeScript export APIs.
     pub fn symbol_of(&self, node: NodeId) -> Option<SymbolId> {
-        self.node_symbols[node.index()]
+        self.node_semantic[node.index()].symbol()
     }
 
     /// The reference recorded at `node`, or `None` when the node is
     /// not a reference site.
     pub fn reference_of(&self, node: NodeId) -> Option<ReferenceId> {
-        self.node_references[node.index()]
+        self.node_semantic[node.index()].reference()
+    }
+
+    /// The scope created by the given node, or `None` if the node is not a
+    /// scope-creating site. If a node creates multiple scopes, returns the
+    /// last one created (for example, the program's source-type wrapper).
+    pub fn scope_of(&self, node: NodeId) -> Option<ScopeId> {
+        self.node_semantic[node.index()].scope()
+    }
+
+    /// The TypeScript source module's symbol, or `None` outside a TypeScript module.
+    /// The program node records its scope rather than this export-container symbol.
+    pub fn ts_source_module_symbol(&self) -> Option<SymbolId> {
+        self.ts_members.source_module_symbol()
+    }
+
+    /// The symbol shared by TypeScript default export declarations, including
+    /// anonymous classes and functions. Expression exports do not create it.
+    pub fn ts_default_export_symbol(&self) -> Option<SymbolId> {
+        self.ts_members.default_export_symbol()
     }
 
     /// The binding scope of a symbol in JavaScript semantic analysis only.
@@ -172,7 +208,7 @@ impl<'a> Semantic<'a> {
     ///
     /// TypeScript symbols can merge declarations across multiple scopes;
     /// use the relevant [`Declaration::scope`] for TypeScript analysis.
-    pub fn scope_of(&self, id: SymbolId) -> ScopeId {
+    pub fn scope_of_symbol(&self, id: SymbolId) -> ScopeId {
         let declaration = self.symbol(id).declaration;
         self.declaration(declaration).scope
     }
@@ -240,8 +276,7 @@ impl<'a> Semantic<'a> {
     }
 
     /// Every definite or possible use site of `id`, once each in source order. Declaration sites are
-    /// not uses; those are returned by [`Semantic::declarations`]. A dynamic
-    /// `with` reference is included under its potential lexical fallback.
+    /// not uses; those are returned by [`Semantic::declarations`].
     /// An uncertain TypeScript reference is included under every candidate,
     /// even when [`Reference::symbol`] names a different, nearer candidate.
     pub fn uses(&self, id: SymbolId) -> &[ReferenceId] {
@@ -442,8 +477,6 @@ impl<'a> Semantic<'a> {
 
     /// Looks up a name and reports whether its target is known or only possible.
     /// Unknown contributions do not prove that an outer binding is shadowed.
-    /// This is name resolution; runtime interception by `with` is represented
-    /// separately by [`ReferenceFlags::is_dynamic`].
     fn resolve_name(
         &self,
         scope_id: ScopeId,
@@ -473,7 +506,7 @@ impl<'a> Semantic<'a> {
     pub fn iter_references(&self) -> ReferenceIterator<'_> {
         ReferenceIterator {
             references: &self.references,
-            node_references: &self.node_references,
+            node_semantic: &self.node_semantic,
             index: 0,
         }
     }
@@ -605,7 +638,7 @@ impl Iterator for SymbolIterator<'_> {
 
 pub struct ReferenceIterator<'a> {
     references: &'a [Reference],
-    node_references: &'a [Option<ReferenceId>],
+    node_semantic: &'a [NodeSemanticId],
     index: u32,
 }
 
@@ -623,7 +656,10 @@ impl Iterator for ReferenceIterator<'_> {
             let reference = *self.references.get(index)?;
             self.index += 1;
             let id = ReferenceId::from_usize(index);
-            if self.node_references[reference.node.index()].is_some() {
+            if self.node_semantic[reference.node.index()]
+                .reference()
+                .is_some()
+            {
                 return Some(ReferenceEntry { id, reference });
             }
         }
