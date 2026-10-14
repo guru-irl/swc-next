@@ -38,7 +38,7 @@ use swc_next_ecma_ast::{
 };
 
 use crate::{
-    ReferenceFlags, ReferenceSpace, Semantic, SymbolFlags,
+    ReferenceFlags, ReferenceSpace, SymbolFlags,
     binder::PreparedDeclaration,
     context::SemanticContext,
     ecmascript,
@@ -70,7 +70,7 @@ impl<'traverse, 'a> SemanticBuilder<'traverse, 'a> {
         }
     }
 
-    pub fn finish(mut self) -> (Semantic<'a>, Vec<Diagnostic<'a>>) {
+    pub(crate) fn finish(mut self) -> (Vec<Diagnostic<'a>>, SemanticContext<'a>) {
         let check_syntax = self.check_syntax;
         let (export_alias_issues, import_alias_issues) = {
             let state = &mut self.state;
@@ -82,8 +82,7 @@ impl<'traverse, 'a> SemanticBuilder<'traverse, 'a> {
             ts::check_ts_alias_issues(&mut self, export_alias_issues, import_alias_issues);
         }
         debug_assert!(self.path.is_empty());
-        let semantic = self.state.finalize(self.ast);
-        (semantic, self.diagnostics)
+        (self.diagnostics, self.state)
     }
 
     fn enter_node(&mut self, node: NodeId) -> ReferenceFlags {

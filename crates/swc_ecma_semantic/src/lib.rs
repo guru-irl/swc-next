@@ -710,11 +710,24 @@ pub fn analyze<'a>(ast: &Ast<'a>, options: AnalyzeOptions) -> SemanticReturn<'a>
     let root = ast.root_program();
     let mut visitor = SemanticBuilder::new(ast, options.check_syntax, options.build_module_record);
     root.visit_with(&mut visitor);
-    let (semantic, diagnostics) = visitor.finish();
+    let (diagnostics, state) = visitor.finish();
+    let semantic = state.finalize(ast);
     SemanticReturn {
         semantic,
         diagnostics,
     }
+}
+
+/// Checks scope-dependent syntax errors without building a [`Semantic`] model.
+///
+/// Returns the same diagnostics as [`analyze`] with
+/// [`AnalyzeOptions::check_syntax`] enabled, including TypeScript alias checks.
+/// Reference resolution and the model's use indexes are not needed for these
+/// checks and are skipped. Messages borrow the tree's arena.
+pub fn check_syntax<'a>(ast: &Ast<'a>) -> Vec<Diagnostic<'a>> {
+    let mut visitor = SemanticBuilder::new(ast, true, false);
+    ast.root_program().visit_with(&mut visitor);
+    visitor.finish().0
 }
 
 #[cfg(test)]
