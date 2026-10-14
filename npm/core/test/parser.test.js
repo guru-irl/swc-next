@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { decode } from "@swc-next/decoder";
 import { CommentMode, Lang, parseSync, SourceType } from "../src-js/index.js";
+import { parseSync as parseStandalone } from "../../parser/src-js/index.js";
 
 test("decoder reads little-endian words from unaligned buffers", () => {
   const backing = new ArrayBuffer(77);
@@ -161,6 +162,79 @@ test("parseSync returns an empty diagnostics array for valid input", () => {
 
   const empty = parseSync("");
   assert.deepEqual(empty.diagnostics, []);
+});
+
+test("parseSync makes semantic early-error checking optional", () => {
+  const source = "let value; let value;";
+  assert.deepEqual(parseSync(source).diagnostics, []);
+  assert.deepEqual(parseSync(source, { semanticErrors: false }).diagnostics, []);
+
+  const checked = parseSync(source, { semanticErrors: true });
+  assert.equal(checked.diagnostics.length, 1);
+  assert.equal(checked.diagnostics[0].severity, "error");
+  assert.equal(checked.program.body.length, 2);
+  assert.deepEqual(checked.program, parseSync(source).program);
+
+  const valid = parseSync("let value; { let value; }", { semanticErrors: true });
+  assert.deepEqual(valid.diagnostics, []);
+  const missingExport = "export { missing };";
+  assert.deepEqual(parseSync(missingExport).diagnostics, []);
+  assert.equal(parseSync(missingExport, { semanticErrors: true }).diagnostics.length, 1);
+  assert.throws(() => parseSync(source, { semanticErrors: 1 }), TypeError);
+});
+
+test("semantic checking supports TypeScript through both parser entry points", () => {
+  const source = "type Value = string; type Value = number;";
+  const options = { lang: Lang.Ts, semanticErrors: true };
+  const checked = parseSync(source, options);
+  assert.deepEqual(parseSync(source, { lang: Lang.Ts }).diagnostics, []);
+  assert.deepEqual(parseSync(source, { ...options, semanticErrors: false }).diagnostics, []);
+  assert.equal(checked.diagnostics.length, 1);
+  assert.equal(checked.diagnostics[0].severity, "error");
+  assert.deepEqual(checked.program, parseSync(source, { lang: Lang.Ts }).program);
+  assert.deepEqual(parseStandalone(source, options).diagnostics, checked.diagnostics);
+  assert.deepEqual(parseStandalone(source, options).program, checked.program);
+  assert.deepEqual(parseStandalone(source, { ...options, semanticErrors: false }).diagnostics, []);
+
+  const valid = parseSync("interface Value {} interface Value {}", options);
+  assert.deepEqual(valid.diagnostics, []);
+
+  const invalid = "type Value = ;";
+  assert.deepEqual(
+    parseSync(invalid, options).diagnostics,
+    parseSync(invalid, { lang: Lang.Ts }).diagnostics,
+  );
+});
+
+test("semantic diagnostics preserve Unicode offsets and related labels", () => {
+  const source = "/* 😀 */ let 文; let 文;";
+  const result = parseSync(source, { semanticErrors: true, comments: CommentMode.None });
+  const [error] = result.diagnostics;
+  assert.equal(error.start, source.lastIndexOf("文"));
+  assert.equal(error.end, source.lastIndexOf("文") + 1);
+  assert.ok(error.labels.some((label) => label.start === source.indexOf("文")));
+  assert.ok(error.message.includes("文"));
+  assert.deepEqual(result.comments, []);
+});
+
+test("semantic checking appends diagnostics after parser recovery", () => {
+  function checkRecovery(source, lang) {
+    const unchecked = parseSync(source, { lang });
+    const checked = parseSync(source, { lang, semanticErrors: true });
+    assert.equal(unchecked.diagnostics.length, 1);
+    assert.equal(checked.diagnostics.length, 2);
+    assert.deepEqual(checked.diagnostics.slice(0, 1), unchecked.diagnostics);
+    assert.equal(checked.diagnostics[1].severity, "error");
+    assert.deepEqual(checked.program, unchecked.program);
+    assert.deepEqual(checked.comments, unchecked.comments);
+    assert.deepEqual(
+      parseStandalone(source, { lang, semanticErrors: true }).diagnostics,
+      checked.diagnostics,
+    );
+  }
+
+  checkRecovery("/* 😀 */ const a; let 文; let 文;", Lang.Js);
+  checkRecovery("/* 😀 */ const a; type Value = string; type Value = number;", Lang.Ts);
 });
 
 test("parseSync reports diagnostics with UTF-16 offsets", () => {

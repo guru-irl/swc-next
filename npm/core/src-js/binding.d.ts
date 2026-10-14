@@ -53,6 +53,14 @@ export interface ParserOptions {
    * @default "flat"
    */
   comments?: CommentMode
+  /**
+   * Run semantic early-error checks on the parsed AST, including after syntax
+   * error recovery, and append their diagnostics. This performs an additional
+   * AST pass.
+   *
+   * @default false
+   */
+  semanticErrors?: boolean
 }
 
 export declare const enum SourceType {
